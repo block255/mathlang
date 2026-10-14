@@ -34,8 +34,10 @@ import '../layout/paginator.dart';
 import '../render/caret_sites.dart';
 import '../render/hit_map.dart';
 import '../render/inline_math_text.dart';
+import '../render/injection_map.dart';
 import '../render/projection.dart';
 import '../render/slot_marks.dart';
+import '../render/visible_atoms.dart';
 import 'page_sheet.dart';
 import 'unit_pool.dart';
 
@@ -371,17 +373,7 @@ class _DocViewState extends State<DocView> {
 
     // ① 行间公式块：整块就是一个数学段
     if (u.type == BlockType.math) {
-      final RenderObject? ro =
-          _mathBlockKeys[u.id]?.currentContext?.findRenderObject();
-      if (ro is! RenderBox || !ro.hasSize) return;
-      final _Rendered r = _renderParts(u.type, u.source);
-      final MathHit hit = hitTestMathTex(
-        root: ro,
-        localPos: ro.globalToLocal(global),
-        tex: r.text,
-      );
-      if (hit.offset == null) return;
-      cb(u.renderBase + buildCaretSites(r.text).snap(hit.offset!).offset);
+      _onMathBlockTap(u, global, _renderParts(u.type, u.source).text);
       return;
     }
 
@@ -420,8 +412,41 @@ class _DocViewState extends State<DocView> {
       .map((ProjectionSegment s) => s.text)
       .join();
 
-  /// 行内公式被点中（`InlineMathText.onMathTap` 给的是**段内相对**的 tex 与渲染盒 key）
-  void _onMathTap(_Unit u, ProjectionSegment seg, Offset global, GlobalKey key) {
+  /// 渲染某个数学段时用的 tex（**注入与渲染必须走同一个函数**，否则点击定位会错位）
+  String _renderTexFor(String tex, int? caretRel) {
+    final SlotMarkResult m = injectSlotMarks(tex, caretRel: caretRel ?? -1);
+    return caretRel == null ? m.tex : injectCursor(m.tex, m.rel).tex;
+  }
+
+  /// 行间公式块被点中
+  void _onMathBlockTap(_Unit u, Offset global, String rawTex) {
+    final void Function(int)? cb = widget.onTapOffset;
+    if (cb == null) return;
+    final RenderObject? ro = _mathBlockKeys[u.id]?.currentContext?.findRenderObject();
+    if (ro is! RenderBox || !ro.hasSize) return;
+    final int? caretRel = _caret == null ? null : u.relFor(_caret);
+    final String renderTex = _renderTexFor(rawTex, caretRel);
+    final MathHit hit = hitTestMathTex(
+      root: ro,
+      localPos: ro.globalToLocal(global),
+      tex: renderTex, // ★ 必须用渲染时的 tex（见 injection_map.dart）
+    );
+    if (hit.offset == null || hit.atomIndex < 0) return;
+    final List<VisibleAtom> ra = lexVisibleAtoms(renderTex);
+    final int? src = sourceOffsetOfRenderAtom(
+      source: rawTex,
+      renderTex: renderTex,
+      renderAtomIndex: hit.atomIndex,
+      leftHalf: hit.offset == ra[hit.atomIndex].start,
+    );
+    if (src == null) return;
+    cb(u.renderBase + buildCaretSites(rawTex).snap(src).offset);
+  }
+
+  /// 行内公式被点中（`InlineMathText.onMathTap` 给的是**段内相对**的 tex、
+  /// **渲染用的 tex**、以及渲染盒 key）
+  void _onMathTap(_Unit u, ProjectionSegment seg, String renderTex, Offset global,
+      GlobalKey key) {
     final void Function(int)? cb = widget.onTapOffset;
     if (cb == null) return;
     final RenderObject? ro = key.currentContext?.findRenderObject();
@@ -429,11 +454,19 @@ class _DocViewState extends State<DocView> {
     final MathHit hit = hitTestMathTex(
       root: ro,
       localPos: ro.globalToLocal(global),
-      tex: seg.tex,
+      tex: renderTex, // ★ 同上：必须是渲染用的那份
     );
-    if (hit.offset == null) return;
+    if (hit.offset == null || hit.atomIndex < 0) return;
+    final List<VisibleAtom> ra = lexVisibleAtoms(renderTex);
+    final int? src = sourceOffsetOfRenderAtom(
+      source: seg.tex,
+      renderTex: renderTex,
+      renderAtomIndex: hit.atomIndex,
+      leftHalf: hit.offset == ra[hit.atomIndex].start,
+    );
+    if (src == null) return;
     // ★ 位点吸附：落点必须是合法位点（设计稿 §2.4 的 P3）
-    final int rel = buildCaretSites(seg.tex).snap(hit.offset!).offset;
+    final int rel = buildCaretSites(seg.tex).snap(src).offset;
     cb(u.renderBase + seg.start + rel);
   }
 
@@ -634,10 +667,11 @@ class _DocViewState extends State<DocView> {
     // ★ 组合中间态：只接给含光标的那一个单元，且行间公式块不接（见 _composingFor）
     final String composing = _composingFor(u, caretRel);
     // 只有渲染树需要接点击（测量树是离屏的，接了也没用，还会多两个对象）
-    final void Function(ProjectionSegment, Offset, GlobalKey)? onMathTap = interactive
-        ? (ProjectionSegment seg, Offset g, GlobalKey k) =>
-            _onMathTap(u, seg, g, k)
-        : null;
+    final void Function(ProjectionSegment, String, Offset, GlobalKey)? onMathTap =
+        interactive
+            ? (ProjectionSegment seg, String rt, Offset g, GlobalKey k) =>
+                _onMathTap(u, seg, rt, g, k)
+            : null;
 
     switch (u.type) {
       case BlockType.heading1:

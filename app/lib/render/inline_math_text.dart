@@ -62,9 +62,12 @@ class InlineMathText extends StatefulWidget {
   /// 用于事后取 Math 的渲染根盒做命中测试与测量。
   final Map<int, GlobalKey>? mathKeys;
 
-  /// 点中某个行内公式时回调（带该公式的渲染根盒 key）
-  final void Function(ProjectionSegment seg, Offset globalPos, GlobalKey key)?
-      onMathTap;
+  /// 点中某个行内公式时回调。
+  ///
+  /// ★ 第二个参数是**渲染这个公式时用的 tex**（含空槽占位与光标注入）——
+  ///   点击定位必须用它去命中，否则"叶盒数 vs 原子数"对不上（详见 `injection_map.dart`）。
+  final void Function(ProjectionSegment seg, String renderTex, Offset globalPos,
+      GlobalKey key)? onMathTap;
 
   final double caretWidth;
   final Color? caretColor;
@@ -179,7 +182,7 @@ class _InlineMathTextState extends State<InlineMathText> {
       child: onTap == null
           ? _mathWidget(key, tex)
           : GestureDetector(
-              onTapDown: (d) => onTap(s, d.globalPosition, key),
+              onTapDown: (d) => onTap(s, tex, d.globalPosition, key),
               child: MouseRegion(
                 cursor: SystemMouseCursors.text,
                 child: _mathWidget(key, tex),

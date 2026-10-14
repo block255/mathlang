@@ -9,6 +9,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_math_fork/flutter_math.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mathlang/core/doc_buffer.dart';
 import 'package:mathlang/editor/edit_view.dart';
@@ -507,6 +508,34 @@ void main() {
 
       expect(last?.length, 5, reason: '换文档后必须立刻上报新长度');
       expect(last?.edits, 0, reason: '新文档 = 新的一次编辑会话');
+    });
+  });
+
+  group('★ 注入不得破坏点击定位（2026-10-14 用户实测抓出的根因）', () {
+    testWidgets('光标在公式里（空槽占位 + 光标条都已注入）时，点内部仍能移动光标',
+        (WidgetTester tester) async {
+      // 分母为空 → 注入"空槽占位"；光标在公式里 → 还会注入"光标条"。
+      // 修复前：渲染叶盒数 = 原始原子数 + 2 → `hitTestMathTex` 判"数量不等" →
+      //   **静默返回 null** → 公式内点击失效（箭头键还能用，所以症状很像"被锁住"）。
+      final DocBuffer buf = DocBuffer(r'$\frac{a}{}$');
+      await _mount(tester, buf);
+      await tester.pumpAndSettle();
+
+      expect(find.byType(Math), findsOneWidget, reason: '这段渲染成一个行内公式');
+      final Offset tl = tester.getTopLeft(find.byType(Math));
+      final Size sz = tester.getSize(find.byType(Math));
+
+      buf.setCaret(9); // 光标落进**空的分母**（位点在 rel 8 → 绝对 9）
+      await tester.pumpAndSettle();
+      expect(buf.caret, 9);
+
+      // 点公式左端（分子 a 那一带）→ 光标必须真的动
+      await tester.tapAt(tl + Offset(2, sz.height / 2));
+      await tester.pump();
+      expect(buf.caret, isNot(9),
+          reason: '★ 公式内部点击必须能移动光标；'
+              '若这里仍是 9，说明命中测试又因为"注入让叶盒数≠原子数"而静默失效了');
+      expect(buf.caret, lessThan(9), reason: '点在左端 → 光标应往左走');
     });
   });
 

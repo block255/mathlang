@@ -259,9 +259,10 @@ class _S2ProjectionPageState extends State<S2ProjectionPage> {
                 height: _s.lineHeight,
                 color: Colors.black87,
               ),
-              onMathTap: (seg, pos, _) => setState(() {
+              onMathTap: (seg, renderTex, pos, _) => setState(() {
                 _tapInfo = '点中「${seg.tex}」· 段内起点 ${seg.start} · 全局 '
-                    '(${pos.dx.toStringAsFixed(0)}, ${pos.dy.toStringAsFixed(0)})';
+                    '(${pos.dx.toStringAsFixed(0)}, ${pos.dy.toStringAsFixed(0)})'
+                    '${renderTex == seg.tex ? '' : ' · 渲染 tex 与源码不同（有注入）'}';
               }),
             ),
           ),
