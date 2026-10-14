@@ -143,19 +143,24 @@ int? verticalNeighbor(CaretSiteTable t, int rel, {required bool up}) {
   if (me.command == 'sqrt' && (me.argIndex == 0 || me.argIndex == -1)) {
     return _siblingStart(t, cur.path, up ? -1 : 0);
   }
-  // ③ 大算符上下限：`^` 在上、`_` 在下
+  // ③ 大算符上下限：`^` 在上、`_` 在下（落点同样是槽的右端）
   if ((me.command == '^' || me.command == '_') &&
       _baseIsLargeOperator(t.tex, cur.start, me)) {
-    return _siblingArg(t, cur.path, up ? '^' : '_', 0);
+    return _siblingArg(t, cur.path, up ? '^' : '_', 0, atEnd: true);
   }
   return null;
 }
 
-/// 同结构实例里 `argIndex == want` 那个槽的内容起点
+/// 同结构实例里 `argIndex == want` 那个槽的**内容末尾**。
+///
+/// ★ 落点是**槽的右端**（2026-10-14 用户拍板）：
+/// 上下跨越通常是"换个地方接着往后写"，落在末尾才能直接续写；
+/// 落在左端则每次都要先 `→` 走一遍内容。（"保持列位置"是 §三 的几何法，留 S5。）
 int? _siblingStart(CaretSiteTable t, List<SlotStep> path, int want) =>
-    _siblingArg(t, path, path.last.command, want);
+    _siblingArg(t, path, path.last.command, want, atEnd: true);
 
-int? _siblingArg(CaretSiteTable t, List<SlotStep> path, String command, int argIndex) {
+int? _siblingArg(CaretSiteTable t, List<SlotStep> path, String command, int argIndex,
+    {bool atEnd = false}) {
   if (path.isEmpty) return null;
   final List<SlotStep> parent = path.sublist(0, path.length - 1);
   final SlotStep me = path.last;
@@ -165,7 +170,7 @@ int? _siblingArg(CaretSiteTable t, List<SlotStep> path, String command, int argI
     if (last.command != command || last.argIndex != argIndex) continue;
     if (last.row != me.row || last.col != me.col) continue;
     if (!_samePath(s.path.sublist(0, s.path.length - 1), parent)) continue;
-    return s.start;
+    return atEnd ? s.end : s.start;
   }
   return null;
 }

@@ -709,6 +709,7 @@ class _DocViewState extends State<DocView> {
 
       case BlockType.math:
         // 行间公式：光标靠注入 `\cursor{}`（走位点吸附，见 caret_sites.dart）
+        // ⚠️ S3-5 的空槽占位暂未接上（要先修 `visible_atoms` 的"不渲染参数"，见交接快照 §十二）
         final String tex = caretAbs == null
             ? text
             : injectCursor(text, caretAbs - u.renderBase).tex;

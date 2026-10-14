@@ -62,11 +62,11 @@ void main() {
     });
   });
 
-  group('↑↓ 竖直邻接（§十-⑤：v1 用语法特例表）', () {
-    test(r'\frac{a}{b}：分母 ↑ 到分子、分子 ↓ 到分母', () {
+  group('↑↓ 竖直邻接（§十-⑤：v1 用语法特例表；★ 落点是槽的**右端**）', () {
+    test(r'\frac{a}{b}：分母 ↑ 到分子末尾、分子 ↓ 到分母末尾', () {
       final CaretSiteTable t = buildCaretSites(r'\frac{a}{b}');
-      expect(verticalNeighbor(t, 9, up: true), 6);
-      expect(verticalNeighbor(t, 6, up: false), 9);
+      expect(verticalNeighbor(t, 9, up: true), 7, reason: '落在分子内容末尾（接着往后写）');
+      expect(verticalNeighbor(t, 6, up: false), 10, reason: '落在分母内容末尾');
     });
 
     test(r'x^2：指数是"右上"，**不算**竖直邻居 → 不移动', () {
@@ -77,14 +77,19 @@ void main() {
 
     test(r'\sum_{i}^{n}：上下限互为竖直邻居（大算符上才成立）', () {
       final CaretSiteTable t = buildCaretSites(r'\sum_{i}^{n}');
-      expect(verticalNeighbor(t, 6, up: true), 10, reason: '下限 ↑ 到上限');
-      expect(verticalNeighbor(t, 10, up: false), 6, reason: '上限 ↓ 到下限');
+      expect(verticalNeighbor(t, 6, up: true), 11, reason: '下限 ↑ 到上限末尾');
+      expect(verticalNeighbor(t, 10, up: false), 7, reason: '上限 ↓ 到下限末尾');
     });
 
     test(r'\sqrt[3]{x}：次数在上、被开方数在下', () {
       final CaretSiteTable t = buildCaretSites(r'\sqrt[3]{x}');
-      expect(verticalNeighbor(t, 9, up: true), 6, reason: '被开方数 ↑ 到次数');
-      expect(verticalNeighbor(t, 6, up: false), 9);
+      expect(verticalNeighbor(t, 9, up: true), 7, reason: '被开方数 ↑ 到次数末尾');
+      expect(verticalNeighbor(t, 6, up: false), 10, reason: '次数 ↓ 到被开方数末尾');
+    });
+
+    test('空槽没有"左端/右端"之分（start == end），落点唯一', () {
+      final CaretSiteTable t = buildCaretSites(r'\frac{}{}');
+      expect(verticalNeighbor(t, 8, up: true), 6, reason: '分子是空槽 → 落点就是 6');
     });
 
     test('主行上没有竖直邻居（不越出公式，避免误跳）', () {

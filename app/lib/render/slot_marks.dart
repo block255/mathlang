@@ -1,0 +1,61 @@
+// 数语引擎 · 空槽可视化（S3-5）
+//
+// 规格：notes/design/位点与结构导航.md §6.1
+//   空槽 → 虚线占位框（浅灰 `#B0BEC5`，宽 ≈ 一个字符）
+//   当前槽 → 换成实线 + 淡蓝底（`#E3F2FD`，与光标同色系）
+//   非空槽 → 不画
+//
+// ★ 与规格的差别（诚实记账）：规格自己指出"虚线框要**自绘**"（WidgetSpan / 覆盖层）。
+//   本版先用**注入一条短横线**（`\rule`）达到同样的**功能**：让用户看得见"这里有个空槽"，
+//   当前槽用光标蓝区分。真正的"1px 虚线框 + 淡蓝底"要自绘层，留给视觉规范一起做。
+//   代价：占位线会占排版宽度 —— 这正是我们要的（空槽本来就该占位，用户才会去点/Tab）。
+//
+// ★★ 为什么用 `\rule` 而不是 `\square`：**必须不给 tex 增加"可见原子"**。
+//   点击定位（`hitTestMathTex`）靠"叶盒 ↔ 可见原子"一一对应，叶盒数是**渲染后的**、
+//   原子数是按源码词法出的 —— 多一个可见字形就会让两者对不上，
+//   `hitTestMathTex` 会**静默返回 null**（点公式就失效了）。
+//   `\rule` 在 `visible_atoms.kStructureCommands` 里 → 它**不算可见原子** ✓
+//   所以注入前后原子数不变，点击定位不受影响。这条有测试钉住。
+//
+// **纯 Dart。**
+
+import 'caret_sites.dart';
+import 'site_adjacency.dart';
+
+/// 空槽占位（浅灰细线）
+const String kEmptySlotTex = r'\textcolor{#B0BEC5}{\rule{0.5em}{0.07em}}';
+
+/// 当前槽占位（光标蓝 —— 与 §6.2 的光标同色系）
+const String kCurrentSlotTex = r'\textcolor{#1E88E5}{\rule{0.5em}{0.09em}}';
+
+/// 注入结果：注入后的 tex + **光标在注入后 tex 里的相对偏移**（供继续注入光标用）
+class SlotMarkResult {
+  const SlotMarkResult(this.tex, this.rel);
+  final String tex;
+  final int rel;
+}
+
+/// 给 tex 里所有**空槽**注入可见占位；[caretRel] 落在哪个空槽里，它就用"当前槽"样式。
+///
+/// 注入**从右往左**做，前面的偏移不受影响；光标偏移按插入量右移补偿，
+/// 所以调用方可以接着 `injectCursor(marks.tex, marks.rel)`。
+SlotMarkResult injectSlotMarks(String tex, {required int caretRel}) {
+  final CaretSiteTable t = buildCaretSites(tex);
+  if (t.degraded) return SlotMarkResult(tex, caretRel);
+
+  final SlotSpan? cur = caretRel >= 0 ? innermostSlotAt(t, caretRel) : null;
+  final List<SlotSpan> empties = <SlotSpan>[
+    for (final SlotSpan s in t.slots)
+      if (s.isEmpty) s,
+  ]..sort((SlotSpan a, SlotSpan b) => b.start.compareTo(a.start));
+
+  String out = tex;
+  int rel = caretRel;
+  for (final SlotSpan s in empties) {
+    final bool isCurrent = cur != null && s.start == cur.start && s.end == cur.end;
+    final String mark = isCurrent ? kCurrentSlotTex : kEmptySlotTex;
+    out = out.substring(0, s.start) + mark + out.substring(s.start);
+    if (rel >= s.start) rel += mark.length;
+  }
+  return SlotMarkResult(out, rel);
+}
