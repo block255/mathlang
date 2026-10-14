@@ -1,0 +1,732 @@
+// 数语引擎 · 位点表（S3 地基）
+//
+// 规格：notes/design/位点与结构导航.md（§一 概念正名 / §二 位点表 / §2.4 三条性质）
+//
+// ★ 为什么要自己建：引擎的 `caretPositions` / `GreenNode.range` 是**渲染空间的编辑坐标**
+//   （只覆盖渲染出来的原子，不含 `\frac{}` / `^` / `_` 等命令与结构字符），
+//   实测 `\frac{a}{b}=\sqrt{2}` 给出 `[2,3)[4,5)[6,7)[8,9)` —— **根本不是源码下标**。
+//   见 notes/design/技术选型与风险.md 9.8。
+//
+// 四个概念（不许混）：
+//   offset 偏移  = L0 字符串下标（唯一真相，光标就是一个整数）
+//   atom   原子  = 看得见的最小单位（`\alpha` 一个；`\frac` / `{` / `^` 都不是）
+//   slot   槽    = 结构命令的一个参数位（`\frac{□}{□}` 两个）—— **位点的分组容器**
+//   site   位点  = tex 里一个**合法**的光标插入位置；位点表是**有序扁平表**
+//
+// ★ 位点 ≠ 每个字节：`\frac{a}{b}` 里 `7`（分子后）与 `9`（分母前）是位点，
+//   而 `8`（`}{` 之间）**不是** —— 往那儿插字符会得到 `\frac{a}x{b}`，语法直接坏掉。
+//
+// **纯 Dart，不依赖 Flutter。**
+
+import 'visible_atoms.dart';
+
+/// 槽路径上的一步：`\frac` 的第 0 个参数 = `SlotStep('frac', 0)`。
+/// 上标 / 下标 / `\sqrt` 的可选参数用特殊 `argIndex`；多行环境带行列。
+class SlotStep {
+  const SlotStep(this.command, this.argIndex, {this.row, this.col});
+
+  final String command;
+
+  /// 参数序号；`-1` = 可选参数（`\sqrt[3]{x}` 的 `[3]`）
+  final int argIndex;
+
+  /// 多行环境才有：第几行 / 第几列（0-based）
+  final int? row;
+  final int? col;
+
+  String get label => row == null
+      ? '$command${argIndex < 0 ? "[opt]" : "#$argIndex"}'
+      : '$command#$argIndex@$row,$col';
+
+  @override
+  String toString() => label;
+}
+
+/// 一个位点：`offset` 是**相对该段 tex** 的源偏移。
+class CaretSite {
+  const CaretSite(this.offset, this.path, this.indexInSlot);
+
+  final int offset;
+
+  /// 从主行到该位点所在槽的路径；**空 = 主行**（不在任何结构内）
+  final List<SlotStep> path;
+
+  /// 它在所属内容列表里的序号（0 = 槽首，items.length = 槽末）
+  final int indexInSlot;
+
+  bool get isMain => path.isEmpty;
+
+  @override
+  String toString() => 'site@$offset'
+      '${path.isEmpty ? "（主行）" : "（${path.map((SlotStep s) => s.label).join(" › ")}）"}';
+}
+
+/// 一个槽（参数位）在源码里的区间。
+class SlotSpan {
+  const SlotSpan(this.path, this.start, this.end);
+
+  final List<SlotStep> path;
+
+  /// 槽的**内容区间** `[start, end)`（不含 `{` `}` 本身；空槽时 `start == end`）
+  final int start;
+  final int end;
+
+  bool get isEmpty => start >= end;
+
+  @override
+  String toString() =>
+      '${path.map((SlotStep s) => s.label).join(" › ")}[$start,$end)${isEmpty ? " 空" : ""}';
+}
+
+/// 位点表。
+class CaretSiteTable {
+  CaretSiteTable._(
+    this.tex,
+    this.sites,
+    this.slots,
+    this.degraded,
+    this.degradeReason,
+  );
+
+  final String tex;
+
+  /// **按 offset 升序、无重复**的位点表
+  final List<CaretSite> sites;
+
+  /// 全部槽（供 S3-3 邻接表使用）
+  final List<SlotSpan> slots;
+
+  /// 是否退化为「纯字符级位点表」（配对失败时；见设计稿 §2.3）
+  final bool degraded;
+
+  final String? degradeReason;
+
+  List<int> get offsets => <int>[for (final CaretSite s in sites) s.offset];
+
+  int get length => sites.length;
+
+  /// 精确查（不是位点则 null）
+  CaretSite? at(int offset) {
+    for (final CaretSite s in sites) {
+      if (s.offset == offset) return s;
+    }
+    return null;
+  }
+
+  bool isSite(int offset) => at(offset) != null;
+
+  /// 位点序下标（精确命中，否则 -1）
+  int indexOf(int offset) {
+    for (var k = 0; k < sites.length; k++) {
+      if (sites[k].offset == offset) return k;
+    }
+    return -1;
+  }
+
+  /// 吸附：取**最近的合法位点**；左右等距时取**左**（与文本编辑器一致）。
+  ///
+  /// ★ 性质 P3：返回值必然 ∈ 位点表。
+  CaretSite snap(int offset) {
+    if (sites.isEmpty) {
+      return CaretSite(offset.clamp(0, tex.length), const <SlotStep>[], 0);
+    }
+    CaretSite best = sites.first;
+    var bestD = (best.offset - offset).abs();
+    for (final CaretSite s in sites.skip(1)) {
+      final int d = (s.offset - offset).abs();
+      if (d < bestD) {
+        best = s;
+        bestD = d;
+      }
+    }
+    return best;
+  }
+
+  CaretSite? nextOf(int index) =>
+      (index + 1 >= 0 && index + 1 < sites.length) ? sites[index + 1] : null;
+
+  CaretSite? prevOf(int index) =>
+      (index - 1 >= 0 && index - 1 < sites.length) ? sites[index - 1] : null;
+
+  @override
+  String toString() =>
+      'CaretSiteTable(${tex.length} 字符, ${sites.length} 位点, ${slots.length} 槽'
+      '${degraded ? "，已降级：$degradeReason" : ""})';
+}
+
+// ---------------------------------------------------------------------------
+// 构造
+// ---------------------------------------------------------------------------
+
+/// 一条结构命令的参数规格。
+class _ArgSpec {
+  const _ArgSpec(this.args, {this.optional = false});
+  final int args;
+  final bool optional;
+}
+
+/// ★ **只给真正影响导航的结构建槽**：分式族 / 根号（含可选次数）/ 上下标 / 多行环境。
+/// 其余结构命令（`\overline` `\text` `\left` …）按**透明**处理 —— 不消费参数、花括号直接透传，
+/// 与 `visible_atoms` 的既有行为一致；避免写一份巨大的 KaTeX 规格表（S3 范围外，S5 再细化）。
+const Map<String, _ArgSpec> _kArgSpec = <String, _ArgSpec>{
+  'frac': _ArgSpec(2),
+  'dfrac': _ArgSpec(2),
+  'tfrac': _ArgSpec(2),
+  'binom': _ArgSpec(2),
+  'sqrt': _ArgSpec(1, optional: true),
+};
+
+/// ★ 这些命令**要与紧跟其后的分隔符一起看**（`\left(`、`\right)`、`\big|`）——
+/// 它们与分隔符之间的位置是**语法夹缝**，不是位点（否则往那儿插字符会得到 `\left+(`，解析直接坏）。
+const Set<String> _kDelimCommands = <String>{
+  'left', 'right', 'middle',
+  'big', 'Big', 'bigg', 'Bigg',
+  'bigl', 'bigr', 'Bigl', 'Bigr', 'biggl', 'biggr', 'Biggl', 'Biggr',
+};
+
+/// 建位点表。**纯函数**：同一 tex 永远给同一张表。
+CaretSiteTable buildCaretSites(String tex) => _Parser(tex).build();
+
+/// 光标颜色（**文本侧与数学侧必须一致**）。
+///
+/// 数学侧只能靠 `\textcolor{...}` 注入 —— 引擎的 `\cursor{}` 用的是**当前公式的颜色**
+/// （`cursor_node.dart:17` → `color: options.color`），而我们给公式传的是黑色文字色，
+/// 所以裸注入 `\cursor{}` 会得到一根**黑光标**，和文本侧的蓝光标不一致（用户实测发现）。
+const int kCaretColorValue = 0xFF1E88E5;
+
+/// 给 `\textcolor` 用的十六进制写法。**由 [kCaretColorValue] 推出**，避免两处写死不一致。
+final String kCaretTexColor =
+    '#${(kCaretColorValue & 0xFFFFFF).toRadixString(16).padLeft(6, '0').toUpperCase()}';
+
+/// 「把光标画进数学内部」的结果。
+class CursorInjection {
+  const CursorInjection(this.tex, this.offset);
+
+  /// 注入光标之后的 tex（**只用于渲染**，绝不写回缓冲区）
+  final String tex;
+
+  /// 实际注入点（**已做位点吸附**，相对该段 tex）
+  final int offset;
+
+  @override
+  String toString() => 'CursorInjection(@$offset)';
+}
+
+/// 把「光标」注入到 tex 里，**注入点先做位点吸附**。
+///
+/// ★ 这是"光标画进数学内部"的唯一入口（`InlineMathText` 与实验页都走它）。
+///
+/// 两个坑都在这一行里解决（都是实测出来的）：
+/// 1. **注入点必须在合法位点上**。S1 时代的 `snapCaretInTex`（已删）只防"切开命令名"，
+///    会把光标留在 `}{` 这类语法夹缝里 —— `\frac{a}{b}` 的偏移 8 会注入成 `\frac{a}\cursor{}{b}`，
+///    `\frac` 的第二个参数被 `\cursor` 顶替，**分母被挤到主行**。位点吸附后落到 7 ✓。
+/// 2. ★ **必须包在 `\textcolor{...}{...}` 里**，不能裸注入 `\cursor{}`：
+///    · 注入点紧跟 `^` / `_` 时（如 `x^2` 的 x 与 2 之间），裸 `\cursor` 会被当成**上标基座**
+///      → `Parser Error: Got function '\cursor' with no arguments as superscript`（用户实测截图）。
+///      `\textcolor` 自带一个组，脚本就绑在组上，不再报错。
+///    · 顺带把光标染成与文本侧**同一个颜色**（见 [kCaretColorValue]）。
+CursorInjection injectCursor(String tex, int relOffset) {
+  final int rel = buildCaretSites(tex).snap(relOffset).offset;
+  final String cursor = '\\textcolor{$kCaretTexColor}{\\cursor{}}';
+  final _TextGroup? g = _textGroupAt(tex, rel);
+
+  // 一般情况：直接在位点处注入
+  if (g == null) {
+    return CursorInjection(
+      '${tex.substring(0, rel)}$cursor${tex.substring(rel)}',
+      rel,
+    );
+  }
+
+  // ★ 文本模式内：`\cursor` **不被接受**（实测 `\text{\cursor{}中文}` 等 6 种写法全部 ParseException）。
+  //   做法：把这个 `\text{...}` **拆成两半**，光标落在两半之间（那里是数学模式）——
+  //   `\text{中}\textcolor{...}{\cursor{}}\text{文}`，实测可解析、视觉上光标就在「中」「文」之间。
+  final String before = tex.substring(g.contentStart, rel);
+  final String after = tex.substring(rel, g.contentEnd);
+  final StringBuffer sb = StringBuffer()..write(tex.substring(0, g.groupStart));
+  if (before.isNotEmpty) sb.write('\\text{$before}');
+  sb.write(cursor);
+  if (after.isNotEmpty) sb.write('\\text{$after}');
+  if (g.next < tex.length) sb.write(tex.substring(g.next)); // 收尾的 `}`
+  return CursorInjection(sb.toString(), rel);
+}
+
+/// 一个 `\text{...}` 组的位置信息
+class _TextGroup {
+  const _TextGroup(this.groupStart, this.contentStart, this.contentEnd, this.next);
+  final int groupStart; // `\text` 的反斜杠
+  final int contentStart; // `{` 之后
+  final int contentEnd; // `}` 的位置（未闭合 = tex.length）
+  final int next; // 闭合 `}` 之后（未闭合 = tex.length）
+}
+
+/// 偏移是否落在某个 `\text{...}` 的内容里
+_TextGroup? _textGroupAt(String tex, int offset) {
+  var i = 0;
+  while (i + 5 <= tex.length) {
+    if (!tex.startsWith(r'\text', i)) {
+      i++;
+      continue;
+    }
+    final int after = i + 5;
+    if (after < tex.length && _isLetter(tex.codeUnitAt(after))) {
+      i = after; // `\textrm` / `\textstyle` 之类，不是 `\text{`
+      continue;
+    }
+    var k = after;
+    while (k < tex.length && tex[k] == ' ') {
+      k++;
+    }
+    if (k >= tex.length || tex[k] != '{') {
+      i = after;
+      continue;
+    }
+    final int close = _matchBrace(tex, k);
+    final int contentStart = k + 1;
+    final int contentEnd = close < 0 ? tex.length : close;
+    if (offset >= contentStart && offset <= contentEnd) {
+      return _TextGroup(
+        i,
+        contentStart,
+        contentEnd,
+        close < 0 ? tex.length : close + 1,
+      );
+    }
+    i = close < 0 ? tex.length : close + 1;
+  }
+  return null;
+}
+
+/// 返回与 `tex[open]`（必须是 `{`）配对的 `}` 的下标；找不到返回 -1
+int _matchBrace(String tex, int open) {
+  var depth = 0;
+  for (var i = open; i < tex.length; i++) {
+    if (tex[i] == '{') {
+      depth++;
+    } else if (tex[i] == '}') {
+      depth--;
+      if (depth == 0) return i;
+    }
+  }
+  return -1;
+}
+
+/// 降级位点表：只用「可见原子边界 + 首尾」（纯字符级导航）。
+CaretSiteTable _buildDegraded(String tex, String reason) {
+  final Set<int> offs = <int>{0, tex.length};
+  for (final VisibleAtom a in lexVisibleAtoms(tex)) {
+    offs.add(a.start);
+    offs.add(a.end);
+  }
+  final List<int> sorted = offs.toList()..sort();
+  return CaretSiteTable._(
+    tex,
+    <CaretSite>[
+      for (var k = 0; k < sorted.length; k++)
+        CaretSite(sorted[k], const <SlotStep>[], k),
+    ],
+    const <SlotSpan>[],
+    true,
+    reason,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 词法
+// ---------------------------------------------------------------------------
+
+enum _K { cmd, lbrace, rbrace, sup, sub, amp, rowBreak, ch }
+
+class _Tok {
+  _Tok(this.kind, this.start, this.end, [this.name = '']);
+  final _K kind;
+  final int start;
+  final int end;
+  final String name; // 仅 cmd（不含反斜杠）
+}
+
+bool _isLetter(int c) => (c >= 0x41 && c <= 0x5A) || (c >= 0x61 && c <= 0x7A);
+
+List<_Tok> _tokenize(String tex) {
+  final List<_Tok> out = <_Tok>[];
+  var i = 0;
+  while (i < tex.length) {
+    final String c = tex[i];
+    if (c == r'\') {
+      if (i + 1 < tex.length && tex[i + 1] == r'\') {
+        out.add(_Tok(_K.rowBreak, i, i + 2)); // `\\` 行分隔
+        i += 2;
+        continue;
+      }
+      if (i + 1 < tex.length && _isLetter(tex.codeUnitAt(i + 1))) {
+        var j = i + 1;
+        while (j < tex.length && _isLetter(tex.codeUnitAt(j))) {
+          j++;
+        }
+        out.add(_Tok(_K.cmd, i, j, tex.substring(i + 1, j)));
+        i = j;
+        continue;
+      }
+      if (i + 1 < tex.length) {
+        out.add(_Tok(_K.ch, i, i + 2)); // `\{` `\,` 等转义：算一个可见字符
+        i += 2;
+        continue;
+      }
+      i++; // 孤立反斜杠：跳过
+      continue;
+    }
+    switch (c) {
+      case '{':
+        out.add(_Tok(_K.lbrace, i, i + 1));
+      case '}':
+        out.add(_Tok(_K.rbrace, i, i + 1));
+      case '^':
+        out.add(_Tok(_K.sup, i, i + 1));
+      case '_':
+        out.add(_Tok(_K.sub, i, i + 1));
+      case '&':
+        out.add(_Tok(_K.amp, i, i + 1));
+      case ' ':
+      case '\n':
+      case '\t':
+        break; // 空白既不产出内容、也不产出位点
+      default:
+        out.add(_Tok(_K.ch, i, i + 1));
+    }
+    i++;
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// 语法：内容项 / 内容列表
+// ---------------------------------------------------------------------------
+
+/// 一个内容项（渲染出来的一"块"东西），可自带子槽。
+class _Item {
+  _Item(this.start, this.end, [this.slots = const <_Region>[]]);
+  final int start;
+  final int end;
+  final List<_Region> slots;
+}
+
+/// 一个**内容列表**（主行 / 某槽内部 / 环境的一格）。
+class _Region {
+  _Region(this.start, this.end, this.path, this.items, {this.isSlot = false});
+
+  /// 内容的可插入区间 `[start, end)`；空槽时 `start == end`
+  final int start;
+  final int end;
+  final List<SlotStep> path;
+  final List<_Item> items;
+
+  /// 是否是"导航意义上的槽"（命令参数 / 上下标 / 环境格）。
+  /// 裸花括号组 `{...}` 也是区域，但**不算槽**（不产生层级，只是括起来）。
+  final bool isSlot;
+}
+
+class _Parser {
+  _Parser(this.tex) : _toks = _tokenize(tex);
+
+  final String tex;
+  final List<_Tok> _toks;
+  int _i = 0;
+
+  bool _degraded = false;
+  String? _degradeReason;
+  final List<_Region> _slots = <_Region>[];
+
+  // ---------- 入口 ----------
+
+  CaretSiteTable build() {
+    final List<_Item> items = _parseItems((_) => false);
+    if (_degraded) return _buildDegraded(tex, _degradeReason ?? '配对失败');
+    final _Region root = _Region(0, tex.length, const <SlotStep>[], items);
+    final List<CaretSite> raw = <CaretSite>[];
+    _emit(root, raw);
+    return CaretSiteTable._(
+      tex,
+      _dedupe(raw),
+      List<SlotSpan>.unmodifiable(<SlotSpan>[
+        for (final _Region r in _slots) SlotSpan(r.path, r.start, r.end),
+      ]),
+      false,
+      null,
+    );
+  }
+
+  /// 按 offset 升序；同 offset **保留路径更深的那一个**（更具体的那层语义）。
+  ///
+  /// 例：`a{}b` 的 offset 2 既是「空槽内部」又是「组与 b 之间」——
+  /// tex 里往 2 插字符得到的正是 `a{x}b`（进了空槽），所以深路径才是对的。
+  List<CaretSite> _dedupe(List<CaretSite> raw) {
+    raw.sort((CaretSite a, CaretSite b) {
+      final int c = a.offset.compareTo(b.offset);
+      if (c != 0) return c;
+      return b.path.length.compareTo(a.path.length);
+    });
+    final List<CaretSite> out = <CaretSite>[];
+    for (final CaretSite s in raw) {
+      if (out.isNotEmpty && out.last.offset == s.offset) continue;
+      out.add(s);
+    }
+    return List<CaretSite>.unmodifiable(out);
+  }
+
+  /// 位点发射：区域两端 + 每个内容项的两端；空区域只有一个位点。
+  void _emit(_Region r, List<CaretSite> out) {
+    out.add(CaretSite(r.start, r.path, 0));
+    out.add(CaretSite(r.end, r.path, r.items.length));
+    for (var k = 0; k < r.items.length; k++) {
+      out.add(CaretSite(r.items[k].start, r.path, k));
+      out.add(CaretSite(r.items[k].end, r.path, k + 1));
+    }
+    for (final _Item it in r.items) {
+      for (final _Region s in it.slots) {
+        _emit(s, out);
+      }
+    }
+  }
+
+  // ---------- 内容列表 ----------
+
+  List<_Item> _parseItems(bool Function(_Tok) stop) {
+    final List<_Item> out = <_Item>[];
+    while (_i < _toks.length && !stop(_toks[_i])) {
+      final _Tok t = _toks[_i];
+      switch (t.kind) {
+        case _K.rbrace:
+          // 没有配对的 `}` → 配对失败 → 降级（设计稿 §2.3）
+          _degraded = true;
+          _degradeReason = '多余的 `}`（偏移 ${t.start}）';
+          _i++;
+        case _K.cmd:
+          out.add(_parseCmd(t));
+        case _K.sup:
+        case _K.sub:
+          out.add(_parseScript(t));
+        case _K.lbrace:
+          out.add(_parseGroup(t));
+        case _K.amp:
+        case _K.rowBreak:
+          _i++; // 顶层出现的分隔符：跳过
+        case _K.ch:
+          out.add(_Item(t.start, t.end));
+          _i++;
+      }
+    }
+    return out;
+  }
+
+  /// 裸花括号组 `{...}`：是区域，但**不算槽**（路径透传给父层）。
+  _Item _parseGroup(_Tok open) {
+    _i++; // 吃掉 `{`
+    final List<_Item> items = _parseItems((_Tok t) => t.kind == _K.rbrace);
+    final bool closed = _i < _toks.length && _toks[_i].kind == _K.rbrace;
+    final int interiorEnd = closed ? _toks[_i].start : tex.length;
+    if (closed) _i++;
+    final _Region region =
+        _Region(open.end, interiorEnd, const <SlotStep>[], items);
+    return _Item(
+      open.start,
+      closed ? interiorEnd + 1 : tex.length,
+      <_Region>[region],
+    );
+  }
+
+  /// 命令：只给 `_kArgSpec` 里的建槽，其余**透明**（不消费参数）。
+  _Item _parseCmd(_Tok t) {
+    if (t.name == 'begin') return _parseEnv(t);
+    if (t.name == 'end') {
+      _i++;
+      _readGroupName(); // 孤儿 `\end{...}`：跳过
+      return _Item(t.start, t.end);
+    }
+    final _ArgSpec? spec = _kArgSpec[t.name];
+    if (spec == null) {
+      _i++;
+      // `\left(` / `\right)` / `\big|`：分隔符属于结构命令，两者之间的夹缝不是位点
+      if (_kDelimCommands.contains(t.name) && _i < _toks.length) {
+        final int e = _toks[_i].end;
+        _i++;
+        return _Item(t.start, e);
+      }
+      // ★ 命令后紧跟 `{...}` → 那是它的**参数**，必须合成为一个内容项。
+      //   否则"命令与参数之间"会变成一个位点，往那儿注入会让命令吃掉注入内容 ——
+      //   实测 `\text{中文}` 的偏移 5 注入成 `\text\textcolor{...}{\cursor{}}{中文}` → 解析失败。
+      //   （对 `\alpha{x}` 这种"命令本来不吃参数"的写法，合并只是少一个位点，无副作用。）
+      if (_i < _toks.length && _toks[_i].kind == _K.lbrace) {
+        final _Item it = _parseArgItem(t.name, 0);
+        return _Item(t.start, it.end, it.slots);
+      }
+      return _Item(t.start, t.end);
+    }
+    _i++;
+    var end = t.end;
+    final List<_Region> slots = <_Region>[];
+
+    if (spec.optional && _isOpenBracket(_i)) {
+      final _Item it = _parseBracketArg(t.name);
+      slots.addAll(it.slots);
+      end = it.end;
+    }
+    for (var k = 0; k < spec.args; k++) {
+      if (_i >= _toks.length) break; // 参数还没打（打字中间态）→ 容忍
+      final _Item it = _parseArgItem(t.name, k);
+      slots.addAll(it.slots);
+      end = it.end;
+    }
+    return _Item(t.start, end, slots);
+  }
+
+  bool _isOpenBracket(int at) =>
+      at < _toks.length &&
+      _toks[at].kind == _K.ch &&
+      tex[_toks[at].start] == '[';
+
+  /// `\sqrt[3]{x}` 的可选参数 `[3]`
+  _Item _parseBracketArg(String command) {
+    final _Tok open = _toks[_i];
+    _i++;
+    final List<_Item> items =
+        _parseItems((_Tok k) => k.kind == _K.ch && tex[k.start] == ']');
+    final bool closed = _i < _toks.length &&
+        _toks[_i].kind == _K.ch &&
+        tex[_toks[_i].start] == ']';
+    final int interiorEnd = closed ? _toks[_i].start : tex.length;
+    if (closed) _i++;
+    final _Region r = _Region(
+      open.end,
+      interiorEnd,
+      <SlotStep>[SlotStep(command, -1)],
+      items,
+      isSlot: true,
+    );
+    _slots.add(r);
+    return _Item(open.start, closed ? interiorEnd + 1 : tex.length, <_Region>[r]);
+  }
+
+  /// 一个参数位：`{...}` 组，或单个原子 token（`\frac12` 这种紧凑写法）。
+  _Item _parseArgItem(String command, int argIndex) {
+    final List<SlotStep> path = <SlotStep>[SlotStep(command, argIndex)];
+    final _Tok t = _toks[_i];
+
+    if (t.kind == _K.lbrace) {
+      _i++;
+      final List<_Item> items = _parseItems((_Tok k) => k.kind == _K.rbrace);
+      final bool closed = _i < _toks.length && _toks[_i].kind == _K.rbrace;
+      final int interiorEnd = closed ? _toks[_i].start : tex.length;
+      if (closed) _i++;
+      final _Region r = _Region(t.end, interiorEnd, path, items, isSlot: true);
+      _slots.add(r);
+      return _Item(
+        t.start,
+        closed ? interiorEnd + 1 : tex.length,
+        <_Region>[r],
+      );
+    }
+
+    final _Item inner = _parseSingle();
+    final _Region r =
+        _Region(inner.start, inner.end, path, <_Item>[inner], isSlot: true);
+    _slots.add(r);
+    return _Item(inner.start, inner.end, <_Region>[r]);
+  }
+
+  /// 上标 / 下标：`^{...}` `^x`
+  _Item _parseScript(_Tok t) {
+    final String name = t.kind == _K.sup ? '^' : '_';
+    _i++;
+    if (_i >= _toks.length) return _Item(t.start, t.end);
+    final _Item it = _parseArgItem(name, 0);
+    return _Item(t.start, it.end, it.slots);
+  }
+
+  /// 单个原子（命令 / 字符 / 组）—— 供单 token 参数使用
+  _Item _parseSingle() {
+    final _Tok t = _toks[_i];
+    switch (t.kind) {
+      case _K.lbrace:
+        return _parseGroup(t);
+      case _K.cmd:
+        return _parseCmd(t);
+      case _K.sup:
+      case _K.sub:
+        return _parseScript(t);
+      case _K.ch:
+      case _K.rbrace:
+      case _K.amp:
+      case _K.rowBreak:
+        _i++;
+        return _Item(t.start, t.end);
+    }
+  }
+
+  // ---------- 多行环境 ----------
+
+  /// `\begin{aligned} 格 & 格 \\ 格 & 格 \end{aligned}`
+  /// 按 `&`（列）与 `\\`（行）切成若干**格**，每格是一个槽（S5 的行列导航靠它）。
+  _Item _parseEnv(_Tok begin) {
+    _i++; // 吃掉 begin
+    final String envName = _readGroupName();
+    final String label = envName.isEmpty ? 'env' : envName;
+    final List<_Region> cells = <_Region>[];
+    var row = 0;
+    var col = 0;
+    var cellStart = _i < _toks.length ? _toks[_i].start : tex.length;
+    var end = begin.end;
+
+    while (true) {
+      final List<_Item> items = _parseItems((_Tok t) =>
+          t.kind == _K.amp ||
+          t.kind == _K.rowBreak ||
+          (t.kind == _K.cmd && t.name == 'end'));
+
+      final int cellEnd = _i < _toks.length ? _toks[_i].start : tex.length;
+      final _Region r = _Region(
+        cellStart,
+        cellEnd,
+        <SlotStep>[SlotStep(label, 0, row: row, col: col)],
+        items,
+        isSlot: true,
+      );
+      cells.add(r);
+      _slots.add(r);
+
+      if (_i >= _toks.length) {
+        end = tex.length; // 未闭合的环境：吃到文末（打字中间态）
+        break;
+      }
+      final _Tok t = _toks[_i];
+      if (t.kind == _K.cmd && t.name == 'end') {
+        _i++;
+        _readGroupName();
+        end = _i > 0 ? _toks[_i - 1].end : t.end;
+        break;
+      }
+      _i++; // 吃掉 `&` 或 `\\`
+      cellStart = t.end;
+      if (t.kind == _K.rowBreak) {
+        row++;
+        col = 0;
+      } else {
+        col++;
+      }
+    }
+    return _Item(begin.start, end, cells);
+  }
+
+  /// 读 `{name}`（吃掉整组），返回组内原始文本
+  String _readGroupName() {
+    if (_i >= _toks.length || _toks[_i].kind != _K.lbrace) return '';
+    _i++;
+    final StringBuffer sb = StringBuffer();
+    while (_i < _toks.length && _toks[_i].kind != _K.rbrace) {
+      final _Tok t = _toks[_i];
+      sb.write(tex.substring(t.start, t.end));
+      _i++;
+    }
+    if (_i < _toks.length) _i++; // 吃掉 `}`
+    return sb.toString();
+  }
+}

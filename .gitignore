@@ -1,0 +1,35 @@
+# ─────────────────────────────────────────────────────────────
+#  数语引擎（mathlang）· 仓库级忽略规则
+#
+#  ★ 仓库根 = projects\mathlang\（**与流水账不同**：那边仓库在 app\，
+#    本项目把 notes\ 也纳入版本管理 —— 设计文档才是这个项目最贵的资产）
+#
+#  app\ 内部的 Flutter 产物由 app\.gitignore 负责：
+#    build/ · .dart_tool/ · .idea/ · *.iml · .flutter-plugins-dependencies …
+# ─────────────────────────────────────────────────────────────
+
+# ── 运行时 / 临时文件（脚本用，不入库）──
+scripts/cmd.txt
+scripts/run.log
+
+# ── 发布产物（目录保留、内容不入库）──
+dist/*
+!dist/.gitkeep
+
+# ── 个人数据样本（可能含真实作业内容）──
+references/*
+!references/.gitkeep
+test_data/*
+!test_data/.gitkeep
+
+# ── ★ 签名密钥：绝不入库 ──
+#    换密钥 = 已装用户无法覆盖升级（流水账的硬约束，本项目同样适用）
+signing/*
+!signing/.gitkeep
+!signing/README.md
+
+# ── 杂项 ──
+*.tmp
+*.bak
+Thumbs.db
+desktop.ini
