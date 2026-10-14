@@ -80,6 +80,24 @@ int matchBrace(String tex, int open) {
   return -1;
 }
 
+/// 这些命令有**若干参数不参与渲染**（颜色名、尺寸、间距），词法必须**整段跳过**。
+///
+/// ★★ 为什么这条很关键（2026-10-14 实测发现，属**现存 bug**）：
+///   点击定位靠"**引擎叶盒 ↔ 我们的可见原子**"一一对应（`hit_test` + `leaf_boxes`），
+///   数量不等时 `hitTestMathTex` 会**静默返回 null**（点公式没反应、也不报错 —— S1 上过这个当）。
+///   而给光标注入的 `\textcolor{#1E88E5}{\cursor{}}` 里，颜色名会被当成 **9 个可见原子**，
+///   引擎却一个字形都不画 → 数量天然不等 → **含光标那个单元里点公式会失效**。
+///   这条修法也是 S3-5「空槽占位」能接进渲染的前置条件。
+///
+/// 值 = 要跳过的**参数组个数**（`\textcolor{颜色}{内容}` 只跳第一个，内容照常递归）。
+const Map<String, int> kNonRenderedArgCount = <String, int>{
+  'textcolor': 1, // \textcolor{颜色}{内容}
+  'color': 1, // \color{颜色}
+  'rule': 2, // \rule{宽}{高}
+  'hspace': 1, 'kern': 1, 'mspace': 1, 'vspace': 1, 'hskip': 1, 'vskip': 1,
+  'phantom': 1, 'hphantom': 1, 'vphantom': 1, // 占位但不画
+};
+
 /// 把 tex 扫描成「可见原子」列表（每个原子的 `[start,end)` 是相对该段 tex 的源区间）。
 ///
 /// ★ **顺序 = 渲染顺序（= 叶盒顺序）**，不是源码顺序！
@@ -133,6 +151,35 @@ List<VisibleAtom> lexVisibleAtoms(String tex) {
               continue;
             }
           }
+        }
+
+        // ★ 参数不参与渲染的命令：整段跳过那些参数（否则颜色名/尺寸会被当成可见原子）
+        final int? skipArgs = kNonRenderedArgCount[name];
+        if (skipArgs != null) {
+          var k = j;
+          for (var n = 0; n < skipArgs; n++) {
+            while (k < tex.length && tex[k] == ' ') {
+              k++;
+            }
+            if (k < tex.length && tex[k] == '{') {
+              final int close = matchBrace(tex, k);
+              k = close < 0 ? tex.length : close + 1;
+            } else if (k < tex.length) {
+              // 裸参数写法（`\kern 2pt`、`\hspace -1em`）：跳过"数字 + 单位"这一小段记号
+              while (k < tex.length &&
+                  (tex[k].codeUnitAt(0) == 0x2D || // -
+                      tex[k].codeUnitAt(0) == 0x2B || // +
+                      tex[k].codeUnitAt(0) == 0x2E || // .
+                      (tex.codeUnitAt(k) >= 0x30 && tex.codeUnitAt(k) <= 0x39))) {
+                k++;
+              }
+              while (k < tex.length && _isLetter(tex.codeUnitAt(k))) {
+                k++;
+              }
+            }
+          }
+          i = k;
+          continue;
         }
 
         if (!kStructureCommands.contains(name)) {
