@@ -8,14 +8,17 @@
 //   见交接快照 §十二。
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:mathlang/render/caret_sites.dart';
 import 'package:mathlang/render/slot_marks.dart';
 import 'package:mathlang/render/visible_atoms.dart';
 
 void main() {
   group('占位串的选取', () {
-    test(r'占位用 `\rule`（结构命令），不是 `\square`（那是可见原子）', () {
-      expect(kEmptySlotTex.contains(r'\rule'), isTrue);
-      expect(kEmptySlotTex.contains(r'\square'), isFalse);
+    test(r'占位用 `\square`：它天然"1 个可见原子 ↔ 引擎 1 个叶盒"', () {
+      expect(kEmptySlotTex.contains(r'\square'), isTrue);
+      expect(lexVisibleAtoms(kEmptySlotTex).length, 1,
+          reason: '颜色名已被 visible_atoms 跳过 → 只剩 \\square 这一个原子，与叶盒一一对应');
+      expect(lexVisibleAtoms(kCurrentSlotTex).length, 1);
     });
 
     test('当前槽用光标蓝，普通空槽用浅灰', () {
@@ -60,13 +63,34 @@ void main() {
     });
   });
 
-  group('★ 接进渲染的前置条件（当前**未满足**，所以还没接）', () {
-    test('注入前后可见原子数必须一致', () {
-      final SlotMarkResult r = injectSlotMarks(r'\frac{}{}', caretRel: -1);
-      expect(lexVisibleAtoms(r.tex).length, lexVisibleAtoms(r'\frac{}{}').length,
-          reason: '★ 数量不等 → hitTestMathTex 静默返回 null（点公式失效且不报错）');
-    }, skip: '占位串里的颜色名 `#B0BEC5` 被词法器当成可见原子 —— '
-        '要先修 visible_atoms.dart：跳过不参与渲染的参数。'
-        '同一条修法也会修掉现存的 `\\cursor{}` 注入问题。');
+  group('★ 真正的不变量：注入后"可见原子数"的增量 == 空槽数', () {
+    // 点击定位要求「我们的可见原子数 == 引擎叶盒数」。占位是**一个正常字形**（1↔1），
+    // 所以原子数会随空槽数一起增加 —— 要守的是"**增量恰好等于空槽数**"（不多不少）。
+    for (final String tex in <String>[
+      r'\frac{}{}',
+      r'\frac{a}{}',
+      r'\sqrt{}',
+      r'\frac{a}{b}',
+      r'\frac{-b\pm\sqrt{b^2-4ac}}{2a}',
+    ]) {
+      test('tex = $tex', () {
+        final SlotMarkResult r = injectSlotMarks(tex, caretRel: -1);
+        final int before = lexVisibleAtoms(tex).length;
+        final int after = lexVisibleAtoms(r.tex).length;
+        final int empties = RegExp(RegExp.escape(kEmptySlotTex))
+            .allMatches(r.tex)
+            .length;
+        expect(after, before + empties,
+            reason: '每个空槽恰好 +1 个原子（占位字形）；多一个少一个都会让点击定位错位');
+      });
+    }
+
+    test('同时注入光标后也是"每处 +1"（光标条 1 个原子）', () {
+      const String tex = r'\frac{a}{}';
+      final SlotMarkResult m = injectSlotMarks(tex, caretRel: 6);
+      final String withCursor = injectCursor(m.tex, m.rel).tex;
+      expect(lexVisibleAtoms(withCursor).length, lexVisibleAtoms(tex).length + 2,
+          reason: '1 个空槽占位 + 1 个光标条');
+    });
   });
 }

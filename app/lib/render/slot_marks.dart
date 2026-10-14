@@ -10,23 +10,23 @@
 //   当前槽用光标蓝区分。真正的"1px 虚线框 + 淡蓝底"要自绘层，留给视觉规范一起做。
 //   代价：占位线会占排版宽度 —— 这正是我们要的（空槽本来就该占位，用户才会去点/Tab）。
 //
-// ★★ 为什么用 `\rule` 而不是 `\square`：**必须不给 tex 增加"可见原子"**。
-//   点击定位（`hitTestMathTex`）靠"叶盒 ↔ 可见原子"一一对应，叶盒数是**渲染后的**、
-//   原子数是按源码词法出的 —— 多一个可见字形就会让两者对不上，
-//   `hitTestMathTex` 会**静默返回 null**（点公式就失效了）。
-//   `\rule` 在 `visible_atoms.kStructureCommands` 里 → 它**不算可见原子** ✓
-//   所以注入前后原子数不变，点击定位不受影响。这条有测试钉住。
+// ★★ 为什么占位用 `\square`（一个正常可见字形）而不是画一条 `\rule`：
+//   点击定位的真正不变量是「**我们的可见原子数 == 引擎的叶盒数**」。
+//   · `\square` → **1 个原子 + 1 个叶盒** ✓ 天然对齐
+//   · `\rule`  → 词法上是**结构命令（0 原子）**，但引擎很可能照样给它一个盒 ✗ 反而危险
+//   所以选"原子与盒一一对应"的那个。（`\textcolor` 的颜色名曾经虚增 9 个原子，
+//   那条已在 `visible_atoms.kNonRenderedArgCount` 修掉，见 injection_invariant_test。）
 //
 // **纯 Dart。**
 
 import 'caret_sites.dart';
 import 'site_adjacency.dart';
 
-/// 空槽占位（浅灰细线）
-const String kEmptySlotTex = r'\textcolor{#B0BEC5}{\rule{0.5em}{0.07em}}';
+/// 空槽占位（浅灰小方框）
+const String kEmptySlotTex = r'\textcolor{#B0BEC5}{\square}';
 
 /// 当前槽占位（光标蓝 —— 与 §6.2 的光标同色系）
-const String kCurrentSlotTex = r'\textcolor{#1E88E5}{\rule{0.5em}{0.09em}}';
+const String kCurrentSlotTex = r'\textcolor{#1E88E5}{\square}';
 
 /// 注入结果：注入后的 tex + **光标在注入后 tex 里的相对偏移**（供继续注入光标用）
 class SlotMarkResult {

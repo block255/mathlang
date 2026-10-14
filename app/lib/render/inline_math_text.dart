@@ -12,6 +12,7 @@ import 'package:flutter_math_fork/flutter_math.dart';
 
 import 'caret_sites.dart';
 import 'projection.dart';
+import 'slot_marks.dart';
 /// 行内公式与正文的对齐方式。
 /// S1 定稿：**默认 `baseline`**（排版上正确的语义），保留 `middle` 作为回退。
 enum MathAlignMode {
@@ -154,14 +155,16 @@ class _InlineMathTextState extends State<InlineMathText> {
     // 光标在这个行内公式里 → 注入引擎内置的 `\cursor{}`（默认已注册）。
     // ★ S3-1：注入点走**位点吸附**（caret_sites.dart），不再用旧的 snapCaretInTex ——
     //   后者只防"切开命令名"，会把光标留在 `}{` 这类语法夹缝里，注入后公式渲染是错的。
-    //
-    // ⚠️ S3-5 的空槽占位**暂时没接在这里**：`slot_marks.dart` 准备好了，但注入会虚增"可见原子"
-    //   （`\textcolor{#B0BEC5}{…}` 的颜色名被词法器当成原子）→ 与引擎叶盒数对不上 →
-    //   `hitTestMathTex` 会**静默失效**。要先修 `visible_atoms.dart`（跳过"不渲染的参数"），
-    //   那条修法同时也修掉**现存**的 `\cursor{}` 注入问题。见交接快照 §十二。
+    // ★ S3-5：先注入**空槽占位**（它给光标偏移做了补偿），再注入光标 —— 顺序不能反。
     final int? c = widget.caretOffset;
-    if (c != null && c >= absStart && c <= absEnd) {
-      tex = injectCursor(tex, c - absStart).tex;
+    final bool caretHere = c != null && c >= absStart && c <= absEnd;
+    final SlotMarkResult marks = injectSlotMarks(
+      tex,
+      caretRel: caretHere ? c - absStart : -1,
+    );
+    tex = marks.tex;
+    if (caretHere) {
+      tex = injectCursor(tex, marks.rel).tex;
     }
 
     final key = _keys.putIfAbsent(absStart, () => GlobalKey());

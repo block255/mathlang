@@ -35,6 +35,7 @@ import '../render/caret_sites.dart';
 import '../render/hit_map.dart';
 import '../render/inline_math_text.dart';
 import '../render/projection.dart';
+import '../render/slot_marks.dart';
 import 'page_sheet.dart';
 import 'unit_pool.dart';
 
@@ -709,10 +710,14 @@ class _DocViewState extends State<DocView> {
 
       case BlockType.math:
         // 行间公式：光标靠注入 `\cursor{}`（走位点吸附，见 caret_sites.dart）
-        // ⚠️ S3-5 的空槽占位暂未接上（要先修 `visible_atoms` 的"不渲染参数"，见交接快照 §十二）
+        // ★ S3-5：先注入空槽占位（它给光标偏移做了补偿），再注入光标 —— 顺序不能反
+        final SlotMarkResult marks = injectSlotMarks(
+          text,
+          caretRel: caretAbs == null ? -1 : caretAbs - u.renderBase,
+        );
         final String tex = caretAbs == null
-            ? text
-            : injectCursor(text, caretAbs - u.renderBase).tex;
+            ? marks.tex
+            : injectCursor(marks.tex, marks.rel).tex;
         return Center(
           child: Math.tex(
             tex,
