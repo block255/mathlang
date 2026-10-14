@@ -19,6 +19,8 @@ import '../core/block.dart';
 import '../core/doc_buffer.dart';
 import '../core/doc_settings.dart';
 import '../render/caret_sites.dart' show kCaretColorValue;
+import '../render/math_nav.dart';
+import '../render/smart_delete.dart';
 import 'doc_view.dart';
 import 'platform_text_diff.dart';
 import 'text_input_surface.dart';
@@ -208,12 +210,6 @@ class EditViewState extends State<EditView> {
 
   // ---------------- 命令键（键事件通道）----------------
 
-  void _moveCaret(int delta, {required bool extend}) {
-    final int next = (_buf.caret + delta).clamp(0, _buf.length);
-    if (next == _buf.caret) return;
-    _buf.setCaret(next, extend: extend);
-  }
-
   KeyEventResult _onKey(FocusNode node, KeyEvent event) {
     if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
       return KeyEventResult.ignored;
@@ -230,19 +226,35 @@ class EditViewState extends State<EditView> {
     final LogicalKeyboardKey k = event.logicalKey;
 
     if (k == LogicalKeyboardKey.backspace) {
-      _mutate(_buf.deleteBackward);
+      _applyEdit(smartEditAt(_buf.buf, _buf.caret, forward: false));
       return KeyEventResult.handled;
     }
     if (k == LogicalKeyboardKey.delete) {
-      _mutate(_buf.deleteForward);
+      _applyEdit(smartEditAt(_buf.buf, _buf.caret, forward: true));
       return KeyEventResult.handled;
     }
     if (k == LogicalKeyboardKey.arrowLeft) {
-      _moveCaret(-1, extend: shift);
+      _buf.setCaret(prevCaretOffset(_buf.buf, _buf.caret), extend: shift);
       return KeyEventResult.handled;
     }
     if (k == LogicalKeyboardKey.arrowRight) {
-      _moveCaret(1, extend: shift);
+      _buf.setCaret(nextCaretOffset(_buf.buf, _buf.caret), extend: shift);
+      return KeyEventResult.handled;
+    }
+    // ★ `↑↓` = **竖直邻接**（分式分子↔分母、根号次数、大算符上下限）。
+    //   没有竖直邻居时**不移动**（§三：不要乱跳）—— 所以 null 也算 handled。
+    if (k == LogicalKeyboardKey.arrowUp || k == LogicalKeyboardKey.arrowDown) {
+      final int? to =
+          verticalStopAt(_buf.buf, _buf.caret, up: k == LogicalKeyboardKey.arrowUp);
+      if (to != null) _buf.setCaret(to, extend: shift);
+      return KeyEventResult.handled;
+    }
+    // ★ `Tab` = **走槽**（§十-①：下一个空槽 → 槽内容末尾 → 走出公式）。
+    //   不在公式里时返回 null → 让给 Flutter 的焦点遍历。
+    if (k == LogicalKeyboardKey.tab) {
+      final int? to = tabStopAt(_buf.buf, _buf.caret, forward: !shift);
+      if (to == null) return KeyEventResult.ignored;
+      _buf.setCaret(to);
       return KeyEventResult.handled;
     }
     if (k == LogicalKeyboardKey.home) {
@@ -254,8 +266,23 @@ class EditViewState extends State<EditView> {
       return KeyEventResult.handled;
     }
     // `Enter` **不在这里处理**：它走文本通道（textarea 自己插 `\n` → formatter 变成 `\n\n`）。
-    // `↑↓`（竖直邻接）与 `Tab`（走槽）属于 S3-3，届时接在这张表上。
     return KeyEventResult.ignored;
+  }
+
+  /// 把一次「结构感知删除」的处置落到缓冲区上。
+  ///
+  /// - `SmartEdit.remove` → 真删（**区间替换**，所以撤销栈里是"一次编辑"）
+  /// - `SmartEdit.move` → **槽间跨越**：只跳不删（§4.2）
+  /// - `SmartEdit.none` → 边界上没什么可删
+  void _applyEdit(SmartEdit e) {
+    if (e.isNone) return;
+    if (e.deletes) {
+      _mutate(() => _buf.replace(e.from!, e.to!, ''));
+      // `replace` 会把光标放到删除点之后；跨越删除后要落回起点（用户感知是"删掉那一个符号"）
+      if (_buf.caret != e.caret) _buf.setCaret(e.caret);
+    } else {
+      _buf.setCaret(e.caret);
+    }
   }
 
   int _lineStart(int offset) {

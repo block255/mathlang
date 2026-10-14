@@ -49,7 +49,7 @@ List<VisibleAtom> _shift(List<VisibleAtom> a, int d) => <VisibleAtom>[
   }
   if (k >= tex.length) return (from: k, to: k, next: k);
   if (tex[k] == '{') {
-    final int close = _matchBrace(tex, k);
+    final int close = matchBrace(tex, k);
     return close > 0
         ? (from: k + 1, to: close, next: close + 1)
         : (from: k + 1, to: tex.length, next: tex.length);
@@ -65,7 +65,9 @@ List<VisibleAtom> _shift(List<VisibleAtom> a, int d) => <VisibleAtom>[
 }
 
 /// 返回与 `tex[open]`（必须是 `{`）配对的 `}` 的下标；找不到返回 -1
-int _matchBrace(String tex, int open) {
+///
+/// （公开：`smart_delete.dart` 的"删整个花括号组"也要用它，避免两处各写一份配对逻辑。）
+int matchBrace(String tex, int open) {
   var depth = 0;
   for (var i = open; i < tex.length; i++) {
     if (tex[i] == '{') {

@@ -444,15 +444,64 @@ class _Parser {
     final _Region root = _Region(0, tex.length, const <SlotStep>[], items);
     final List<CaretSite> raw = <CaretSite>[];
     _emit(root, raw);
+    final List<SlotSpan> slots = _withFullPaths(<SlotSpan>[
+      for (final _Region r in _slots) SlotSpan(r.path, r.start, r.end),
+    ]);
     return CaretSiteTable._(
       tex,
-      _dedupe(raw),
-      List<SlotSpan>.unmodifiable(<SlotSpan>[
-        for (final _Region r in _slots) SlotSpan(r.path, r.start, r.end),
+      _dedupe(<CaretSite>[
+        for (final CaretSite s in raw)
+          CaretSite(s.offset, _fullPathAt(slots, s), s.indexInSlot),
       ]),
+      List<SlotSpan>.unmodifiable(slots),
       false,
       null,
     );
+  }
+
+  /// 把「单步路径」补成**从根到该槽的完整链**。
+  ///
+  /// ★ 为什么需要（2026-10-14 S3-3 实测发现）：解析器建槽时只记了"我是谁的哪个参数"
+  /// （`SlotStep('frac', 0)`），**没把祖先拼进去** → 同一公式里
+  /// `\frac{a}{b}+\frac{c}{d}` 的两个分子路径**完全一样**，槽序与竖直邻接就分不开了。
+  ///
+  /// 槽区间天然是**嵌套包含**的（子槽的 `[start,end]` 一定被父槽含住），
+  /// 所以按包含关系补父链既简单又不会错：祖先 = 严格包含我的那些槽，外层在前。
+  List<SlotSpan> _withFullPaths(List<SlotSpan> spans) {
+    final List<SlotSpan> out = <SlotSpan>[];
+    for (final SlotSpan s in spans) {
+      final List<SlotSpan> ancestors = <SlotSpan>[
+        for (final SlotSpan o in spans)
+          if (_sameArgs(o, s) == false && _contains(o, s)) o,
+      ]..sort((SlotSpan a, SlotSpan b) => a.start.compareTo(b.start));
+      out.add(SlotSpan(
+        <SlotStep>[
+          for (final SlotSpan a in ancestors) a.path.last,
+          s.path.last,
+        ],
+        s.start,
+        s.end,
+      ));
+    }
+    return out;
+  }
+
+  bool _contains(SlotSpan outer, SlotSpan inner) =>
+      outer.start <= inner.start &&
+      outer.end >= inner.end &&
+      (outer.start < inner.start || outer.end > inner.end);
+
+  bool _sameArgs(SlotSpan a, SlotSpan b) =>
+      a.start == b.start && a.end == b.end && a.path.last == b.path.last;
+
+  /// 某个位点的完整槽路径 = **含住它的最内层槽**的路径（不含任何槽 → 主路径 `[]`）
+  List<SlotStep> _fullPathAt(List<SlotSpan> slots, CaretSite s) {
+    SlotSpan? best;
+    for (final SlotSpan sp in slots) {
+      if (s.offset < sp.start || s.offset > sp.end) continue;
+      if (best == null || sp.path.length > best.path.length) best = sp;
+    }
+    return best?.path ?? s.path;
   }
 
   /// 按 offset 升序；同 offset **保留路径更深的那一个**（更具体的那层语义）。
