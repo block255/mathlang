@@ -433,15 +433,8 @@ class _DocViewState extends State<DocView> {
       tex: renderTex, // ★ 必须用渲染时的 tex（见 injection_map.dart）
       atoms: hitAtoms, // ★ 且原子表要剔除光标条（它的盒会被最小宽度过滤掉）
     );
-    if (hit.offset == null || hit.atomIndex < 0) return;
-    final int? src = sourceOffsetOfHit(
-      source: rawTex,
-      renderTex: renderTex,
-      hitAtoms: hitAtoms,
-      index: hit.atomIndex,
-      leftHalf: hit.offset == hitAtoms[hit.atomIndex].start,
-    );
-    if (src == null) return;
+    if (hit.offset == null) return;
+    final int src = renderToSourceOffset(renderTex, hit.offset!);
     cb(u.renderBase + buildCaretSites(rawTex).snap(src).offset);
   }
 
@@ -460,15 +453,8 @@ class _DocViewState extends State<DocView> {
       tex: renderTex, // ★ 同上：必须是渲染用的那份
       atoms: hitAtoms, // ★ 且剔除光标条
     );
-    if (hit.offset == null || hit.atomIndex < 0) return;
-    final int? src = sourceOffsetOfHit(
-      source: seg.tex,
-      renderTex: renderTex,
-      hitAtoms: hitAtoms,
-      index: hit.atomIndex,
-      leftHalf: hit.offset == hitAtoms[hit.atomIndex].start,
-    );
-    if (src == null) return;
+    if (hit.offset == null) return;
+    final int src = renderToSourceOffset(renderTex, hit.offset!);
     // ★ 位点吸附：落点必须是合法位点（设计稿 §2.4 的 P3）
     final int rel = buildCaretSites(seg.tex).snap(src).offset;
     cb(u.renderBase + seg.start + rel);

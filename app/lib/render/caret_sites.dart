@@ -198,6 +198,15 @@ const int kCaretColorValue = 0xFF1E88E5;
 final String kCaretTexColor =
     '#${(kCaretColorValue & 0xFFFFFF).toRadixString(16).padLeft(6, '0').toUpperCase()}';
 
+/// **光标注入串**（`injectCursor` 插进 tex 的那一段）。
+///
+/// ★ 公开它是有用途的：点击定位要把"渲染 tex 的偏移"换算回原始源码，
+/// 而那要靠**认出哪些字符是我们插进去的**（见 `injection_map.dart`）。
+final String kCursorTex = '\\textcolor{$kCaretTexColor}{\\cursor{}}';
+
+/// **`\text{}` 被拆开时**插入的那一段：`}`（收掉前半） + 光标 + `\text{`（起后半）。
+final String kCursorSplitTex = '}$kCursorTex\\text{';
+
 /// 「把光标画进数学内部」的结果。
 class CursorInjection {
   const CursorInjection(this.tex, this.offset);
