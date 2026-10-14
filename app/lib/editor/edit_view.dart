@@ -20,6 +20,7 @@ import '../core/doc_buffer.dart';
 import '../core/doc_settings.dart';
 import '../render/caret_sites.dart' show kCaretColorValue;
 import '../render/math_nav.dart';
+import '../render/normalize.dart';
 import '../render/smart_delete.dart';
 import 'doc_view.dart';
 import 'platform_text_diff.dart';
@@ -198,8 +199,26 @@ class EditViewState extends State<EditView> {
     if (_focus.hasFocus) {
       _input.ensureAttached();
     } else {
+      // ★ **提交点**（§七）：失焦时把光标所在的数学段 normalize 一遍。
+      //   绝不在逐击键时回收 —— 否则用户删到一半，结构就被自动撤走了。
+      _normalizeOnCommit();
       _input.detach();
     }
+  }
+
+  /// 提交点：**回收全空结构 + 去掉单原子参数的多余花括号**（设计稿 §七）。
+  ///
+  /// 只处理**光标所在的那一个数学段**（其余段落等它们各自成为提交点时再处理）——
+  /// 这样既不用扫全文，也不会在用户没在看的地方悄悄改数据。
+  void _normalizeOnCommit() {
+    if (!_alive) return;
+    final MathRegion? r = mathRegionAt(_buf.buf, _buf.caret);
+    if (r == null) return;
+    final NormalizeResult nr = normalizeTex(r.tex, _buf.caret - r.contentStart);
+    if (!nr.changed) return;
+    final int caret = r.contentStart + nr.caret;
+    _mutate(() => _buf.replace(r.contentStart, r.contentEnd, nr.tex));
+    _buf.setCaret(caret);
   }
 
   /// 让输入设备拿到焦点（必须由**用户手势**触发，浏览器才肯把 IME 接上）
