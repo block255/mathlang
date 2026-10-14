@@ -300,7 +300,7 @@ void main() {
       expect(buf.caret, 7);
     });
 
-    testWidgets('Ctrl 组合键不拦截（留给撤销等，S3 未做）', (WidgetTester tester) async {
+    testWidgets('Ctrl 组合键不拦截（留给撤销与后面的键）', (WidgetTester tester) async {
       final DocBuffer buf = DocBuffer('abc');
       await _mount(tester, buf);
       buf.setCaret(3);
@@ -312,6 +312,36 @@ void main() {
       await tester.pump();
 
       expect(buf.buf, 'abc', reason: 'Ctrl+退格不该被当成普通退格');
+    });
+
+    testWidgets('★ Ctrl+Z 撤销 / Ctrl+Shift+Z 重做（结构删除要能一步撤回）',
+        (WidgetTester tester) async {
+      final DocBuffer buf = DocBuffer(r'$a\pm b$');
+      await _mount(tester, buf);
+      // 把光标放到 `\pm` 之后（`\pm` 是 [2,6)）
+      buf.setCaret(6);
+      await tester.pump();
+
+      // 一次退格 = 整个 `\pm` 一次删光
+      await tester.sendKeyEvent(LogicalKeyboardKey.backspace);
+      await tester.pump();
+      expect(buf.buf, r'$a b$', reason: '原子级删除：`\\pm` 一次消失');
+
+      // ★ 一次 Ctrl+Z 就把整个 `\pm` 撤回来（因为删除是**一次区间替换**）
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyZ);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pump();
+      expect(buf.buf, r'$a\pm b$', reason: '删除 = 一步，撤销 = 一步');
+
+      // 重做
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyZ);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pump();
+      expect(buf.buf, r'$a b$');
     });
   });
 

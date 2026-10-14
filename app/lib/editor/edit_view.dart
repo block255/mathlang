@@ -219,11 +219,33 @@ class EditViewState extends State<EditView> {
     if (_input.isComposing) return KeyEventResult.ignored;
 
     final HardwareKeyboard kb = HardwareKeyboard.instance;
-    if (kb.isControlPressed || kb.isMetaPressed || kb.isAltPressed) {
-      return KeyEventResult.ignored; // Ctrl/⌘ 组合键留给后面的撤销等（S3 未做）
-    }
     final bool shift = kb.isShiftPressed;
     final LogicalKeyboardKey k = event.logicalKey;
+
+    // ★ `Ctrl/⌘ + Z` = 撤销、`Ctrl/⌘ + Shift + Z` / `Ctrl + Y` = 重做。
+    //
+    // 撤销栈在 `DocBuffer` 里**从 S0 就建好了**，只是之前一直没接键（所以"删了就回不来"）。
+    // ★ 而 S3-4 的结构删除是"**一次区间替换**" —— 所以
+    //   **一次结构删除 = 一步撤销**（`\frac{}{}` 9 个字符一次删、一次就撤回来）。
+    //   这正是当初坚持「一次语义编辑只写一次缓冲区」的回报。
+    if (kb.isControlPressed || kb.isMetaPressed) {
+      if (k == LogicalKeyboardKey.keyZ) {
+        _mutate(() {
+          if (shift) {
+            _buf.redo();
+          } else {
+            _buf.undo();
+          }
+        });
+        return KeyEventResult.handled;
+      }
+      if (k == LogicalKeyboardKey.keyY) {
+        _mutate(() => _buf.redo());
+        return KeyEventResult.handled;
+      }
+      return KeyEventResult.ignored; // 其余 Ctrl 组合键留给后面（全选等）
+    }
+    if (kb.isAltPressed) return KeyEventResult.ignored;
 
     if (k == LogicalKeyboardKey.backspace) {
       _applyEdit(smartEditAt(_buf.buf, _buf.caret, forward: false));
