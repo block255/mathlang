@@ -26,6 +26,7 @@ class InlineMathText extends StatefulWidget {
     required this.source,
     this.baseOffset = 0,
     this.caretOffset,
+    this.composingText = '',
     this.textStyle,
     this.mathFontSize = 16,
     this.align = MathAlignMode.baseline,
@@ -43,6 +44,14 @@ class InlineMathText extends StatefulWidget {
 
   /// 文档绝对光标偏移（`null` = 不画光标）
   final int? caretOffset;
+
+  /// ★ 组合中间态文本（拼音串）：**只进排版，不进缓冲区**。
+  ///
+  /// 为什么要接进排版而不是叠画（2026-10-14 用户实测提出）：叠画不会让后面的字让位，
+  /// 拼音会**盖住**后文。接进排版后后面的字真的被推开、超出行宽还会折行 —— 与真人编辑器的观感一致。
+  ///
+  /// 插入点就是 [caretOffset]：光标条在前、拼音紧随其后（插入点不动，拼音向右展开）。
+  final String composingText;
 
   final TextStyle? textStyle;
   final double mathFontSize;
@@ -85,6 +94,10 @@ class _InlineMathTextState extends State<InlineMathText> {
     for (final s in segs) {
       if (s.isMath) {
         children.add(_mathSpan(s));
+        // 光标在这个行内公式里 → 组合串接在公式**之后**（拼音不是数学源码，塞进 `$...$` 会破坏渲染）
+        if (_caretInSegment(s) && widget.composingText.isNotEmpty) {
+          children.add(_composingSpan());
+        }
         continue;
       }
       children.addAll(_textSpansWithCaret(s));
@@ -95,7 +108,7 @@ class _InlineMathTextState extends State<InlineMathText> {
     );
   }
 
-  /// 文字段：把光标条切开插进去（光标在数学段里时走 `\cursor{}`，见 [_mathSpan]）
+  /// 文字段：把光标条 + 组合串切开插进去（光标在数学段里时走 `\cursor{}`，见 [_mathSpan]）
   List<InlineSpan> _textSpansWithCaret(ProjectionSegment s) {
     final absStart = widget.baseOffset + s.start;
     final absEnd = widget.baseOffset + s.end;
@@ -107,9 +120,31 @@ class _InlineMathTextState extends State<InlineMathText> {
     return <InlineSpan>[
       TextSpan(text: s.text.substring(0, rel)),
       _caretBar(),
+      // ★ 插入点在光标条之后：光标不动、拼音向右展开，后面的字被真的推开
+      if (widget.composingText.isNotEmpty) _composingSpan(),
       TextSpan(text: s.text.substring(rel)),
     ];
   }
+
+  /// 光标是否落在这个片段里
+  bool _caretInSegment(ProjectionSegment s) {
+    final int? c = widget.caretOffset;
+    if (c == null) return false;
+    final absStart = widget.baseOffset + s.start;
+    final absEnd = widget.baseOffset + s.end;
+    return c >= absStart && c <= absEnd;
+  }
+
+  /// 组合中间态（未提交）的观感：正常字色 + **蓝色下划线** —— 与已提交的正文区分开
+  InlineSpan _composingSpan() => TextSpan(
+        text: widget.composingText,
+        style: const TextStyle(
+          color: Color(0xFF1F2937),
+          decoration: TextDecoration.underline,
+          decorationColor: Color(kCaretColorValue),
+          decorationThickness: 2,
+        ),
+      );
 
   InlineSpan _mathSpan(ProjectionSegment s) {
     final absStart = widget.baseOffset + s.start;

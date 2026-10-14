@@ -214,6 +214,7 @@ class DocView extends StatefulWidget {
     this.onStats,
     this.onTapOffset,
     this.onCaretRect,
+    this.composingText = '',
   });
 
   final DocBuffer buffer;
@@ -227,9 +228,18 @@ class DocView extends StatefulWidget {
   /// 行内公式与行间公式走 S1 验证过的 `hitTestMathTex`（叶盒 ↔ 可见原子）再做位点吸附。
   final void Function(int offset)? onTapOffset;
 
-  /// ★ S3-2：光标所在**行**的盒子（DocView 局部坐标）—— 给隐藏的镜像输入框定位用。
-  /// **Web 上中文输入法的候选框画在 DOM 输入框那儿**，所以镜像框必须跟着光标走。
+  /// ★ S3-2：**光标处**的盒子（DocView 局部坐标）—— 给平台文本输入面定位用。
+  ///
+  /// ★★ 左边界必须是**光标的精确 x**，不能是整行的左边界（2026-10-14 实测定正）：
+  /// 平台元素里的插入符（文本为空 → 插入符在元素原点）就是浏览器算 **IME 候选框**位置的依据，
+  /// 元素摆在行首 ⇒ 候选框出现在整行最左端。同理，我们自己画的组合中间态也要落在光标处。
   final void Function(Rect? caretRect)? onCaretRect;
+
+  /// ★ 组合中间态（正在拼的拼音串）—— **接进排版，让后面的字被真的推开**。
+  ///
+  /// 只对「含光标的那一个单元」生效，且**行间公式块不接**（那种情况由 `EditView` 叠画兜底）。
+  /// 它**不进缓冲区**（设计稿 §11.7），纯粹是渲染期的临时内容。
+  final String composingText;
 
   @override
   State<DocView> createState() => _DocViewState();
@@ -267,11 +277,14 @@ class _DocViewState extends State<DocView> {
 
   // ---------------- 光标像素位置（S3-2：给镜像输入框定位） ----------------
 
-  /// 帧末算一次"光标所在行"的盒子（DocView 局部坐标），报给 [DocView.onCaretRect]。
+  /// 帧末算一次「光标处的盒子」（DocView 局部坐标），报给 [DocView.onCaretRect]。
   ///
-  /// ★ 为什么报**整行**而不是单个光标点：Web 上中文输入法的候选框由**浏览器**根据
-  /// DOM 输入框内部的插入符位置来画。把镜像框摆在"同一行、同样的左边界与宽度、同样的字号"上，
-  /// 它内部的排版才与文档接近，候选框才会出现在光标附近（MathLive / CodeMirror 都是这么处理的）。
+  /// ★★ 左边界 = **光标的精确 x**（不是整行的左边界）。
+  /// 平台元素里的插入符就是浏览器算 IME 候选框位置的依据，元素摆在行首 ⇒ 候选框跑到行首去。
+  /// 宽度只用来给"正在拼的那串拼音"留排版余地，所以给一个固定值即可
+  /// （元素里平时是空的，宽度不影响插入符位置）。
+  static const double _kCaretBoxWidth = 160.0;
+
   bool _caretRectScheduled = false;
 
   void _scheduleCaretRect() {
@@ -327,16 +340,17 @@ class _DocViewState extends State<DocView> {
     final Offset paraOrigin = para.localToGlobal(Offset.zero, ancestor: root);
     final double lineH = _s.bodyFontSize * _s.lineHeight;
 
-    // ② 光标在**数学段**里 → 用那个数学占位符的盒子定纵向位置（横向仍报整行）
+    // ② 光标在**数学段**里 → 用那个数学占位符的盒子定位置
+    //    （精确到公式内部的哪一列需要"位点 → 像素"的反查，留给 S3-3；先用占位符左边界）
     final int? mp = mathPlaceholderAt(text, rel);
     if (mp != null) {
       final List<TextBox> bs = para.getBoxesForSelection(
         TextSelection(baseOffset: mp, extentOffset: mp + 1),
       );
-      final double dy = bs.isNotEmpty
-          ? para.localToGlobal(bs.first.toRect().topLeft, ancestor: root).dy
-          : paraOrigin.dy;
-      return Rect.fromLTWH(paraOrigin.dx, dy, para.size.width, lineH);
+      final Offset o = bs.isNotEmpty
+          ? para.localToGlobal(bs.first.toRect().topLeft, ancestor: root)
+          : paraOrigin;
+      return Rect.fromLTWH(o.dx, o.dy, _kCaretBoxWidth, lineH);
     }
 
     // ③ 光标在**文字段**里 → 段落排版器直接给位置
@@ -344,7 +358,7 @@ class _DocViewState extends State<DocView> {
     if (p == null) return null;
     final Offset o = para.getOffsetForCaret(TextPosition(offset: p), Rect.zero);
     final Offset g = para.localToGlobal(o, ancestor: root);
-    return Rect.fromLTWH(paraOrigin.dx, g.dy, para.size.width, lineH);
+    return Rect.fromLTWH(g.dx, g.dy, _kCaretBoxWidth, lineH);
   }
 
   // ---------------- 点屏幕定位（S3-2） ----------------
@@ -460,7 +474,23 @@ class _DocViewState extends State<DocView> {
   /// 加上之后：一次击键最多重建 2 个单元，空转时池照样全命中（S2 的 2.8 ms 空帧不退化）。
   String _poolKeyFor(_Unit u) {
     final int? rel = u.relFor(_caret);
-    return rel == null ? u.contentKey : '${u.contentKey}#c$rel';
+    if (rel == null) return u.contentKey;
+    // ★ 组合态也要进键：拼音变化会改变"含光标那个单元"的 widget 内容，
+    //   不进键就会从池里拿回上一帧的旧拼音（叠字/不刷新）。
+    final String comp = _composingFor(u, rel).isEmpty
+        ? ''
+        : '#k${_composingFor(u, rel).hashCode}';
+    return '${u.contentKey}#c$rel$comp';
+  }
+
+  /// 这个单元要不要接组合串（**只给含光标的那一个单元，且行间公式块不接**）。
+  ///
+  /// 为什么不接行间公式块：它的单元文本就是 LaTeX 源码本身，把拼音塞进排版等于往源码里塞字符 ——
+  /// 那种情况由 `EditView` 用**叠画**兜底（见它的 `_composingOverlay`）。
+  String _composingFor(_Unit u, int? rel) {
+    if (rel == null || widget.composingText.isEmpty) return '';
+    if (u.type == BlockType.math) return '';
+    return widget.composingText;
   }
 
   void _emitStats() {
@@ -600,6 +630,8 @@ class _DocViewState extends State<DocView> {
     final String text = r.text;
     // 光标在本单元内时换算成**绝对偏移**（InlineMathText 用的是绝对偏移）
     final int? caretAbs = caretRel == null ? null : u.renderBase + caretRel;
+    // ★ 组合中间态：只接给含光标的那一个单元，且行间公式块不接（见 _composingFor）
+    final String composing = _composingFor(u, caretRel);
     // 只有渲染树需要接点击（测量树是离屏的，接了也没用，还会多两个对象）
     final void Function(ProjectionSegment, Offset, GlobalKey)? onMathTap = interactive
         ? (ProjectionSegment seg, Offset g, GlobalKey k) =>
@@ -620,6 +652,7 @@ class _DocViewState extends State<DocView> {
           source: text,
           baseOffset: u.renderBase,
           caretOffset: caretAbs,
+          composingText: composing,
           mathFontSize: size,
           onMathTap: onMathTap,
           textStyle: TextStyle(
@@ -646,6 +679,7 @@ class _DocViewState extends State<DocView> {
                 source: text,
                 baseOffset: u.renderBase,
                 caretOffset: caretAbs,
+                composingText: composing,
                 mathFontSize: body,
                 onMathTap: onMathTap,
                 textStyle: base,
@@ -666,6 +700,7 @@ class _DocViewState extends State<DocView> {
             source: text,
             baseOffset: u.renderBase,
             caretOffset: caretAbs,
+            composingText: composing,
             mathFontSize: body,
             onMathTap: onMathTap,
             textStyle: base.copyWith(color: Colors.black54),
@@ -718,6 +753,7 @@ class _DocViewState extends State<DocView> {
           source: text,
           baseOffset: u.renderBase,
           caretOffset: caretAbs,
+          composingText: composing,
           mathFontSize: body,
           onMathTap: onMathTap,
           textStyle: base,
