@@ -123,12 +123,19 @@ SmartEdit smartBackspace(CaretSiteTable t, int rel) {
 
   // §4.1 原子删除：紧邻左侧的可见原子
   final VisibleAtom? atom = _atomLeftOf(t.tex, r);
-  if (atom != null) return SmartEdit.remove(atom.start, atom.end, atom.start);
+  if (atom != null) return _removeAtom(t.tex, atom, forward: false);
 
   // 单独删一个 `{` 会破坏配对 → 删整组 `{...}`
   if (t.tex[r - 1] == '{') {
     final int close = matchBrace(t.tex, r - 1);
-    if (close > 0) return SmartEdit.remove(r - 1, close + 1, r - 1);
+    if (close > 0) {
+      // ★★ 若这个组是 `^`/`_` 的参数，**必须连 `^`/`_` 一起删** ——
+      //   否则会剩一个**悬空的 `^`** → `Parser Error: Expected group after '^'`（用户实测抓出）。
+      //   脚本（`^{...}`）本来就是一个整体：要么都在，要么都不在。
+      final int from =
+          (r >= 2 && (t.tex[r - 2] == '^' || t.tex[r - 2] == '_')) ? r - 2 : r - 1;
+      return SmartEdit.remove(from, close + 1, from);
+    }
   }
 
   return SmartEdit.remove(r - 1, r, r - 1); // 兜底（理论上很少走到）
@@ -162,17 +169,39 @@ SmartEdit smartDelete(CaretSiteTable t, int rel) {
 
   // §4.1 原子删除
   final VisibleAtom? atom = _atomRightOf(t.tex, r);
-  if (atom != null) return SmartEdit.remove(atom.start, atom.end, r);
+  if (atom != null) return _removeAtom(t.tex, atom, forward: true);
 
   if (r < t.tex.length && t.tex[r] == '{') {
     final int close = matchBrace(t.tex, r);
-    if (close > 0) return SmartEdit.remove(r, close + 1, r);
+    if (close > 0) {
+      // ★★ 同 smartBackspace：若这个组是 `^`/`_` 的参数，连 `^`/`_` 一起删（否则留悬空的 `^`）
+      final int from =
+          (r >= 1 && (t.tex[r - 1] == '^' || t.tex[r - 1] == '_')) ? r - 1 : r;
+      return SmartEdit.remove(from, close + 1, from);
+    }
   }
 
   return SmartEdit.remove(r, r + 1, r);
 }
 
 // ---------------------------------------------------------------- 内部工具
+
+/// 删一个可见原子 —— ★ 若它是 `^`/`_` 的**裸参数**（`b^2` 没有花括号），
+/// **必须连 `^`/`_` 一起删**。
+///
+/// 为什么（2026-10-14 用户实测抓出，并给出了精确复现路径）：
+/// 在 `\sqrt{b^2-4ac}` 里把光标放在 `c` 后面连按删除键，删到 `b^2` 的 `2` 时，
+/// 只删 `2` 会得到 **`b^-4ac`** —— 引擎立刻报
+/// `Parser Error: Expected group after '^'`。
+/// 脚本（`^2`）本来就是一个整体：**要么都在，要么都不在**。
+/// （花括号形式 `b^{2}` 不受影响：删掉内容得到 `b^{}` 仍然合法。）
+SmartEdit _removeAtom(String tex, VisibleAtom atom, {required bool forward}) {
+  final int start = atom.start;
+  final int from = (start >= 1 && (tex[start - 1] == '^' || tex[start - 1] == '_'))
+      ? start - 1
+      : start;
+  return SmartEdit.remove(from, atom.end, from);
+}
 
 /// 结构起点：从参数内容起点往前找 `\cmd` 或 `^`/`_`
 int? structureStartBefore(String tex, int contentStart) {
