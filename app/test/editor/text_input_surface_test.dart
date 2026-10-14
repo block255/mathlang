@@ -1,8 +1,8 @@
 // 文本输入面测试（S3-2 输入层重做）
 //
 // ★ 本文件的用例**不是设计出来的，是真人键盘实测抓出来的真实事件序列** ——
-//   数据来自浏览器控制台探针（`text_input_surface.dart` 的 `kProbeInput`，
-//   Flutter Web 的 `debugPrint` 走 console，要用 `browser_dock console` 读，**不进 run.log**）。
+//   数据来自浏览器控制台探针（`debugPrint` 在 Flutter Web 上走 console；
+//   探针用完已撤，需要时见 `text_input_surface.dart` 里的"排查提示"，两分钟能加回来）。
 //   每一条都对应一个真出现过、并且被修掉的 bug。
 
 import 'package:flutter/widgets.dart';

@@ -85,21 +85,10 @@ class TextInputSurfaceController extends ChangeNotifier with TextInputClient {
   String get composingText => _composing;
   Rect get caretRect => _caretRect;
 
-  // ---------------------------------------------------------------- 临时探针
-  //
-  // ⚠️ S3-2 输入层排查用（定位完就删）。
-  // `run.log` 会捕获 `debugPrint`，所以**真人键盘打一遍**就能拿到平台真实到达的数据，
-  // 不用靠猜、也不用受自动化事件保真度的限制。
-
-  static const bool kProbeInput = true;
-
-  static void _probe(String tag, Object? detail) {
-    if (!kProbeInput) return;
-    debugPrint('[INPUT-PROBE] $tag $detail');
-  }
-
-  static String _brief(String s) =>
-      s.length <= 40 ? s : '${s.substring(0, 40)}…(${s.length})';
+  // 排查提示（探针已撤，需要时两分钟能加回来）：
+  // 在 `updateEditingValue` 开头 `debugPrint('[INPUT-PROBE] $value')` 即可 ——
+  // ★ Flutter Web 的 `debugPrint` 走**浏览器控制台**（不进 `run.log`），要用 `browser_dock console` 读。
+  //   2026-10-14 就是靠它拿到"选字两段式"的真实事件序列（见下面 [updateEditingValue] 的注释）。
 
   // ---------------------------------------------------------------- 位置与样式
 
@@ -141,7 +130,6 @@ class TextInputSurfaceController extends ChangeNotifier with TextInputClient {
   /// 由**用户手势**里调用，确保平台文本通道已接上（浏览器才肯把 IME 接进来）。
   void ensureAttached() {
     if (_conn != null) return;
-    _probe('ensureAttached', '接上平台文本通道');
     _conn = TextInput.attach(
       this,
       const TextInputConfiguration(
@@ -195,15 +183,6 @@ class TextInputSurfaceController extends ChangeNotifier with TextInputClient {
 
   @override
   void updateEditingValue(TextEditingValue value) {
-    _probe('updateEditingValue', <String, Object?>{
-      'text': _brief(value.text),
-      'sel': '${value.selection.baseOffset}..${value.selection.extentOffset}',
-      'composing': value.composing.isValid
-          ? '${value.composing.start}..${value.composing.end}'
-          : 'none',
-      'lastPlatformText': _brief(_platformText),
-    });
-
     // ① 提交规则链（沿用 EditableText 的语义：`formatEditUpdate(旧值, 新值)`）
     TextEditingValue v = value;
     for (final TextInputFormatter f in inputFormatters) {
@@ -228,8 +207,6 @@ class TextInputSurfaceController extends ChangeNotifier with TextInputClient {
       final int s = c.start.clamp(0, v.text.length);
       final int e = c.end.clamp(s, v.text.length);
       final String t = v.text.substring(s, e);
-      _probe('→组合中，不写缓冲区',
-          <String, Object?>{'composing': _brief(t), '基线': _brief(_platformText)});
       if (t != _composing) {
         _composing = t;
         notifyListeners();
@@ -241,13 +218,6 @@ class TextInputSurfaceController extends ChangeNotifier with TextInputClient {
     final PlatformEdit? edit = diffPlatformText(_platformText, v.text);
     final String inserted = edit?.inserted ?? '';
     final bool wasComposing = _composing.isNotEmpty;
-    _probe('→提交路径', <String, Object?>{
-      'wasComposing': wasComposing,
-      'edit': edit == null
-          ? 'none'
-          : '−「${_brief(edit.removed)}」 +「${_brief(edit.inserted)}」',
-      'willInsert': _brief(inserted),
-    });
     _composing = '';
     if (inserted.isNotEmpty) {
       onCommitText?.call(inserted);
@@ -266,10 +236,7 @@ class TextInputSurfaceController extends ChangeNotifier with TextInputClient {
     if (action == TextInputAction.newline) {
       // Shift+Enter = 块内硬换行（R8：行尾两个空格，任何环节都不许 trim）
       final bool soft = HardwareKeyboard.instance.isShiftPressed;
-      _probe('performAction', 'newline（soft=$soft）');
       _commitThroughFormatters(soft ? '  \n' : '\n');
-    } else {
-      _probe('performAction', action);
     }
   }
 
@@ -299,7 +266,6 @@ class TextInputSurfaceController extends ChangeNotifier with TextInputClient {
   @override
   void connectionClosed() {
     // 平台侧主动断开（例如失焦）—— 只清连接，不动缓冲区
-    _probe('connectionClosed', '平台侧断开连接');
     _conn = null;
     _platformText = '';
     _composing = '';
