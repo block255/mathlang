@@ -529,13 +529,24 @@ void main() {
       await tester.pumpAndSettle();
       expect(buf.caret, 9);
 
-      // 点公式左端（分子 a 那一带）→ 光标必须真的动
-      await tester.tapAt(tl + Offset(2, sz.height / 2));
+      // ★ 必须点**两个不同位置**并断言落到**不同**偏移 ——
+      //   只断言"动了"是不够的：公式内点击有两条路径同时跑
+      //   （`_handleUnitHit` 的段落映射是**粗**的，会把公式内每一处都映到同一个偏移；
+      //   精确落点靠 `Math` 的 GestureDetector → `hitTestMathTex`）。
+      //   精确那一路一旦静默失败，光标仍会"动"到那个固定偏移 —— 假通过。
+      await tester.tapAt(tl + Offset(2, sz.height / 2)); // 左端 = 分子那一带
       await tester.pump();
-      expect(buf.caret, isNot(9),
-          reason: '★ 公式内部点击必须能移动光标；'
-              '若这里仍是 9，说明命中测试又因为"注入让叶盒数≠原子数"而静默失效了');
-      expect(buf.caret, lessThan(9), reason: '点在左端 → 光标应往左走');
+      final int left = buf.caret;
+
+      await tester.tapAt(tl + Offset(sz.width - 2, sz.height / 2)); // 右端
+      await tester.pump();
+      final int right = buf.caret;
+
+      expect(left, lessThan(right),
+          reason: '★ 点公式左端与右端必须落到**不同**偏移；'
+              '若两者相等，说明精确落点失效、只剩段落映射的粗落点（用户报的"被锁住"就是这个）');
+      expect(left, inInclusiveRange(1, 11),
+          reason: r'落点必须在公式源码 $\frac{a}{}$ 的 tex 区间里（1..11），不能跑到公式之外');
     });
   });
 
