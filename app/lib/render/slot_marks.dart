@@ -37,13 +37,22 @@ class SlotMarkResult {
 
 /// 给 tex 里所有**空槽**注入可见占位；[caretRel] 落在哪个空槽里，它就用"当前槽"样式。
 ///
+/// ★★ **[caretRel] < 0（光标不在这个单元里）→ 原样返回，什么都不注入。**
+/// 为什么（2026-10-14 用户实测抓出）：点击定位 `hitTestMathTex` 用的是**原始源码**的词法原子，
+/// 而叶盒来自**注入后**的渲染树 —— 只要注入让渲染多出一个盒，
+/// 「叶盒数 == 原子数」就不成立 → 它**静默返回 null** → **点不回这个公式里**。
+/// 所以占位只在"光标所在的那一个单元"里画（与光标注入同一条规则）：
+/// 光标一走，方框消失，渲染与源码重新一致，点击立刻恢复。
+/// ⚠️ 真正的根治是让点击定位**用同一份注入后的 tex 并把偏移映射回原坐标**（见交接快照 §十二）。
+///
 /// 注入**从右往左**做，前面的偏移不受影响；光标偏移按插入量右移补偿，
 /// 所以调用方可以接着 `injectCursor(marks.tex, marks.rel)`。
 SlotMarkResult injectSlotMarks(String tex, {required int caretRel}) {
+  if (caretRel < 0) return SlotMarkResult(tex, caretRel); // 见上面那条 ★★
   final CaretSiteTable t = buildCaretSites(tex);
   if (t.degraded) return SlotMarkResult(tex, caretRel);
 
-  final SlotSpan? cur = caretRel >= 0 ? innermostSlotAt(t, caretRel) : null;
+  final SlotSpan? cur = innermostSlotAt(t, caretRel);
   final List<SlotSpan> empties = <SlotSpan>[
     for (final SlotSpan s in t.slots)
       if (s.isEmpty) s,

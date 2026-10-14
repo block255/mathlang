@@ -29,17 +29,17 @@ void main() {
 
   group('注入范围：只给空槽、非空槽不画', () {
     test(r'\frac{}{} 两个空槽 → 注入两处', () {
-      final SlotMarkResult r = injectSlotMarks(r'\frac{}{}', caretRel: -1);
+      final SlotMarkResult r = injectSlotMarks(r'\frac{}{}', caretRel: 0);
       expect(kEmptySlotTex.allMatches(r.tex).length, 2);
     });
 
     test(r'\frac{a}{} 只有分母空 → 只注入一处', () {
-      final SlotMarkResult r = injectSlotMarks(r'\frac{a}{}', caretRel: -1);
+      final SlotMarkResult r = injectSlotMarks(r'\frac{a}{}', caretRel: 6);
       expect(kEmptySlotTex.allMatches(r.tex).length, 1);
     });
 
     test(r'\frac{a}{b} 没有空槽 → 原样返回', () {
-      final SlotMarkResult r = injectSlotMarks(r'\frac{a}{b}', caretRel: -1);
+      final SlotMarkResult r = injectSlotMarks(r'\frac{a}{b}', caretRel: 6);
       expect(r.tex, r'\frac{a}{b}');
     });
 
@@ -47,6 +47,11 @@ void main() {
       final SlotMarkResult r = injectSlotMarks(r'a}b', caretRel: 1);
       expect(r.tex, r'a}b');
       expect(r.rel, 1);
+    });
+
+    test('★ 光标不在这个单元里（caretRel < 0）→ 一个都不画（否则点击定位会失效）', () {
+      expect(injectSlotMarks(r'\frac{}{}', caretRel: -1).tex, r'\frac{}{}');
+      expect(injectSlotMarks(r'\frac{a}{}', caretRel: -1).tex, r'\frac{a}{}');
     });
   });
 
@@ -74,7 +79,7 @@ void main() {
       r'\frac{-b\pm\sqrt{b^2-4ac}}{2a}',
     ]) {
       test('tex = $tex', () {
-        final SlotMarkResult r = injectSlotMarks(tex, caretRel: -1);
+        final SlotMarkResult r = injectSlotMarks(tex, caretRel: 0);
         final int before = lexVisibleAtoms(tex).length;
         final int after = lexVisibleAtoms(r.tex).length;
         final int empties = RegExp(RegExp.escape(kEmptySlotTex))
