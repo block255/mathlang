@@ -26,50 +26,101 @@ import 'visible_atoms.dart';
 /// 光标条的原子字面（它**必须**从命中表里剔除，理由见文件头 ②）
 const String kCursorAtomText = r'\cursor';
 
-/// **给命中测试用的原子表**：渲染 tex 的原子，但**剔除光标条**。
+/// **给命中测试用的原子表**：渲染 tex 的原子，但
+/// **剔除光标条**（理由见文件头 ②）、**补上尾垫的合成原子**（§11.18）。
 ///
-/// 理由见文件头 ②：光标条的盒只有 1.5px 宽会被最小宽度过滤掉，留在表里就永远差 1。
-List<VisibleAtom> atomsForHitTest(String renderTex) => <VisibleAtom>[
-      for (final VisibleAtom a in lexVisibleAtoms(renderTex))
-        if (renderTex.substring(a.start, a.end) != kCursorAtomText) a,
-    ];
+/// ★ 尾垫是 `\rule{4pt}{0pt}`：**词法上是 0 个原子**（`\rule` 是结构命令），
+///   而引擎**照样给它一个叶盒** ⇒ 不补就"叶盒数 ≠ 原子数" ⇒
+///   `hitTestMathTex` **静默返回 null**（公式内点击静默全废 —— 这个坑踩过四次）。
+List<VisibleAtom> atomsForHitTest(String renderTex) {
+  final List<VisibleAtom> out = <VisibleAtom>[
+    for (final VisibleAtom a in lexVisibleAtoms(renderTex))
+      if (renderTex.substring(a.start, a.end) != kCursorAtomText) a,
+    for (int i = renderTex.indexOf(kStructTailTex);
+        i >= 0;
+        i = renderTex.indexOf(kStructTailTex, i + 1))
+      VisibleAtom(i, i + kStructTailTex.length, 'tail'),
+  ]..sort((VisibleAtom a, VisibleAtom b) => a.start.compareTo(b.start));
+  return out;
+}
+
+/// 一个被注入的常量串
+class _Marker {
+  const _Marker(this.text, {this.isStructTail = false});
+
+  final String text;
+
+  /// ★ 是不是**结构尾垫**（§11.18）：它的语义是"**结构末尾**"——
+  /// 注入点在**内容末尾**（花括号之内，装饰才会跟着变长），
+  /// 但点击它要回到**结构末尾**（= 内容末尾 + 收尾 `}`）——
+  /// 因为整段尾垫在视觉上属于**装饰**（横线的那一截），指它 = 指这个结构。
+  final bool isStructTail;
+}
 
 /// 所有可能被注入的常量串（长串在前，避免短串把长串的一部分也匹配上）
-List<String> get _kMarkers => <String>[
-      kCursorSplitTex,
-      kCurrentSlotTex,
-      kEmptySlotTex,
-      kCursorTex,
+List<_Marker> get _kMarkers => <_Marker>[
+      _Marker(kCursorSplitTex),
+      _Marker(kCurrentSlotTex),
+      _Marker(kEmptySlotTex),
+      _Marker(kCursorTex),
+      _Marker(kStructTailTex, isStructTail: true),
     ];
 
 /// 渲染 tex 的偏移 [renderOffset] → **原始 tex** 的偏移。
 ///
-/// 点在被注入的串内部（占位方框、光标条）时返回**该插入点** —— 于是
-/// "点空槽的方框"会落到空槽的偏移上，再经位点吸附就是合法落点 ✓
+/// 点在被注入的串内部（占位方框、光标条、**结构尾垫**）时返回**该插入点** —— 于是
+/// "点空槽的方框"会落到空槽的偏移上、"点尾垫"会落到**结构末尾**，再经位点吸附就是合法落点 ✓
 int renderToSourceOffset(String renderTex, int renderOffset) {
   if (renderOffset <= 0) return 0;
-  final List<({int at, int len})> found = <({int at, int len})>[];
-  for (final String m in _kMarkers) {
-    if (m.isEmpty) continue;
-    var i = renderTex.indexOf(m);
+  final List<({int at, int len, bool tail})> found =
+      <({int at, int len, bool tail})>[];
+  for (final _Marker m in _kMarkers) {
+    if (m.text.isEmpty) continue;
+    var i = renderTex.indexOf(m.text);
     while (i >= 0) {
-      found.add((at: i, len: m.length));
-      i = renderTex.indexOf(m, i + 1);
+      found.add((at: i, len: m.text.length, tail: m.isStructTail));
+      i = renderTex.indexOf(m.text, i + 1);
     }
   }
   // 丢掉"被更长的匹配完全包住"的那些（否则 `}`+光标+`\text{` 会把里面的光标再算一遍）
-  final List<({int at, int len})> ins = <({int at, int len})>[
-    for (final ({int at, int len}) a in found)
-      if (!found.any((({int at, int len}) b) =>
+  final List<({int at, int len, bool tail})> ins =
+      <({int at, int len, bool tail})>[
+    for (final ({int at, int len, bool tail}) a in found)
+      if (!found.any((({int at, int len, bool tail}) b) =>
           b.at <= a.at && b.at + b.len >= a.at + a.len && b.len > a.len))
         a,
-  ]..sort((({int at, int len}) a, ({int at, int len}) b) => a.at.compareTo(b.at));
+  ]..sort((({int at, int len, bool tail}) a,
+          ({int at, int len, bool tail}) b) =>
+      a.at.compareTo(b.at));
 
   var shift = 0;
-  for (final ({int at, int len}) e in ins) {
+  for (final ({int at, int len, bool tail}) e in ins) {
     if (renderOffset <= e.at) break;
-    if (renderOffset < e.at + e.len) return e.at - shift; // 点在注入串内部 → 插入点
+    // ★ 尾垫（§11.18）：**严格越过起点**才算"结构末尾"——
+    //   起点那一格是 `2` 的右边界（点式子的右半边必须仍落到"内容末尾"，
+    //   否则用户再也点不到内容末尾）；与其它原子一致：左半取左边界、右半取右边界。
+    final bool inside = e.tail
+        ? renderOffset <= e.at + e.len // 尾垫：连它的**末端**也算结构末尾
+        : renderOffset < e.at + e.len; // 其它注入串：严格内部（保持原语义）
+    if (inside) {
+      return e.tail
+          ? _tailSourceOffset(renderTex, e.at, e.len, e.at - shift)
+          : e.at - shift; // 点在注入串内部 → 插入点
+    }
     shift += e.len;
   }
   return renderOffset - shift;
+}
+
+/// 尾垫的源偏移 = **插入点 + 收尾 `}`**（若紧跟着一个 `}`）。
+///
+/// 插入点本身是**内容末尾**（尾垫塞在花括号之内），而尾垫代表的是**结构末尾**；
+/// 花括号形式下两者刚好差一个 `}`（`\sqrt{2}` → 内容末尾 7、结构末尾 8）；
+/// 裸参数形式（`\sqrt2`）没有 `}` ⇒ 两者相同 ✓。
+int _tailSourceOffset(String renderTex, int at, int len, int insertionPoint) {
+  final int after = at + len;
+  if (after < renderTex.length && renderTex[after] == '}') {
+    return insertionPoint + 1;
+  }
+  return insertionPoint;
 }

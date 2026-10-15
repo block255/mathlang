@@ -1,4 +1,4 @@
-// 数语引擎 · 空槽可视化（S3-5）
+﻿// 数语引擎 · 空槽可视化（S3-5）
 //
 // 规格：notes/design/位点与结构导航.md §6.1
 //   空槽 → 虚线占位框（浅灰 `#B0BEC5`，宽 ≈ 一个字符）
@@ -28,6 +28,35 @@ const String kEmptySlotTex = r'\textcolor{#B0BEC5}{\square}';
 /// 当前槽占位（光标蓝 —— 与 §6.2 的光标同色系）
 const String kCurrentSlotTex = r'\textcolor{#1E88E5}{\square}';
 
+// ---------------------------------------------------------------------------
+// ★★ 结构尾垫（2026-10-15，设计稿 §11.18）
+// ---------------------------------------------------------------------------
+
+/// **包裹型结构**的内容末尾塞一段"看不见但占宽"的横线，让它的**装饰跟着内容一起变长**。
+///
+/// 解决的是用户实测的那个"点不准"：
+/// `\sqrt{2}` 的横线**不超出**被开方数 ⇒ 结构右缘 **==** 内容右缘 ⇒
+/// "里面式子末尾"与"根号整体末尾"**落在同一根像素上**，光标也长得一模一样
+/// （分式不同：分数线两头**超出**分子分母，所以它天然有"结构专属像素"）。
+///
+/// 加了尾垫之后：
+/// · **视觉**：横线比内容长一截 ⇒ 两根像素分开（内容末尾在 `2` 右缘、结构末尾在横线末端）
+/// · **点击**：尾垫之内（横线之下）→ 内容末尾；越过横线末端（公式盒右缘之外）→ 结构末尾
+///
+/// ★ **宽度必须用绝对单位**（`pt`）：`em` 会随字号缩小，小字号下会被
+///   `leaf_boxes.kMinLeafWidth = 2.0` **过滤掉** ⇒ 叶盒数 ≠ 原子数 ⇒
+///   `hitTestMathTex` **静默返回 null**（公式内点击全废）—— 这个坑踩过四次。
+/// ★ 它**会多出一个叶盒** ⇒ `injection_map.atomsForHitTest` 必须为它补一个**合成原子**。
+/// ★ 宽度取 `6pt`（≈ 8 px）：点击时"左半 / 右半"各约 4 px，才够瞄；
+///   再窄（`4pt`）右半只有 2.7 px，鼠标/手指都太吃力。
+const String kStructTailTex = r'\rule{6pt}{0pt}';
+
+/// 需要尾垫的结构命令：**包裹型**（装饰宽度跟着内容走）。
+///
+/// 目前只给 `\sqrt`（用户实测报的那一例）。`\frac` **不在内** ——
+/// 它的分数线本来就两头超出分子分母，天然有结构专属像素。
+const Set<String> kTailCommands = <String>{'sqrt'};
+
 /// 注入结果：注入后的 tex + **光标在注入后 tex 里的相对偏移**（供继续注入光标用）
 class SlotMarkResult {
   const SlotMarkResult(this.tex, this.rel);
@@ -35,9 +64,25 @@ class SlotMarkResult {
   final int rel;
 }
 
+/// 一次注入（**从右往左**统一应用，见 [injectSlotMarks]）
+class _Ins {
+  const _Ins(this.at, this.text, {required this.shiftAt});
+
+  /// 注入点（**原始 tex** 里的偏移）
+  final int at;
+
+  final String text;
+
+  /// 光标**正好**落在注入点时怎么办：
+  /// `true` = 右移（光标画在注入物**之后**；空槽占位用 —— 光标落在方框右侧）；
+  /// `false` = 不动（光标画在注入物**之前**；尾垫用 —— 内容末尾的光标要贴在式子右缘）。
+  final bool shiftAt;
+}
+
 /// 给 tex 里所有**空槽**注入可见占位；[caretRel] 落在哪个空槽里，它就用"当前槽"样式。
+/// 另外给**包裹型结构**（`\sqrt`）的内容末尾注入**尾垫**（§11.18，见 [kStructTailTex]）。
 ///
-/// ★★ **[caretRel] < 0（光标不在这一段里）→ 照样注入占位，只是没有"当前槽"高亮。**
+/// ★★ **[caretRel] < 0（光标不在这一段里）→ 照样注入，只是没有"当前槽"高亮。**
 ///
 /// 这一条 2026-10-15 改的，原因值得记下来：
 /// 原先 `caretRel < 0` 是**直接原样返回、什么都不注入**，理由是
@@ -59,18 +104,31 @@ SlotMarkResult injectSlotMarks(String tex, {required int caretRel}) {
 
   // 光标不在这一段（caretRel < 0）→ 没有"当前槽"，全部按普通空槽画
   final SlotSpan? cur = caretRel < 0 ? null : innermostSlotAt(t, caretRel);
-  final List<SlotSpan> empties = <SlotSpan>[
+  final List<_Ins> ins = <_Ins>[
+    // ① 空槽占位
     for (final SlotSpan s in t.slots)
-      if (s.isEmpty) s,
-  ]..sort((SlotSpan a, SlotSpan b) => b.start.compareTo(a.start));
+      if (s.isEmpty)
+        _Ins(
+          s.start,
+          (cur != null && s.start == cur.start && s.end == cur.end)
+              ? kCurrentSlotTex
+              : kEmptySlotTex,
+          shiftAt: true,
+        ),
+    // ② ★ 尾垫（§11.18）：插在**内容末尾**、花括号**之内** ⇒ 装饰跟着内容变长
+    for (final SlotSpan s in t.slots)
+      if (s.path.isNotEmpty &&
+          s.path.last.argIndex == 0 &&
+          kTailCommands.contains(s.path.last.command) &&
+          !s.isEmpty)
+        _Ins(s.end, kStructTailTex, shiftAt: false),
+  ]..sort((_Ins a, _Ins b) => b.at.compareTo(a.at));
 
   String out = tex;
   int rel = caretRel;
-  for (final SlotSpan s in empties) {
-    final bool isCurrent = cur != null && s.start == cur.start && s.end == cur.end;
-    final String mark = isCurrent ? kCurrentSlotTex : kEmptySlotTex;
-    out = out.substring(0, s.start) + mark + out.substring(s.start);
-    if (rel >= s.start) rel += mark.length;
+  for (final _Ins e in ins) {
+    out = out.substring(0, e.at) + e.text + out.substring(e.at);
+    if (e.shiftAt ? rel >= e.at : rel > e.at) rel += e.text.length;
   }
   return SlotMarkResult(out, rel);
 }
