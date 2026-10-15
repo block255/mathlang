@@ -1,4 +1,4 @@
-﻿// 数语引擎 · 空槽可视化（S3-5）
+// 数语引擎 · 空槽可视化（S3-5）
 //
 // 规格：notes/design/位点与结构导航.md §6.1
 //   空槽 → 虚线占位框（浅灰 `#B0BEC5`，宽 ≈ 一个字符）
@@ -47,9 +47,10 @@ const String kCurrentSlotTex = r'\textcolor{#1E88E5}{\square}';
 ///   `leaf_boxes.kMinLeafWidth = 2.0` **过滤掉** ⇒ 叶盒数 ≠ 原子数 ⇒
 ///   `hitTestMathTex` **静默返回 null**（公式内点击全废）—— 这个坑踩过四次。
 /// ★ 它**会多出一个叶盒** ⇒ `injection_map.atomsForHitTest` 必须为它补一个**合成原子**。
-/// ★ 宽度取 `6pt`（≈ 8 px）：点击时"左半 / 右半"各约 4 px，才够瞄；
-///   再窄（`4pt`）右半只有 2.7 px，鼠标/手指都太吃力。
-const String kStructTailTex = r'\rule{6pt}{0pt}';
+/// ★ 宽度取 `3pt`（≈ 4 px，2026-10-15 用户看图后定的 —— `6pt` 那版"多了一点点"）。
+///   ⚠️ **下限**：不能再小于 `leaf_boxes.kMinLeafWidth = 2.0`，否则叶盒被过滤 ⇒
+///   叶盒数 ≠ 原子数 ⇒ 命中**静默返回 null**（上面那条坑）。
+const String kStructTailTex = r'\rule{3pt}{0pt}';
 
 /// 需要尾垫的结构命令：**包裹型**（装饰宽度跟着内容走）。
 ///
