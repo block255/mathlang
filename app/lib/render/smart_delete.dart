@@ -29,6 +29,7 @@
 
 import 'caret_sites.dart';
 import 'projection.dart' show isAsciiLetter;
+import 'scope_table.dart';
 import 'site_adjacency.dart';
 import 'visible_atoms.dart';
 
@@ -174,6 +175,11 @@ SmartEdit smartBackspace(CaretSiteTable t, int rel) {
     return SmartEdit.move(t.sites[idx - 1].offset);
   }
 
+  // ★ §4.7 + §4.0：光标停在某个**操作对象的右端** ⇒ 删的是**整个操作对象**
+  //   （算子 + 紧跟的上下限 + 被它作用的内容 —— `\sin 2x` / `\sum_{i=1}^{n}a_i b_i`）
+  final OpScope? scope = scopeEndingAt(t.tex, s.offset);
+  if (scope != null) return SmartEdit.remove(scope.start, scope.end, scope.start);
+
   // §4.0 通则：与光标**同层**、紧邻左侧的那一个可见对象
   final _Span? obj = _objectLeftOf(t, s.offset);
   if (obj == null) return SmartEdit.none; // 同层左边什么都没有
@@ -195,6 +201,10 @@ SmartEdit smartDelete(CaretSiteTable t, int rel) {
   if (reg != null && s.offset == reg.end && idx >= 0 && idx + 1 < t.sites.length) {
     return SmartEdit.move(t.sites[idx + 1].offset);
   }
+
+  // ★ §4.7 + §4.0（与 [smartBackspace] 对称）：光标停在操作对象的**左端** ⇒ 删整个操作对象
+  final OpScope? scope = scopeStartingAt(t.tex, s.offset);
+  if (scope != null) return SmartEdit.remove(scope.start, scope.end, scope.start);
 
   // §4.0 通则：与光标**同层**、紧邻右侧的那一个可见对象
   final _Span? obj = _objectRightOf(t, s.offset);

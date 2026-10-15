@@ -263,4 +263,51 @@ void main() {
       expect(r'\text{ab}'.substring(e.from!, e.to!), 'b');
     });
   });
+
+  // ─────────────────────────────────────────────────────────────
+  // ★★ §4.7：**算子 + 它的作用域 = 一个操作对象**（2026-10-15 新增）
+  //    算子的内容边界由**数学的结合力**界定（规则与例子见 `scope_table_test.dart`；
+  //    本组只验**删除侧的接线**）
+  // ─────────────────────────────────────────────────────────────
+  group('§4.7 算子 + 作用域 = 一个操作对象', () {
+    void expectDeleted(String tex, int rel, String want,
+        {bool forward = false}) {
+      final CaretSiteTable t = buildCaretSites(tex);
+      final SmartEdit e = forward ? smartDelete(t, rel) : smartBackspace(t, rel);
+      expect(e.deletes, isTrue, reason: '「$tex」@$rel $e');
+      expect(tex.substring(e.from!, e.to!), want);
+    }
+
+    test(r'`\sin 2x` 末尾退格 → 整个 `\sin 2x`', () {
+      const String tex = r'\sin 2x';
+      expectDeleted(tex, tex.length, tex);
+    });
+
+    test(r'`\sin 2x+y` 里 `2x` 之后退格 → `\sin 2x`（`+y` 不动）', () {
+      expectDeleted(r'\sin 2x+y', 7, r'\sin 2x');
+    });
+
+    test(r'`\sum_{i=1}^{n}a_i b_i` 末尾退格 → 整个求和式（含上下限与内容）', () {
+      const String tex = r'\sum_{i=1}^{n}a_i b_i';
+      expectDeleted(tex, tex.length, tex);
+    });
+
+    test(r'`\sin x\cdot y` 里 `x` 之后退格 → `\sin x`（显式乘号断开）', () {
+      expectDeleted(r'\sin x\cdot y', 6, r'\sin x');
+    });
+
+    test(r'`2\sin x` 末尾退格 → 只删 `\sin x`（`2` 不进来）', () {
+      const String tex = r'2\sin x';
+      expectDeleted(tex, tex.length, r'\sin x');
+    });
+
+    test(r'`Delete` 在操作对象左端 → 整个对象（对称的另一面）', () {
+      expectDeleted(r'2\sin x', 1, r'\sin x', forward: true);
+    });
+
+    test(r'★ 无值算子：`\sin` 末尾退格 → 删算子自己（不算"整个作用域"）', () {
+      const String tex = r'\sin';
+      expectDeleted(tex, tex.length, tex);
+    });
+  });
 }
