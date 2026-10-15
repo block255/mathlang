@@ -180,27 +180,27 @@ void main() {
     test(r'夹缝 8 → 注入到 7：不会让光标顶掉分母', () {
       final CursorInjection r = injectCursor(r'\frac{a}{b}', 8);
       expect(r.offset, 7);
-      expect(r.tex, '\\frac{a\\textcolor{$kCaretTexColor}{\\cursor{}}}{b}');
+      expect(r.tex, '\\frac{a$kCursorTex}{b}');
     });
 
     test('正常位点原地注入', () {
       final CursorInjection r = injectCursor(r'\frac{a}{b}', 9);
       expect(r.offset, 9);
-      expect(r.tex, '\\frac{a}{\\textcolor{$kCaretTexColor}{\\cursor{}}b}');
+      expect(r.tex, '\\frac{a}{${kCursorTex}b}');
     });
 
     test('空槽：光标落在槽内', () {
       final CursorInjection r = injectCursor(r'\frac{}{}', 8);
       expect(r.offset, 8);
-      expect(r.tex, '\\frac{}{\\textcolor{$kCaretTexColor}{\\cursor{}}}');
+      expect(r.tex, '\\frac{}{$kCursorTex}');
     });
 
-    test(r'★ 注入点紧跟 ^ 时不能报错（裸 \cursor 会被当成上标基座）', () {
+    test(r'★ 注入点紧跟 ^ 时不能报错（裸锚点会被当成上标基座）', () {
       // 用户实测报错：Parser Error: Got function '\cursor' with no arguments as superscript
       final CursorInjection r = injectCursor(r'x^2', 1);
       expect(r.offset, 1);
       expect(_parses(r.tex), isTrue,
-          reason: '裸注入会变成 x\\cursor{}^2 → 报错；包进 \\textcolor 后应正常：${r.tex}');
+          reason: '裸注入会变成 x\\rule{0pt}{0pt}^2（把 2 挤出上标）；包进 \\textcolor 后应正常：${r.tex}');
     });
 
     test(r'★ 文本模式 \text{} 内：拆组注入（\cursor 在文本模式里不被接受）', () {
@@ -210,7 +210,7 @@ void main() {
       // 偏移 7 = 「中」与「文」之间 → 拆成 \text{中} 光标 \text{文}
       final CursorInjection r = injectCursor(tex, 7);
       expect(r.offset, 7);
-      expect(r.tex, '\\text{中}\\textcolor{$kCaretTexColor}{\\cursor{}}\\text{文}');
+      expect(r.tex, '\\text{中}$kCursorTex\\text{文}');
       expect(_parses(r.tex), isTrue);
     });
 

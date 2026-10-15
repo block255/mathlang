@@ -248,11 +248,23 @@ const int kCaretColorValue = 0xFF1E88E5;
 final String kCaretTexColor =
     '#${(kCaretColorValue & 0xFFFFFF).toRadixString(16).padLeft(6, '0').toUpperCase()}';
 
-/// **光标注入串**（`injectCursor` 插进 tex 的那一段）。
+/// **光标锚点**（`injectCursor` 插进 tex 的那一段）—— ★★ **零宽零高**。
 ///
-/// ★ 公开它是有用途的：点击定位要把"渲染 tex 的偏移"换算回原始源码，
-/// 而那要靠**认出哪些字符是我们插进去的**（见 `injection_map.dart`）。
-final String kCursorTex = '\\textcolor{$kCaretTexColor}{\\cursor{}}';
+/// 2026-10-15 晚改：以前这里注入的是引擎自带的 `\cursor{}`（1.5 × 14 px 的实心竖条），
+/// 它**真的参与排版** ⇒ 光标一进公式就把盒子撑高/撑宽，accent 那类装饰不跟着走
+/// ⇒ 用户看到的"跟上标跳起来了一样"（实测数据见 `math_caret.dart` 头部的表）。
+///
+/// 现在这里只放一个 **`\rule{0pt}{0pt}`**：
+/// · **一个像素的版面都不占**（实测：Math 盒与不注光标时**完全相同**，连叶盒位置都逐个一样）；
+/// · 它的**位置就是光标位置**，而且它就是**那一行的基线**（实测）⇒ 交给
+///   [MathWithCaret] 帧末读出坐标、把竖条自绘上去（高度与文本侧一致）。
+/// · 词法上 `\rule` 是结构命令 ⇒ **0 个可见原子**；渲染上是 0×0 的 `_RenderColoredBox`
+///   ⇒ 被 `leaf_boxes` 的宽度下限滤掉 ⇒ 命中测试的「叶盒数 == 原子数」不受影响 ✓
+///
+/// ★ 仍然包在 `\textcolor{...}` 里（**虽然颜色已经不重要**，因为它不可见）：
+///   注入点紧跟 `^` / `_` 时，**裸** `\rule` 会被当成**上标的参数**（把后面的字符挤到主行）
+///   —— `\textcolor` 自带一个组，脚本绑在组上 ⇒ 安全（这是 2026-10-14 实测的坑）。
+final String kCursorTex = '\\textcolor{$kCaretTexColor}{\\rule{0pt}{0pt}}';
 
 /// **`\text{}` 被拆开时**插入的那一段：`}`（收掉前半） + 光标 + `\text{`（起后半）。
 final String kCursorSplitTex = '}$kCursorTex\\text{';
@@ -286,7 +298,7 @@ class CursorInjection {
 ///    · 顺带把光标染成与文本侧**同一个颜色**（见 [kCaretColorValue]）。
 CursorInjection injectCursor(String tex, int relOffset) {
   final int rel = buildCaretSites(tex).snap(relOffset).offset;
-  final String cursor = '\\textcolor{$kCaretTexColor}{\\cursor{}}';
+  final String cursor = kCursorTex; // ★ 零尺寸锚点（见它的注释）
   final _TextGroup? g = _textGroupAt(tex, rel);
 
   // 一般情况：直接在位点处注入
@@ -299,7 +311,7 @@ CursorInjection injectCursor(String tex, int relOffset) {
 
   // ★ 文本模式内：`\cursor` **不被接受**（实测 `\text{\cursor{}中文}` 等 6 种写法全部 ParseException）。
   //   做法：把这个 `\text{...}` **拆成两半**，光标落在两半之间（那里是数学模式）——
-  //   `\text{中}\textcolor{...}{\cursor{}}\text{文}`，实测可解析、视觉上光标就在「中」「文」之间。
+  //   `\text{中}\textcolor{...}{\rule{0pt}{0pt}}\text{文}`，实测可解析、锚点就在「中」「文」之间。
   final String before = tex.substring(g.contentStart, rel);
   final String after = tex.substring(rel, g.contentEnd);
   final StringBuffer sb = StringBuffer()..write(tex.substring(0, g.groupStart));

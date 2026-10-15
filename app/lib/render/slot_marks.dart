@@ -19,6 +19,7 @@
 //
 // **纯 Dart。**
 
+import 'attachment.dart';
 import 'caret_sites.dart';
 import 'scope_table.dart';
 import 'site_adjacency.dart';
@@ -79,7 +80,8 @@ const String kStructTailTex = r'\rule{3pt}{0pt}';
 ///   can not contribute to overall width, thus they must fit exactly with the width
 ///   even if it means overflow"）⇒ **墨迹不跟着变长**。
 ///   ★ **盒变宽 ≠ 装饰变长** —— 这条教训写进设计稿 §11.21.3。
-///   ⇒ 这 6 个定宽 accent 另按「**一个字符**」处理：`smart_delete.kFixedShapeAccents`。
+///   ⇒ 这 6 个定宽 accent 另按「**一个字符**」处理：`render/attachment.dart` 的
+///   `kFixedShapeAccents`（删除与空槽占位的共用判据都搬到那儿了）。
 ///
 /// ★★ **前置条件（2026-10-15 晚已就位）**：accent 的装饰盒原先**自己就是叶盒**
 ///   （`\overline{AB}` 的横线 32.8 × **0.6 px**）⇒ "叶盒数 ≠ 原子数" ⇒ 命中静默 null。
@@ -171,13 +173,14 @@ SlotMarkResult injectSlotMarks(String tex, {required int caretRel}) {
   return SlotMarkResult(out, rel);
 }
 
-/// ★★ §4.8 **必填槽 / 可选槽**（2026-10-15 用户拍板）：这个**空槽**的占位该不该画？
+/// ★★ §4.8 **三类槽**（2026-10-15 用户拍板）：这个**空槽**的占位该不该画？
 ///
-/// · **必填槽**（分式的分子分母 · 被开方数 · 普通上下标）⇒ **恒可见**（§6.1，用户拍板）
+/// · **必填槽**（分式的分子分母 · 被开方数 · 函数算子的内容）⇒ **恒可见**（§6.1）
 /// · **可选槽** ⇒ **只在光标进入该结构时才画**（"不打扰"）：
 ///     - **算子的上下限 / 底数**（`\sum_{}^{}`、`\int_a^b`、`\log_{}`）—— 不定积分、纯求和号都不必填
 ///     - **可选参数**（`\sqrt[n]{…}` 的次数）
 ///   例外：**当前槽**永远画 —— 否则光标停在一个看不见的槽里，用户不知道自己在哪。
+/// · ★★ **挂件槽**（脚本 `^`/`_` ＋ 定宽 accent 的参数）⇒ **不画**（第三类，见下面第一行）
 bool _shouldDrawEmptySlot(
   CaretSiteTable t,
   String tex,
@@ -186,6 +189,18 @@ bool _shouldDrawEmptySlot(
   SlotSpan? cur,
   List<OpScope> scopes,
 ) {
+  // ★★ §4.8 **第三类：挂件槽不画占位框**（2026-10-15 晚用户拍板）——
+  //    理由（用户的模型：**挂件挂在/套在基座上，不是结构**）：
+  //    · 文本里的一个字**旁边没有格子**；给挂件画框，就是把"渲染提示"画成了"一个域"；
+  //    · 空挂件**已经有可见落点** —— 基座字符本身就在那儿（accent 则那顶帽子在），不是幽灵；
+  //    · 光标进去时**自己会把位置画出来**（注入的蓝色竖条）⇒ 不必再造一个方框；
+  //    · 光标离开后留下的空挂件，**提交点 normalize 会回收**（§4.8 既有行为）。
+  //    ★ **连"当前槽"也不画**（用户口径：挂件这儿没有"占位框"这个概念）。
+  //    ⚠️ 但 `\sum_{i=1}^{n}` / `\log_{2}` / `\int_a^b` 的**上下限与底数**在源码里
+  //      **就是脚本槽** —— 它们属于 §4.8 的**可选槽**（不定积分 / 纯求和号不必填），
+  //      **不是挂件** ⇒ 判据必须把它们排除（与下面的可选槽分支**共用作用域表**）。
+  if (isAttachmentSlot(s) && !_isOperatorLimit(s, scopes)) return false;
+
   if (cur != null && s.start == cur.start && s.end == cur.end) return true; // 当前槽
   // ① 算子的上下限 / 底数（**可选**）：光标在**这个算子对象**里就画
   //    —— §4.7 的作用域就是那个"结构"
@@ -202,6 +217,18 @@ bool _shouldDrawEmptySlot(
     }
   }
   return true; // 必填槽 ⇒ **恒可见**（§6.1，用户拍板）
+}
+
+/// 这个"脚本槽"其实是**算子的上下限 / 底数**吗？
+///
+/// `\sum_{i=1}^{n}`、`\log_{2}`、`\int_a^b` 的上下限在**源码里就是脚本**（`_` / `^`），
+/// 但它们是 §4.8 的**可选槽**（不定积分、纯求和号本来就不必填）⇒ 不算"挂件"。
+/// ★ 判据与可选槽那一条**共用作用域表**（`scope_table.dart`），不另判一遍。
+bool _isOperatorLimit(SlotSpan s, List<OpScope> scopes) {
+  for (final OpScope sc in scopes) {
+    if (s.start >= sc.opStart && s.end <= sc.limitsEnd) return true;
+  }
+  return false;
 }
 
 /// 拥有槽 [s] 的**最内层内容项**（`\sqrt[3]{x}` 整段）—— 直接用解析器导出的项表，不另判一遍

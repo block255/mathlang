@@ -258,7 +258,7 @@ void main() {
       for (final String cmd in <String>['hat', 'tilde', 'dot', 'ddot', 'vec', 'bar']) {
         expect(renderMathTex('\\$cmd{AB}', caretRel: -1), '\\$cmd{AB}',
             reason: '`\\$cmd` 是**定宽字形** ⇒ 不加尾垫（它的内容末尾另有专门规则，'
-                '见 smart_delete.kFixedShapeAccents）');
+                '见 render/attachment.dart 的 kFixedShapeAccents）');
       }
       // 分式也不需要：分数线本来就超出分子分母
       expect(renderMathTex(r'\frac{a}{b}', caretRel: -1), r'\frac{a}{b}');

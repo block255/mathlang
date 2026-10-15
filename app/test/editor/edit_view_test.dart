@@ -14,6 +14,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mathlang/core/doc_buffer.dart';
 import 'package:mathlang/editor/edit_view.dart';
 import 'package:mathlang/render/inline_math_text.dart';
+import 'package:mathlang/render/leaf_boxes.dart';
 
 TextEditingValue _v(String text, [int? sel, TextRange? composing]) =>
     TextEditingValue(
@@ -523,7 +524,6 @@ void main() {
 
       expect(find.byType(Math), findsOneWidget, reason: '这段渲染成一个行内公式');
       final Offset tl = tester.getTopLeft(find.byType(Math));
-      final Size sz = tester.getSize(find.byType(Math));
 
       buf.setCaret(9); // 光标落进**空的分母**（位点在 rel 8 → 绝对 9）
       await tester.pumpAndSettle();
@@ -534,16 +534,25 @@ void main() {
       //   （`_handleUnitHit` 的段落映射是**粗**的，会把公式内每一处都映到同一个偏移；
       //   精确落点靠 `Math` 的 GestureDetector → `hitTestMathTex`）。
       //   精确那一路一旦静默失败，光标仍会"动"到那个固定偏移 —— 假通过。
-      await tester.tapAt(tl + Offset(2, sz.height / 2)); // 左端 = 分子那一带
+      //
+      // ★★ 2026-10-15 晚：坐标改成**按叶盒算**（原先按"Math 盒高度的一半"估 ——
+      //   而那一版的盒高**被引擎光标条撑大了**；光标不再参与排版之后盒高变了，
+      //   估出来的 y 会落在两个叶盒之间的缝里 ⇒ 这条测试反而变脆）。
+      final LeafBoxScan scan = scanLeafBoxes(
+          tester.renderObject<RenderObject>(find.byType(Math)));
+      final Rect firstBox = scan.eligible.first.rect;
+      final Rect lastBox = scan.eligible.last.rect;
+
+      await tester.tapAt(tl + Offset(firstBox.right - 1, firstBox.center.dy));
       await tester.pump();
       final int left = buf.caret;
 
-      await tester.tapAt(tl + Offset(sz.width - 2, sz.height / 2)); // 右端
+      await tester.tapAt(tl + Offset(lastBox.right - 1, lastBox.center.dy));
       await tester.pump();
       final int right = buf.caret;
 
       expect(left, lessThan(right),
-          reason: '★ 点公式左端与右端必须落到**不同**偏移；'
+          reason: '★ 点公式第一个叶盒的右半边与最后一个叶盒的右半边必须落到**不同**偏移；'
               '若两者相等，说明精确落点失效、只剩段落映射的粗落点（用户报的"被锁住"就是这个）');
       expect(left, inInclusiveRange(1, 11),
           reason: r'落点必须在公式源码 $\frac{a}{}$ 的 tex 区间里（1..11），不能跑到公式之外');

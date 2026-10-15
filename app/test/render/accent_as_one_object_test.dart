@@ -94,64 +94,146 @@ void main() {
   // ─────────────────────────────────────────────────────────────
   // 三、② 形状固定的 accent = **一个字符**（内容末尾 == 结构末尾）
   // ─────────────────────────────────────────────────────────────
-  group('② 定宽 accent（`\\hat` `\\bar` `\\dot` …）：内容末尾与结构末尾同一结果', () {
-    /// 段内相对偏移：`$\hat{x}$` 的 tex = `\hat{x}`，内容末尾 = 6、结构末尾 = 7
-    test(r'`\hat{x}` 内容末尾退格 ⇒ **整个** `\hat{x}`（不是留 `\hat{}`）', () {
-      final CaretSiteTable t = buildCaretSites(r'\hat{x}');
-      final SmartEdit e = smartBackspace(t, 6);
-      expect(e.deletes, isTrue);
-      expect(e.from, 0);
-      expect(e.to, 7, reason: '整个结构（含命令与收尾 `}`）');
+  // ③ §4.0' 挂件的边缘像素：**删除按可见墨迹走；会把挂件掏空 ⇒ 整个挂件走**
+  //
+  //    挂件 = 脚本（`^`/`_`）＋ 定宽 accent（`\hat` 一族）。判据只有一条，
+  //    所以**不带"单字符/多字符"这种会随内容变的门槛**（内容变长，行为自然从"整个走"变成"逐字删"）。
+  //    ★ 位点一个都不删 ⇒ 永远能点进挂件里打字（包括**下标的下标** `x_{a_i}`）。
+  // ─────────────────────────────────────────────────────────────
+  group('③ §4.0\' 挂件边缘：按墨迹走 + 不留半成品', () {
+    group('定宽 accent（套在基座上 ⇒ 掏空会剩一顶悬空的帽子 ⇒ 整个走）', () {
+      test(r'`\hat{x}` 右端两格（内容末尾 6 / 结构末尾 7）退格 ⇒ **整个** `\hat{x}`', () {
+        final CaretSiteTable t = buildCaretSites(r'\hat{x}');
+        for (final int rel in <int>[6, 7]) {
+          final SmartEdit e = smartBackspace(t, rel);
+          expect(e.from, 0, reason: 'rel=$rel');
+          expect(e.to, 7, reason: 'rel=$rel：整个结构（含命令与收尾 `}`）');
+        }
+      });
+
+      test(r'`\hat{x}` 左端两格（结构首 0 / 内容首 5）按 `Delete` ⇒ 整个 `\hat{x}`', () {
+        final CaretSiteTable t = buildCaretSites(r'\hat{x}');
+        for (final int rel in <int>[0, 5]) {
+          final SmartEdit e = smartDelete(t, rel);
+          expect(e.from, 0, reason: 'rel=$rel');
+          expect(e.to, 7, reason: 'rel=$rel：里面只剩一个原子 ⇒ 删它会掏空 ⇒ 整个走');
+        }
+      });
+
+      test(r'★ 左端**退格**删的是"挂件外面左边"那一个对象（左邻墨迹）', () {
+        const String tex = r'a\hat{x}';
+        final CaretSiteTable t = buildCaretSites(tex);
+        final SmartEdit e = smartBackspace(t, 6); // 内容首（`{` 之后）
+        expect(e.from, 0);
+        expect(e.to, 1, reason: '删的是 `a` —— 与"从挂件外面退格"同一结果');
+      });
+
+      test(r'`Delete` 在右端两格 ⇒ 删**右边**那一个对象（`\hat{x}+1` 删 `+`）', () {
+        final CaretSiteTable t = buildCaretSites(r'\hat{x}+1');
+        for (final int rel in <int>[6, 7]) {
+          final SmartEdit e = smartDelete(t, rel);
+          expect(e.from, 7, reason: 'rel=$rel');
+          expect(e.to, 8);
+        }
+      });
+
+      test(r'★ 内容 ≥2 个原子时**逐字删**：`\hat{ab}` 右端退格只删 `b`（留 `\hat{a}`）', () {
+        final CaretSiteTable t = buildCaretSites(r'\hat{ab}');
+        final SmartEdit e = smartBackspace(t, 7); // 内容末尾（b 之后）
+        expect(e.from, 6);
+        expect(e.to, 7, reason: '删 `b` 不会掏空（还剩 `a`）⇒ 按墨迹走');
+      });
+
+      test(r'`\bar{y}` / 裸参数 `\hat x` 都对', () {
+        expect(smartBackspace(buildCaretSites(r'\bar{y}'), 6).to, 7);
+        // 裸参数：内容末尾 == 结构末尾 == tex 末尾（没有 `}` 可越）
+        final SmartEdit bare = smartBackspace(buildCaretSites(r'\hat x'), 6);
+        expect(bare.from, 0);
+        expect(bare.to, 6);
+      });
+
+      test(r'★ **拉伸型** accent 不受影响：`\overline{AB}` 内容末尾退格只删 `B`', () {
+        final CaretSiteTable t = buildCaretSites(r'\overline{AB}');
+        final SmartEdit e = smartBackspace(t, 12); // 内容末尾（B 之后）
+        expect(e.from, 11);
+        expect(e.to, 12, reason: '拉伸型的两个位点**是分开的**（尾垫撑开了）⇒ 各管各的');
+      });
+
+      test(r'嵌套 `\hat{\bar{x}}`：三层是**同一根像素** ⇒ 取最外那一层', () {
+        final CaretSiteTable t = buildCaretSites(r'\hat{\bar{x}}');
+        final SmartEdit innerEnd = smartBackspace(t, 11); // 内层内容末尾
+        final SmartEdit outside = smartBackspace(t, 13); // 公式内最外层末尾
+        expect(innerEnd.from, outside.from);
+        expect(innerEnd.to, outside.to);
+        expect(innerEnd.from, 0);
+        expect(innerEnd.to, 13, reason: '整个 `\\hat{\\bar{x}}`');
+      });
+
+      test(r'空的 `\hat{}`：两个方向都整个走（本来就空）', () {
+        final CaretSiteTable t = buildCaretSites(r'\hat{}');
+        for (final SmartEdit e in <SmartEdit>[
+          smartBackspace(t, 5),
+          smartDelete(t, 5),
+        ]) {
+          expect(e.from, 0);
+          expect(e.to, 6, reason: '整个 `\\hat{}`');
+        }
+      });
     });
 
-    test(r'`\hat{x}` 结构末尾退格 ⇒ 同一个结果（同一根像素必须同一行为）', () {
-      final CaretSiteTable t = buildCaretSites(r'\hat{x}');
-      final SmartEdit inner = smartBackspace(t, 6);
-      final SmartEdit outer = smartBackspace(t, 7);
-      expect(inner.from, outer.from);
-      expect(inner.to, outer.to);
-    });
+    group('脚本（挂在基座**旁边** ⇒ 掏空只剩基座 ⇒ 只删挂件）', () {
+      test(r'`x_2` 右端退格 ⇒ 删掉挂件本身（`_2`），**基座留下**（用户选的「甲」）', () {
+        final CaretSiteTable t = buildCaretSites(r'x_2');
+        final SmartEdit e = smartBackspace(t, 3);
+        expect(e.from, 1);
+        expect(e.to, 3, reason: '`_2` 一起走（不能留悬空的 `_`）⇒ 剩 `x`');
+      });
 
-    test(r'`Delete` 同理：内容末尾 ⇒ 删**右边那一个同层对象**（`\hat{x}+1` 删 `+`）', () {
-      final CaretSiteTable t = buildCaretSites(r'\hat{x}+1');
-      final SmartEdit e = smartDelete(t, 6); // 内容末尾
-      expect(e.deletes, isTrue);
-      expect(e.from, 7);
-      expect(e.to, 8, reason: '越过整个 accent 之后，删的是 `+`');
-    });
+      test(r'花括号 `x_{2}` 右端退格 ⇒ 只删内容 `2`（留合法的空组 `x_{}`，§4.1.1）', () {
+        final CaretSiteTable t = buildCaretSites(r'x_{2}');
+        for (final int rel in <int>[4, 5]) { // 内容末尾 4 / 挂件末尾 5
+          final SmartEdit e = smartBackspace(t, rel);
+          expect(e.from, 3, reason: 'rel=$rel');
+          expect(e.to, 4, reason: 'rel=$rel：**同一根像素 ⇒ 同一结果**（§3.3）');
+        }
+      });
 
-    test(r'★ 花括号形式与裸参数形式都对：`\bar{y}` / `\hat x`', () {
-      expect(smartBackspace(buildCaretSites(r'\bar{y}'), 6).to, 7);
-      // 裸参数：`\hat x` 的内容末尾 == 结构末尾 == tex 末尾（没有 `}` 可越）
-      expect(smartBackspace(buildCaretSites(r'\hat x'), 6).to, 6);
-      expect(smartBackspace(buildCaretSites(r'\hat x'), 6).from, 0);
-    });
+      test(r'`x_{2}` 在"内容首"（`2` 之前）按 `Delete` ⇒ 只删 `2`，留 `x_{}`', () {
+        final CaretSiteTable t = buildCaretSites(r'x_{2}');
+        final SmartEdit e = smartDelete(t, 3);
+        expect(e.from, 3);
+        expect(e.to, 4,
+            reason: '花括号形式**不必**连 `_` 一起删（`{}` 是合法空组，§4.1.1）'
+                '—— 这样还能就地重打一个新的下标');
+      });
 
-    test('★ **拉伸型** accent 不受影响：`\\overline{AB}` 内容末尾退格只删 `B`', () {
-      final CaretSiteTable t = buildCaretSites(r'\overline{AB}');
-      final SmartEdit e = smartBackspace(t, 12); // 内容末尾（B 之后）
-      expect(e.from, 11);
-      expect(e.to, 12, reason: '拉伸型的两个位点**是分开的**（尾垫撑开了）⇒ 各管各的');
-    });
+      test(r'★ 内容 ≥2 个原子时逐字删：`x_{23}` 右端退格只删 `3`', () {
+        final CaretSiteTable t = buildCaretSites(r'x_{23}');
+        final SmartEdit e = smartBackspace(t, 5); // 内容末尾
+        expect(e.from, 4);
+        expect(e.to, 5, reason: '左边最近的墨迹是 `3`');
+      });
 
-    test('★ 左端**故意不合并**：`\\hat{x}` 内容首位点按 `Delete` 仍只删里面的 `x`', () {
-      final CaretSiteTable t = buildCaretSites(r'\hat{x}');
-      final SmartEdit e = smartDelete(t, 5); // 内容首（`{` 之后）
-      expect(e.from, 5);
-      expect(e.to, 6, reason: '这是"点进去改字"的入口，必须留着');
-    });
+      test(r'★ 挂件**内部**逐字：`x_{2|3}` 退格删 `2`、`Delete` 删 `3`', () {
+        final CaretSiteTable t = buildCaretSites(r'x_{23}');
+        expect(smartBackspace(t, 4).from, 3);
+        expect(smartDelete(t, 4).from, 4);
+      });
 
-    test(r'嵌套 `\hat{\bar{x}}`：三层其实是**同一根像素** ⇒ 一路重映射到最外', () {
-      final CaretSiteTable t = buildCaretSites(r'\hat{\bar{x}}');
-      // 内层 `\bar` 内容末尾 = 11；内层结构末尾 12；外层（`\hat`）结构末尾 13
-      // —— 装饰都不占宽、`{`/`}` 不可见 ⇒ 三者的**像素完全相同**
-      // ⇒ 按「同一根像素 ⇒ 同一行为」，退格应当得到**最外那一层**的结果（整个走）
-      final SmartEdit innerEnd = smartBackspace(t, 11);
-      final SmartEdit outside = smartBackspace(t, 13); // 公式内最外层末尾
-      expect(innerEnd.from, outside.from);
-      expect(innerEnd.to, outside.to);
-      expect(innerEnd.from, 0);
-      expect(innerEnd.to, 13, reason: '整个 `\\hat{\\bar{x}}`');
+      test(r'★ 基座与挂件之间（`x|_2`）退格 ⇒ 整个 `x_2`（连基座一起，绑定）', () {
+        final CaretSiteTable t = buildCaretSites(r'x_2');
+        final SmartEdit e = smartBackspace(t, 1);
+        expect(e.from, 0);
+        expect(e.to, 3, reason: '删基座必须连它的脚本一起走（否则留悬空 `_`）');
+      });
+
+      test(r'★ `x_{a_i}`（下标的下标）里，内容末尾退格删的是**内层** `i` 的挂件', () {
+        // tex = x_{a_i}：0=x 1=_ 2={ 3=a 4=_ 5=i 6=}
+        final CaretSiteTable t = buildCaretSites(r'x_{a_i}');
+        final SmartEdit e = smartBackspace(t, 6); // 内层 `i` 之后
+        expect(e.from, 4);
+        expect(e.to, 6, reason: '删内层挂件 `_i` ⇒ 剩 `x_{a}` —— 编辑路径没有被封死');
+      });
     });
   });
 }

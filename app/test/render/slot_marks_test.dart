@@ -105,12 +105,13 @@ void main() {
       });
     }
 
-    test('同时注入光标后也是"每处 +1"（光标条 1 个原子）', () {
+    test('同时注入光标后**原子数不变**（零尺寸锚点 0 个原子）', () {
       const String tex = r'\frac{a}{}';
       final SlotMarkResult m = injectSlotMarks(tex, caretRel: 6);
       final String withCursor = injectCursor(m.tex, m.rel).tex;
-      expect(lexVisibleAtoms(withCursor).length, lexVisibleAtoms(tex).length + 2,
-          reason: '1 个空槽占位 + 1 个光标条');
+      expect(lexVisibleAtoms(withCursor).length, lexVisibleAtoms(tex).length + 1,
+          reason: '只有**空槽占位**那 1 个原子；光标是零尺寸锚点（`\\rule{0pt}{0pt}`）'
+              '—— 词法 0 个原子、渲染 0×0 盒子（2026-10-15 晚改）');
     });
   });
 }

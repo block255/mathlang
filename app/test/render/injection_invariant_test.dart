@@ -39,8 +39,10 @@ void main() {
       expect(lexVisibleAtoms(r'\kern 2pt'), isEmpty);
     });
 
-    test(r'光标注入串本身恰好一个原子（就是光标条）', () {
-      expect(lexVisibleAtoms(r'\textcolor{#1E88E5}{\cursor{}}').length, 1);
+    test(r'★ 光标注入串本身**零个原子**（零尺寸锚点，2026-10-15 晚改）', () {
+      expect(lexVisibleAtoms(kCursorTex), isEmpty,
+          reason: '锚点是 `\\rule{0pt}{0pt}`：词法上 0 个原子、渲染成 0×0 盒子'
+              '（被 leaf_boxes 的宽度下限滤掉）⇒ 命中测试两边都不用为它补账');
     });
 
     test(r'\phantom{x} 占位但不画 → 零个原子', () {
@@ -48,7 +50,7 @@ void main() {
     });
   });
 
-  group('★ 在**每一个位点**注入光标后，原子数必须恰好 +1（只多出光标条）', () {
+  group('★ 在**每一个位点**注入光标后，原子数必须**一点也不变**（锚点不是原子）', () {
     for (final String tex in kSamples) {
       test('tex = $tex', () {
         final int base = lexVisibleAtoms(tex).length;
@@ -58,8 +60,8 @@ void main() {
           final String injected = injectCursor(tex, off).tex;
           expect(
             lexVisibleAtoms(injected).length,
-            base + 1,
-            reason: '在偏移 $off 注入后原子数应恰好 +1（光标条）。\n'
+            base,
+            reason: '在偏移 $off 注入后原子数必须**不变**（零尺寸锚点贡献 0 个原子）。\n'
                 '不等 ⇒ 有"不参与渲染的参数"被当成了原子 ⇒ 叶盒数与原子数对不上 '
                 '⇒ hitTestMathTex 静默返回 null（点公式失效）。\n'
                 'tex      = $tex\ninjected = $injected',

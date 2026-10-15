@@ -11,6 +11,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_math_fork/flutter_math.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:mathlang/render/caret_sites.dart';
 import 'package:mathlang/render/slot_marks.dart';
 import 'package:mathlang/render/visible_atoms.dart';
 
@@ -29,8 +30,9 @@ void main() {
       expect(kEmptySlotTex.allMatches(out).length, 2,
           reason: '★ 这一条就是"粘贴进去消失了"的正面回归 —— '
               '空分数不注入占位只有 3.4 × 10.3 px（实测），肉眼等于没有');
-      expect(out, contains(r'\cursor'),
-          reason: '★ 光标也必须在（原先它和占位一起被判"不在这段里"而消失）');
+      expect(out, contains(kCursorTex),
+          reason: '★ 光标也必须在（原先它和占位一起被判"不在这段里"而消失）'
+              '—— 2026-10-15 晚起它是**零尺寸锚点**（`\\rule{0pt}{0pt}`）');
     });
 
     test('光标在空槽里 → 那个槽用"当前槽"样式（蓝），别的槽仍是浅灰', () {
@@ -50,7 +52,7 @@ void main() {
       final String withCaret = renderMathTex(r'\frac{a}{b}', caretRel: 3);
       expect(kEmptySlotTex.allMatches(withCaret).length, 0, reason: '没有空槽');
       expect(kCurrentSlotTex.allMatches(withCaret).length, 0);
-      expect(withCaret, contains(r'\cursor'),
+      expect(withCaret, contains(kCursorTex),
           reason: '光标确实在这一段里 → 必须画出来（"有没有空槽"与"光标在不在"是两件事）');
     });
 
@@ -79,8 +81,9 @@ void main() {
         final String withCaret = renderMathTex(tex, caretRel: 0);
         final int empties2 = kEmptySlotTex.allMatches(withCaret).length +
             kCurrentSlotTex.allMatches(withCaret).length;
-        expect(lexVisibleAtoms(withCaret).length, base + empties2 + 1,
-            reason: '再 +1 = 光标条那一个原子');
+        expect(lexVisibleAtoms(withCaret).length, base + empties2,
+            reason: '★ 光标**不再**贡献原子（零尺寸锚点，2026-10-15 晚改）—— '
+                '注入后原子数只随空槽占位变');
       });
     }
   });
@@ -101,10 +104,11 @@ void main() {
       }
     });
 
-    test('光标在空公式里 → 占位 + 光标条（否则用户不知道停在哪）', () {
+    test('光标在空公式里 → 占位 + 锚点（否则用户不知道停在哪）', () {
       final String out = renderMathTex('', caretRel: 0);
       expect(out, contains(r'\square'));
-      expect(out, contains(r'\cursor'));
+      expect(out, contains(kCursorTex),
+          reason: '★ 2026-10-15 晚起光标是**零尺寸锚点**（竖条由 MathWithCaret 自绘上去）');
     });
 
     test('★ 只兜空公式：非空公式不受影响', () {

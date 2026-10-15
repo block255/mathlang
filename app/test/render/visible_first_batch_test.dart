@@ -76,7 +76,9 @@ void main() {
     test(r'★ 必填槽**恒可见**（分式、被开方数）—— 不管光标在不在这一段里', () {
       expect(_marks(renderMathTex(r'\frac{}{}', caretRel: -1)), 2);
       expect(_marks(renderMathTex(r'\sqrt{}', caretRel: -1)), 1);
-      expect(_marks(renderMathTex(r'x^{}', caretRel: -1)), 1);
+      // ★ 2026-10-15 晚改口径：普通上下标是**挂件槽**（§4.8 第三类）⇒ **不画**（见下面第四组）
+      expect(_marks(renderMathTex(r'x^{}', caretRel: -1)), 0,
+          reason: '挂件槽不画占位框（用户的模型：挂件挂在基座上，不是结构）');
     });
   });
 
@@ -125,6 +127,54 @@ void main() {
       await tester.pumpAndSettle();
       expect(buf.buf, before, reason: '任何视觉都不许动缓冲区');
       expect(find.byType(Math), findsOneWidget);
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────
+  // 四、★ §4.8 **第三类：挂件槽不画占位框**（2026-10-15 晚用户拍板）
+  //
+  //   挂件 = 脚本（`^`/`_`）＋ 定宽 accent（`\hat` 一族）。
+  //   用户模型：**挂件是挂在/套在基座上的，不是结构** —— 文本里的一个字旁边没有格子；
+  //   空挂件已经有可见落点（基座字符 / 那顶帽子），光标进去时竖条自己会画出来
+  //   ⇒ 不必再造一个方框（"占位框"这个念头本身就有公式块味道）。
+  //   ★ 连"当前槽"也不画。结构类槽（分式/根号/算子内容）与可选槽**照旧**。
+  // ─────────────────────────────────────────────────────────────
+  group(r'§4.8 第三类：挂件槽不画占位框（脚本 + 定宽 accent）', () {
+    test(r'空脚本：`x^{}` / `x_{}` ⇒ 一个占位都不画（光标在里面也不画）', () {
+      for (final String tex in <String>[r'x^{}', r'x_{}']) {
+        expect(_marks(renderMathTex(tex, caretRel: -1)), 0, reason: tex);
+        expect(_marks(renderMathTex(tex, caretRel: 3)), 0,
+            reason: '$tex：光标在空脚本里 —— 由竖条指出位置，不画框');
+      }
+    });
+
+    test(r'空 accent：`\hat{}` / `\bar{}` / `\vec{}` ⇒ 不画', () {
+      for (final String tex in <String>[r'\hat{}', r'\bar{}', r'\vec{}']) {
+        expect(_marks(renderMathTex(tex, caretRel: -1)), 0, reason: tex);
+        expect(_marks(renderMathTex(tex, caretRel: 5)), 0, reason: tex);
+      }
+    });
+
+    test(r'★ **结构类**槽照旧恒可见：`\frac{}{}` / `\sqrt{}` / `\frac{a}{}`', () {
+      expect(_marks(renderMathTex(r'\frac{}{}', caretRel: -1)), 2,
+          reason: '分式分子分母是**结构的内容**（空着时整个结构是零尺寸）');
+      expect(_marks(renderMathTex(r'\sqrt{}', caretRel: -1)), 1);
+      expect(_marks(renderMathTex(r'\frac{a}{}', caretRel: -1)), 1);
+    });
+
+    test(r'★ 可选槽照旧"进入才画"：`\sum_{}^{}` / `\sqrt[]{}`', () {
+      expect(_marks(renderMathTex(r'\sum_{}^{}', caretRel: -1)), 0);
+      expect(_marks(renderMathTex(r'\sum_{}^{}', caretRel: 0)), 2);
+    });
+
+    test(r'★ **拉伸型** accent 的参数照旧画：`\overline{}`', () {
+      expect(_marks(renderMathTex(r'\overline{}', caretRel: -1)), 1,
+          reason: '空着只剩一条线 ⇒ 需要可见落点（它与定宽 accent 不同族）');
+    });
+
+    test(r'★ 非空挂件本来就不画（有内容 ⇒ 没有空槽）', () {
+      expect(_marks(renderMathTex(r'x^{2}', caretRel: -1)), 0);
+      expect(_marks(renderMathTex(r'\hat{x}', caretRel: -1)), 0);
     });
   });
 }

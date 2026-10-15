@@ -8,10 +8,10 @@
 //   而"自动换行 + 基线对齐"这两件事**免费**由 Flutter 的行内排版器完成（S2-2 实测验证）。
 
 import 'package:flutter/material.dart';
-import 'package:flutter_math_fork/flutter_math.dart';
 
 import 'caret_ownership.dart';
 import 'caret_sites.dart';
+import 'math_caret.dart';
 import 'projection.dart';
 import 'slot_marks.dart';
 /// ★★ §6.5 **公式范围可见** —— ⚠️ **2026-10-15 晚撤掉了"整段淡色底"那一版**。
@@ -189,12 +189,12 @@ class _InlineMathTextState extends State<InlineMathText> {
           : PlaceholderAlignment.middle,
       baseline: baseline ? TextBaseline.alphabetic : null,
       child: onTap == null
-          ? _mathWidget(key, tex)
+          ? _mathWidget(key, tex, caretHere: caretHere)
           : GestureDetector(
               onTapDown: (d) => onTap(s, tex, d.globalPosition, key),
               child: MouseRegion(
                 cursor: SystemMouseCursors.text,
-                child: _mathWidget(key, tex),
+                child: _mathWidget(key, tex, caretHere: caretHere),
               ),
             ),
     );
@@ -203,11 +203,15 @@ class _InlineMathTextState extends State<InlineMathText> {
   /// ⚠️ **这里曾经给整段刷一层淡色底（§6.5 旧版）—— 2026-10-15 晚撤掉了**：
   /// 那等于把"渲染提示"画成"一个对象"（用户指出 `$\frac{a}{b}=\sqrt{2}$` 是**三个对象**）。
   /// 详见文件头 `kMathRangeColor` 的注释与《编辑地基与手感》§六 维护约定第 6 条。
-  Widget _mathWidget(GlobalKey key, String tex) => Math.tex(
-        key: key,
-        tex,
-        mathStyle: MathStyle.text,
-        textStyle: TextStyle(fontSize: widget.mathFontSize),
+  ///
+  /// ★★ 2026-10-15 晚：光标改成 **零尺寸锚点 + 自绘竖条**（`MathWithCaret`）——
+  ///   以前注入的引擎 `\cursor{}` 会**参与排版**（把公式盒子撑高/撑宽 ⇒ accent "跳"）。
+  Widget _mathWidget(GlobalKey key, String tex, {bool caretHere = false}) =>
+      MathWithCaret(
+        tex: tex,
+        showCaret: caretHere,
+        mathKey: key,
+        fontSize: widget.mathFontSize,
         onErrorFallback: (e) => Text(
           '❌ ${e.messageWithType}',
           style: const TextStyle(color: Colors.red, fontSize: 13),

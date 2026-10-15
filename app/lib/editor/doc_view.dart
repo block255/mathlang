@@ -35,6 +35,7 @@ import '../render/caret_sites.dart';
 import '../render/hit_map.dart';
 import '../render/inline_math_text.dart';
 import '../render/injection_map.dart';
+import '../render/math_caret.dart';
 import '../render/projection.dart';
 import '../render/slot_marks.dart';
 import '../render/visible_atoms.dart';
@@ -742,14 +743,17 @@ class _DocViewState extends State<DocView> {
         // ⚠️ 2026-10-15 晚：原先这里给整段行间公式刷淡色底（§6.5 旧版），**已撤** ——
         //    它把"渲染提示"画成了"一个对象"（用户指出 `$\frac{a}{b}=\sqrt{2}$` 是三个对象）。
         //    见 `inline_math_text.kMathRangeColor` 的注释与《编辑地基与手感》§六-6。
+        // ★★ 光标：行间公式同样走"零尺寸锚点 + 自绘竖条"（`MathWithCaret`）。
+        final GlobalKey mathKey = interactive
+            ? _mathBlockKeys.putIfAbsent(u.id, () => GlobalKey())
+            : GlobalKey();
         return Center(
-          child: Math.tex(
-            tex,
-            key: interactive
-                ? _mathBlockKeys.putIfAbsent(u.id, () => GlobalKey())
-                : null,
+          child: MathWithCaret(
+            tex: tex,
+            showCaret: caretAbs != null && caretAbs >= u.renderBase,
+            mathKey: mathKey,
+            fontSize: body,
             mathStyle: MathStyle.display,
-            textStyle: TextStyle(fontSize: body),
             onErrorFallback: (e) => Text(
               '❌ ${e.messageWithType}',
               style: const TextStyle(color: Colors.red, fontSize: 13),
