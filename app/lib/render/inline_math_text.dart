@@ -1,4 +1,4 @@
-// 数语引擎 · 行内混排投影 Widget
+﻿// 数语引擎 · 行内混排投影 Widget
 //
 // 这是 4.0 架构的渲染侧落地：**文字走 Flutter 的文字排版，`$...$` 走 Math.tex，
 // 两者同行基线对齐、并一起参与折行**。
@@ -14,6 +14,17 @@ import 'caret_ownership.dart';
 import 'caret_sites.dart';
 import 'projection.dart';
 import 'slot_marks.dart';
+/// ★ §6.5 **公式范围可见**（2026-10-15 实现）：光标落在某段数学里时，给**整段**一个淡色范围。
+///
+/// 为什么它重要（§6.5 的三条）：定界符不可见 ⇒ "光标在公式里 / 公式外"画在**同一根像素**上 ⇒
+///   ① `→` 必须靠「甲」跳过那个看不见的位点
+///   ② 用户分不清接下来打的字进公式还是进正文
+///   ③ **W1**：末尾那个分式"外面"几乎点不到
+/// ⇒ 给整段一个可见范围，三件事一起解；它也是"§4.0 按可见对象删"在视觉上的依据。
+///
+/// 色系与 §6.2 光标（`#1E88E5`）同色，**透明度更高一档** —— 同一支画笔，不抢视觉焦点。
+const Color kMathRangeColor = Color(0x261E88E5);
+
 /// 行内公式与正文的对齐方式。
 /// S1 定稿：**默认 `baseline`**（排版上正确的语义），保留 `middle` 作为回退。
 enum MathAlignMode {
@@ -176,27 +187,40 @@ class _InlineMathTextState extends State<InlineMathText> {
           : PlaceholderAlignment.middle,
       baseline: baseline ? TextBaseline.alphabetic : null,
       child: onTap == null
-          ? _mathWidget(key, tex)
+          ? _mathWidget(key, tex, tinted: caretHere)
           : GestureDetector(
               onTapDown: (d) => onTap(s, tex, d.globalPosition, key),
               child: MouseRegion(
                 cursor: SystemMouseCursors.text,
-                child: _mathWidget(key, tex),
+                child: _mathWidget(key, tex, tinted: caretHere),
               ),
             ),
     );
   }
 
-  Widget _mathWidget(GlobalKey key, String tex) => Math.tex(
-        key: key,
-        tex,
-        mathStyle: MathStyle.text,
-        textStyle: TextStyle(fontSize: widget.mathFontSize),
-        onErrorFallback: (e) => Text(
-          '❌ ${e.messageWithType}',
-          style: const TextStyle(color: Colors.red, fontSize: 13),
-        ),
-      );
+  /// [tinted] = 光标在这段数学里 ⇒ 给整段一个**淡色范围**（§6.5，`kMathRangeColor`）。
+  ///
+  /// ★ 它是**自绘**的：不注入任何东西、不改 tex（§11.15 的四层教训：为显示而注入会反噬数据映射）。
+  Widget _mathWidget(GlobalKey key, String tex, {bool tinted = false}) {
+    final Widget math = Math.tex(
+      key: key,
+      tex,
+      mathStyle: MathStyle.text,
+      textStyle: TextStyle(fontSize: widget.mathFontSize),
+      onErrorFallback: (e) => Text(
+        '❌ ${e.messageWithType}',
+        style: const TextStyle(color: Colors.red, fontSize: 13),
+      ),
+    );
+    if (!tinted) return math;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: kMathRangeColor,
+        borderRadius: BorderRadius.circular(2),
+      ),
+      child: math,
+    );
+  }
 
   /// ★ 光标必须**零宽**。
   ///

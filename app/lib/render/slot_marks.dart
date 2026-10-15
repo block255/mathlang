@@ -1,4 +1,4 @@
-// 数语引擎 · 空槽可视化（S3-5）
+﻿// 数语引擎 · 空槽可视化（S3-5）
 //
 // 规格：notes/design/位点与结构导航.md §6.1
 //   空槽 → 虚线占位框（浅灰 `#B0BEC5`，宽 ≈ 一个字符）
@@ -20,6 +20,7 @@
 // **纯 Dart。**
 
 import 'caret_sites.dart';
+import 'scope_table.dart';
 import 'site_adjacency.dart';
 
 /// 空槽占位（浅灰小方框）
@@ -105,10 +106,11 @@ SlotMarkResult injectSlotMarks(String tex, {required int caretRel}) {
 
   // 光标不在这一段（caretRel < 0）→ 没有"当前槽"，全部按普通空槽画
   final SlotSpan? cur = caretRel < 0 ? null : innermostSlotAt(t, caretRel);
+  final List<OpScope> scopes = operatorScopes(tex); // ★ §4.8 判"可选槽"用
   final List<_Ins> ins = <_Ins>[
-    // ① 空槽占位
+    // ① 空槽占位（可选槽只在光标进入该结构时才画，见 [_shouldDrawEmptySlot]）
     for (final SlotSpan s in t.slots)
-      if (s.isEmpty)
+      if (s.isEmpty && _shouldDrawEmptySlot(t, tex, s, caretRel, cur, scopes))
         _Ins(
           s.start,
           (cur != null && s.start == cur.start && s.end == cur.end)
@@ -132,6 +134,53 @@ SlotMarkResult injectSlotMarks(String tex, {required int caretRel}) {
     if (e.shiftAt ? rel >= e.at : rel > e.at) rel += e.text.length;
   }
   return SlotMarkResult(out, rel);
+}
+
+/// ★★ §4.8 **必填槽 / 可选槽**（2026-10-15 用户拍板）：这个**空槽**的占位该不该画？
+///
+/// · **必填槽**（分式的分子分母 · 被开方数 · 普通上下标）⇒ **恒可见**（§6.1，用户拍板）
+/// · **可选槽** ⇒ **只在光标进入该结构时才画**（"不打扰"）：
+///     - **算子的上下限 / 底数**（`\sum_{}^{}`、`\int_a^b`、`\log_{}`）—— 不定积分、纯求和号都不必填
+///     - **可选参数**（`\sqrt[n]{…}` 的次数）
+///   例外：**当前槽**永远画 —— 否则光标停在一个看不见的槽里，用户不知道自己在哪。
+bool _shouldDrawEmptySlot(
+  CaretSiteTable t,
+  String tex,
+  SlotSpan s,
+  int caretRel,
+  SlotSpan? cur,
+  List<OpScope> scopes,
+) {
+  if (cur != null && s.start == cur.start && s.end == cur.end) return true; // 当前槽
+  // ① 算子的上下限 / 底数（**可选**）：光标在**这个算子对象**里就画
+  //    —— §4.7 的作用域就是那个"结构"
+  for (final OpScope sc in scopes) {
+    if (s.start >= sc.opStart && s.end <= sc.limitsEnd) {
+      return caretRel >= 0 && caretRel >= sc.start && caretRel <= sc.end;
+    }
+  }
+  // ② 可选参数（`\sqrt[n]{…}`，**可选**）：光标在**拥有这个槽的那个内容项**里就画
+  if (s.path.isNotEmpty && s.path.last.argIndex == -1) {
+    final TexItem? owner = _innermostItemContaining(t, s);
+    if (owner != null) {
+      return caretRel >= 0 && caretRel >= owner.start && caretRel <= owner.end;
+    }
+  }
+  return true; // 必填槽 ⇒ **恒可见**（§6.1，用户拍板）
+}
+
+/// 拥有槽 [s] 的**最内层内容项**（`\sqrt[3]{x}` 整段）—— 直接用解析器导出的项表，不另判一遍
+TexItem? _innermostItemContaining(CaretSiteTable t, SlotSpan s) {
+  TexItem? best;
+  for (final TexRegion r in t.regions) {
+    for (final TexItem it in r.items) {
+      if (it.start > s.start || it.end < s.end) continue;
+      if (best == null || (it.end - it.start) < (best.end - best.start)) {
+        best = it;
+      }
+    }
+  }
+  return best;
 }
 
 /// ★ 空公式的占位字形（2026-10-15，§6.1.1）。

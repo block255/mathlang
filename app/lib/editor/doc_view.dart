@@ -739,19 +739,33 @@ class _DocViewState extends State<DocView> {
           text,
           caretRel: caretAbs == null ? -1 : caretAbs - u.renderBase,
         );
-        return Center(
-          child: Math.tex(
-            tex,
-            key: interactive
-                ? _mathBlockKeys.putIfAbsent(u.id, () => GlobalKey())
-                : null,
-            mathStyle: MathStyle.display,
-            textStyle: TextStyle(fontSize: body),
-            onErrorFallback: (e) => Text(
-              '❌ ${e.messageWithType}',
-              style: const TextStyle(color: Colors.red, fontSize: 13),
-            ),
+        // ★ §6.5 公式范围可见：光标在这段行间公式里 ⇒ 给整段一个**自绘**淡色范围
+        //   （不改 tex —— 与行内公式同一支画笔，见 `inline_math_text.kMathRangeColor`）
+        final bool caretInside = caretAbs != null &&
+            caretAbs >= u.renderBase &&
+            caretAbs <= u.renderBase + text.length;
+        final Widget mathBlock = Math.tex(
+          tex,
+          key: interactive
+              ? _mathBlockKeys.putIfAbsent(u.id, () => GlobalKey())
+              : null,
+          mathStyle: MathStyle.display,
+          textStyle: TextStyle(fontSize: body),
+          onErrorFallback: (e) => Text(
+            '❌ ${e.messageWithType}',
+            style: const TextStyle(color: Colors.red, fontSize: 13),
           ),
+        );
+        return Center(
+          child: caretInside
+              ? DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: kMathRangeColor,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                  child: mathBlock,
+                )
+              : mathBlock,
         );
 
       case BlockType.code:
