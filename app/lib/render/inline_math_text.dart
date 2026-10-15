@@ -1,4 +1,4 @@
-﻿// 数语引擎 · 行内混排投影 Widget
+// 数语引擎 · 行内混排投影 Widget
 //
 // 这是 4.0 架构的渲染侧落地：**文字走 Flutter 的文字排版，`$...$` 走 Math.tex，
 // 两者同行基线对齐、并一起参与折行**。
@@ -14,16 +14,18 @@ import 'caret_ownership.dart';
 import 'caret_sites.dart';
 import 'projection.dart';
 import 'slot_marks.dart';
-/// ★ §6.5 **公式范围可见**（2026-10-15 实现）：光标落在某段数学里时，给**整段**一个淡色范围。
+/// ★★ §6.5 **公式范围可见** —— ⚠️ **2026-10-15 晚撤掉了"整段淡色底"那一版**。
 ///
-/// 为什么它重要（§6.5 的三条）：定界符不可见 ⇒ "光标在公式里 / 公式外"画在**同一根像素**上 ⇒
-///   ① `→` 必须靠「甲」跳过那个看不见的位点
-///   ② 用户分不清接下来打的字进公式还是进正文
-///   ③ **W1**：末尾那个分式"外面"几乎点不到
-/// ⇒ 给整段一个可见范围，三件事一起解；它也是"§4.0 按可见对象删"在视觉上的依据。
+/// 撤掉的理由（用户一眼指出，比我自己想得准）：
+/// **给整段公式刷一层底色，等于把"渲染提示"画成了"一个对象"** ——
+/// `$\frac{a}{b}=\sqrt{2}$` 在用户眼里是**三个对象**（分式 / `=` / 根号），
+/// 而一整块底色在说"这是**一整个**东西" ⇒ 那正是**公式块**的观感
+/// （也正是本仓过闸表 §7.2 里那条"公式有专用底色 = 症状"）。
 ///
-/// 色系与 §6.2 光标（`#1E88E5`）同色，**透明度更高一档** —— 同一支画笔，不抢视觉焦点。
-const Color kMathRangeColor = Color(0x261E88E5);
+/// §6.5 的**动机仍然成立**（定界符不可见 ⇒ 里 / 外画在同一根像素上；W1 点不到末尾分式外面），
+/// 但**手段**要选"像文本装饰 / 只在边界"的，不要选"像卡片 / 覆盖整段"的。
+/// 现在**什么都不常显**；真要再做边界提示，按 §六 维护约定第 6 条先过一遍过闸表。
+const Color kMathRangeColor = Color(0x261E88E5); // ⚠️ 已停用，保留常量备查
 
 /// 行内公式与正文的对齐方式。
 /// S1 定稿：**默认 `baseline`**（排版上正确的语义），保留 `middle` 作为回退。
@@ -187,40 +189,30 @@ class _InlineMathTextState extends State<InlineMathText> {
           : PlaceholderAlignment.middle,
       baseline: baseline ? TextBaseline.alphabetic : null,
       child: onTap == null
-          ? _mathWidget(key, tex, tinted: caretHere)
+          ? _mathWidget(key, tex)
           : GestureDetector(
               onTapDown: (d) => onTap(s, tex, d.globalPosition, key),
               child: MouseRegion(
                 cursor: SystemMouseCursors.text,
-                child: _mathWidget(key, tex, tinted: caretHere),
+                child: _mathWidget(key, tex),
               ),
             ),
     );
   }
 
-  /// [tinted] = 光标在这段数学里 ⇒ 给整段一个**淡色范围**（§6.5，`kMathRangeColor`）。
-  ///
-  /// ★ 它是**自绘**的：不注入任何东西、不改 tex（§11.15 的四层教训：为显示而注入会反噬数据映射）。
-  Widget _mathWidget(GlobalKey key, String tex, {bool tinted = false}) {
-    final Widget math = Math.tex(
-      key: key,
-      tex,
-      mathStyle: MathStyle.text,
-      textStyle: TextStyle(fontSize: widget.mathFontSize),
-      onErrorFallback: (e) => Text(
-        '❌ ${e.messageWithType}',
-        style: const TextStyle(color: Colors.red, fontSize: 13),
-      ),
-    );
-    if (!tinted) return math;
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: kMathRangeColor,
-        borderRadius: BorderRadius.circular(2),
-      ),
-      child: math,
-    );
-  }
+  /// ⚠️ **这里曾经给整段刷一层淡色底（§6.5 旧版）—— 2026-10-15 晚撤掉了**：
+  /// 那等于把"渲染提示"画成"一个对象"（用户指出 `$\frac{a}{b}=\sqrt{2}$` 是**三个对象**）。
+  /// 详见文件头 `kMathRangeColor` 的注释与《编辑地基与手感》§六 维护约定第 6 条。
+  Widget _mathWidget(GlobalKey key, String tex) => Math.tex(
+        key: key,
+        tex,
+        mathStyle: MathStyle.text,
+        textStyle: TextStyle(fontSize: widget.mathFontSize),
+        onErrorFallback: (e) => Text(
+          '❌ ${e.messageWithType}',
+          style: const TextStyle(color: Colors.red, fontSize: 13),
+        ),
+      );
 
   /// ★ 光标必须**零宽**。
   ///

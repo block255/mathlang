@@ -81,44 +81,41 @@ void main() {
   });
 
   // ─────────────────────────────────────────────────────────────
-  // 二、§6.5 公式范围可见（自绘淡色范围，不改 tex）
+  // 二、★ 过闸守卫：**不许把"渲染提示"画成"一个对象"**（2026-10-15 用户指出后立的）
+  //
+  //   §6.5 旧版给"光标所在的那一整段公式"刷了一层淡色底，用户一眼看出来：
+  //   `$\frac{a}{b}=\sqrt{2}$` 是**三个对象**（分式 / `=` / 根号），
+  //   一整块底色等于在说"这是**一整个**东西" ⇒ 那是**公式块**的观感
+  //   （也正是过闸表 §7.2 里"公式有专用底色 = 症状"那一条）。
+  //   ⇒ 这条守卫把它钉死：**数学段上不许出现"整段底色"这类整体视觉**；
+  //     真要给"里 / 外"提示，也必须是**自绘**且**不覆盖整段**的手段（§六-6）。
   // ─────────────────────────────────────────────────────────────
-  group('§6.5 公式范围可见：光标在公式里 → 整段淡色范围', () {
-    testWidgets('行内公式：光标进去就有范围，出去就没了', (WidgetTester tester) async {
+  group('★ 过闸：数学段上不许有"整段底色"这类整体视觉', () {
+    testWidgets('行内公式：光标在里面时也不许刷整段底色', (WidgetTester tester) async {
       const String doc = r'设 $x^2+1$ 为常数';
       final DocBuffer buf = DocBuffer(doc);
       await _mountEdit(tester, buf);
       await tester.pumpAndSettle();
 
-      buf.setCaret(0); // 光标在文字里
+      buf.setCaret(doc.indexOf(r'x^2'));
       await tester.pumpAndSettle();
-      expect(_hasRangeTint(tester), isFalse, reason: '光标不在公式里 ⇒ 不该有范围');
-
-      buf.setCaret(doc.indexOf(r'x^2')); // 光标进公式（tex 起点）
-      await tester.pumpAndSettle();
-      expect(_hasRangeTint(tester), isTrue, reason: '光标在公式里 ⇒ 整段应当有淡色范围');
-
-      buf.setCaret(doc.length); // 回到文字
-      await tester.pumpAndSettle();
-      expect(_hasRangeTint(tester), isFalse, reason: '光标离开 ⇒ 范围消失');
+      expect(_hasRangeTint(tester), isFalse,
+          reason: '整段底色 = 把"渲染提示"画成"一个对象"（公式块观感，用户 2026-10-15 指出）');
     });
 
-    testWidgets('行间公式：光标在块里也有范围', (WidgetTester tester) async {
+    testWidgets('行间公式：同样不许', (WidgetTester tester) async {
       const String doc = '正文\n\n\$\$\nx^2+1\n\$\$\n\n尾段\n';
       final DocBuffer buf = DocBuffer(doc);
       await _mountEdit(tester, buf);
       await tester.pumpAndSettle();
 
-      buf.setCaret(0);
+      buf.setCaret(doc.indexOf('x^2'));
       await tester.pumpAndSettle();
       expect(_hasRangeTint(tester), isFalse);
-
-      buf.setCaret(doc.indexOf('x^2')); // 光标进行间公式
-      await tester.pumpAndSettle();
-      expect(_hasRangeTint(tester), isTrue, reason: '行间公式也要有范围（§6.5 同一条）');
     });
 
-    testWidgets('★ 范围是**自绘**的：tex 一个字符都不变', (WidgetTester tester) async {
+    testWidgets('★ 数学的渲染与缓冲区**一字不差**（视觉不许反过来动数据）',
+        (WidgetTester tester) async {
       const String doc = r'设 $x^2+1$ 为常数';
       final DocBuffer buf = DocBuffer(doc);
       await _mountEdit(tester, buf);
@@ -126,7 +123,7 @@ void main() {
       final String before = buf.buf;
       buf.setCaret(doc.indexOf(r'x^2'));
       await tester.pumpAndSettle();
-      expect(buf.buf, before, reason: '范围只是画出来的，不许动缓冲区');
+      expect(buf.buf, before, reason: '任何视觉都不许动缓冲区');
       expect(find.byType(Math), findsOneWidget);
     });
   });
