@@ -233,33 +233,33 @@ String _pathKey(List<SlotStep> path) =>
 bool _sameSpan(SlotSpan a, SlotSpan b) =>
     a.start == b.start && a.end == b.end && _pathKey(a.path) == _pathKey(b.path);
 
-/// 紧邻 [rel] **左侧**的可见原子：取 `end <= rel` 里最靠右的那个，
-/// 且它与光标之间只允许夹着花括号/空格（否则说明中间还有别的东西，不敢跳着删）。
+/// 紧邻 [rel] **左侧**的可见原子 —— §4.0 通则："左边第一个**看得见**的对象"。
+///
+/// ★ 2026-10-15：**去掉了"中间只能夹花括号/空格"的限制**（原限制见下方 `_atomRightOf`）。
+/// 中间夹着的东西（命令名 / `^` `_` / `{` `}` / 间距命令）本来就都是**不可见**的语法，
+/// 跨过去删"第一个看得见的东西"才是通则的意思；否则会掉进字节级兜底、**删到语法字符**上。
 VisibleAtom? _atomLeftOf(String tex, int rel) {
   VisibleAtom? best;
   for (final VisibleAtom a in lexVisibleAtoms(tex)) {
     if (a.end > rel) continue;
     if (best == null || a.end > best.end) best = a;
   }
-  if (best == null) return null;
-  for (var i = best.end; i < rel; i++) {
-    final String c = tex[i];
-    if (c != '{' && c != '}' && c != ' ') return null;
-  }
   return best;
 }
 
-/// 紧邻 [rel] **右侧**的可见原子（同 [_atomLeftOf] 的宽容规则）
+/// 紧邻 [rel] **右侧**的可见原子 —— §4.0 通则："右边第一个**看得见**的对象"。
+///
+/// ★★ 2026-10-15 修（新写的测试当场抓出来的**另一个同类 bug**）：
+/// 原实现要求"光标与原子之间只允许夹 `{` `}` 和空格"，于是
+/// **`Delete` 在 `\frac{a}{b}` 的最开头（rel = 0）会返回 null → 掉进字节级兜底
+/// → 把命令的 `\` 删掉**（得到 `frac{a}{b}`）—— 又是"删到了看不见的语法"。
+/// 顺带修好对称的一面：`x^2` 里把光标放在 `x` 与 `^` 之间按 `Delete`，
+/// 原文会删掉裸 `^`（留下 `x2`），现在会连 `^2` 一起删（与退格侧一致，见 `_removeAtom`）。
 VisibleAtom? _atomRightOf(String tex, int rel) {
   VisibleAtom? best;
   for (final VisibleAtom a in lexVisibleAtoms(tex)) {
     if (a.start < rel) continue;
     if (best == null || a.start < best.start) best = a;
-  }
-  if (best == null) return null;
-  for (var i = rel; i < best.start; i++) {
-    final String c = tex[i];
-    if (c != '{' && c != '}' && c != ' ') return null;
   }
   return best;
 }

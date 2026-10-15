@@ -8,6 +8,8 @@
 //   「粘贴 `$\frac{}{}$` 进去直接消失了」（公式与光标一起消失）。
 //   两个成因——"空槽只在光标处才画" + "光标那一格没人认领"——各有一条测试钉着。
 
+import 'package:flutter/material.dart';
+import 'package:flutter_math_fork/flutter_math.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mathlang/render/slot_marks.dart';
 import 'package:mathlang/render/visible_atoms.dart';
@@ -81,5 +83,47 @@ void main() {
             reason: '再 +1 = 光标条那一个原子');
       });
     }
+  });
+
+  // ─────────────────────────────────────────────────────────────
+  // ★★ 空公式必须画出来（设计稿 §6.1.1，2026-10-15）
+  //
+  // §4.6 决定"在公式内删到空 → **留空壳**"（有撤回、能接着重打）。
+  // 但空 `tex` 原先渲染成**零尺寸** —— 看不见也点不到，成了幽灵
+  // （用户实测："按了没反应"，只能再按一次退格清掉）。
+  // ⇒ **"留空壳"与"画出来"是一对，不能只做一半。**
+  // ─────────────────────────────────────────────────────────────
+  group('★ 空公式必须画出来（§6.1.1）', () {
+    test('tex 空 / 全白 / 只有换行 → 渲染占位字形（不是空串）', () {
+      for (final String empty in <String>['', '   ', '\n', ' \n ']) {
+        expect(renderMathTex(empty, caretRel: -1), contains(r'\square'),
+            reason: 'tex=「$empty」时必须画占位，否则空公式是零尺寸的幽灵');
+      }
+    });
+
+    test('光标在空公式里 → 占位 + 光标条（否则用户不知道停在哪）', () {
+      final String out = renderMathTex('', caretRel: 0);
+      expect(out, contains(r'\square'));
+      expect(out, contains(r'\cursor'));
+    });
+
+    test('★ 只兜空公式：非空公式不受影响', () {
+      expect(renderMathTex('x', caretRel: -1), isNot(contains(r'\square')));
+      expect(renderMathTex(r'\frac{a}{b}', caretRel: -1), isNot(contains(r'\square')));
+    });
+
+    testWidgets('★ 空公式渲染出来必须有非零宽度（这是"看得见"的客观判据）',
+        (WidgetTester t) async {
+      await t.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: Center(child: Math.tex(renderMathTex('', caretRel: -1))),
+        ),
+      ));
+      await t.pump();
+      expect(find.textContaining('❌'), findsNothing,
+          reason: '占位字形必须是引擎认得的（与空槽占位同一套）');
+      expect(t.getSize(find.byType(Math)).width, greaterThan(5),
+          reason: '★ 空公式原先渲染成零尺寸 —— 看不见也点不到，只能再按一次退格清掉');
+    });
   });
 }

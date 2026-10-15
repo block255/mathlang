@@ -213,12 +213,10 @@ int? verticalStopAt(String source, int offset, {required bool up}) {
 SmartEdit smartEditAt(String source, int offset, {required bool forward}) {
   final int o = offset.clamp(0, source.length);
   final MathRegion? r = mathRegionAt(source, o);
-  if (r == null) {
-    if (forward) {
-      return o >= source.length ? SmartEdit.none : SmartEdit.remove(o, o + 1, o);
-    }
-    return o <= 0 ? SmartEdit.none : SmartEdit.remove(o - 1, o, o - 1);
-  }
+
+  // ① 不在公式里（含"紧贴公式**外侧**"）→ 交给文字层：
+  //    删的是**左右紧邻的那一个可见对象**（§4.0 通则；数学段算一个对象）
+  if (r == null) return _textLayerDelete(source, o, forward: forward);
 
   final CaretSiteTable t = buildCaretSites(r.tex);
   final int rel = r.rel(o);
@@ -228,21 +226,49 @@ SmartEdit smartEditAt(String source, int offset, {required bool forward}) {
     return SmartEdit.remove(r.abs(e.from!), r.abs(e.to!), r.abs(e.caret));
   }
 
-  // 段内没得删 → 边界语义
+  // ③ 段内没得删 → 边界语义。
+  //    ★★ 关键：先处理空壳，再把落点**挪到定界符外侧**、回到 ① 的"可见对象"规则 ——
+  //    **不要**在这里自己写"删一个字符"：外侧紧邻的可能**又是一个公式段**
+  //    （`$\frac{}{}$$\frac{}{}$` 这种相邻写法），那时要删的是**那一整段**，
+  //    而不是它那个看不见的定界符。全域不变量测试当场抓出过这一条。
   final bool emptyShell = r.tex.trim().isEmpty;
   if (!forward && rel <= 0) {
-    // 公式首退格：空壳公式 → **连定界符整段删**
     if (emptyShell) return SmartEdit.remove(r.openStart, r.closeEnd, r.openStart);
-    // 否则删掉**定界符之前**的一个文字 —— ★ 不能删那个 `$`：
-    // 它对用户是**看不见**的，删它会破坏配对，而用户期望的是"删掉光标左边看得见的那个字"
-    final int at = r.openStart;
-    return at <= 0 ? SmartEdit.none : SmartEdit.remove(at - 1, at, at - 1);
+    return _textLayerDelete(source, r.openStart, forward: false);
   }
   if (forward && rel >= r.tex.length) {
     if (emptyShell) return SmartEdit.remove(r.openStart, r.closeEnd, r.openStart);
-    // 公式尾同理：删收尾定界符**之后**的一个文字
-    final int at = r.closeEnd;
-    return at >= source.length ? SmartEdit.none : SmartEdit.remove(at, at + 1, at);
+    return _textLayerDelete(source, r.closeEnd, forward: true);
   }
   return SmartEdit.none;
+}
+
+/// **文字层**的删除：删的是"左右紧邻的那一个**可见对象**"（设计稿 §4.0 通则）。
+///
+/// · 文字里一个对象 = **一个字符**
+/// · **数学段一个对象 = 整个公式段**（含定界符）—— 它渲染出来就是**一个**东西
+///
+/// ★★ 为什么必须这样（2026-10-15 用户实测 + 全域不变量测试）：
+/// 定界符 `$` 对用户**不可见**，删掉它只会让"半个公式"的源码爆出来（违反原则 2）。
+/// 原先这里是两句字节级 `remove(o∓1, o)`，于是两条路都会删到 `$`：
+///   ① 光标在公式**之后**退格 → 删掉收尾 `$`（**用户报的那条**）
+///   ② 光标在公式 A 的**末尾**按 `Delete` → A 之后紧邻的正好是公式 B 的开头 `$`
+///      → 把 B 的定界符删了（**新写的全域测试当场抓出来的**）
+SmartEdit _textLayerDelete(String source, int offset, {required bool forward}) {
+  final int o = offset.clamp(0, source.length);
+  if (!forward) {
+    // `Backspace`：左边紧邻的是一个公式段？→ 删整段
+    final MathRegion? prev = o - 1 >= 0 ? mathRegionAt(source, o - 1) : null;
+    if (prev != null && prev.closeEnd == o) {
+      return SmartEdit.remove(prev.openStart, prev.closeEnd, prev.openStart);
+    }
+    return o <= 0 ? SmartEdit.none : SmartEdit.remove(o - 1, o, o - 1);
+  }
+  // `Delete`：右边紧邻的是一个公式段？→ 删整段
+  final MathRegion? next =
+      o + 1 <= source.length ? mathRegionAt(source, o + 1) : null;
+  if (next != null && next.openStart == o) {
+    return SmartEdit.remove(next.openStart, next.closeEnd, next.openStart);
+  }
+  return o >= source.length ? SmartEdit.none : SmartEdit.remove(o, o + 1, o);
 }

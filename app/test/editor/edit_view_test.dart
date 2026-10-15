@@ -747,4 +747,64 @@ $$
       }
     });
   });
+
+  // ─────────────────────────────────────────────────────────────
+  // ★ §4.0 通则的端到端复验（2026-10-15 用户实测那条）：
+  //   「光标在分式后面，删除只删掉了那个末尾分界符，里面的编码爆出来了」
+  //   现在：光标贴着公式**外侧** → 删的是**整个公式段**（含定界符）；
+  //        光标在公式**里面** → 才按原子删。
+  // ─────────────────────────────────────────────────────────────
+  group('★ 回归：光标在公式后面退格 → 整个公式段消失（不再爆编码）', () {
+    const String doc = '文字。\$\\frac{a}{b}\$\n\n尾段\n';
+
+    testWidgets('退格 → 整个公式段没了，画面上也不许出现 `\\frac` 源码',
+        (WidgetTester tester) async {
+      final DocBuffer buf = DocBuffer(doc);
+      await _mount(tester, buf);
+      buf.setCaret(doc.indexOf('b}') + 3); // = 收尾 `$` 之后那一格（公式外）
+      await tester.pump();
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.backspace);
+      await tester.pump();
+
+      expect(buf.buf.contains(r'\frac'), isFalse,
+          reason: '★ 整个公式段都该消失。实际缓冲区：\n${buf.buf}');
+      expect(buf.buf.contains(r'$'), isFalse,
+          reason: '定界符也不该留下（它们是渲染提示，不是内容）');
+      expect(find.textContaining(r'\frac'), findsNothing,
+          reason: '★ 画面上不许出现 LaTeX 源码（原则 2：用户永远不需要看数学编码）');
+      expect(find.textContaining('❌'), findsNothing);
+    });
+
+    testWidgets('★ 反过来：光标在公式**内**末尾退格 → 只删最后一个原子（公式还在）',
+        (WidgetTester tester) async {
+      final DocBuffer buf = DocBuffer(doc);
+      await _mount(tester, buf);
+      buf.setCaret(doc.indexOf('b}') + 2); // = 收尾 `$` 那一格（公式内末尾）
+      await tester.pump();
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.backspace);
+      await tester.pump();
+
+      expect(buf.buf.contains(r'\frac{a}{}'), isTrue,
+          reason: '只该删掉分母里的 b。实际缓冲区：\n${buf.buf}');
+      expect(find.textContaining('❌'), findsNothing);
+    });
+
+    testWidgets('★ 空公式必须看得见：光标在空壳外面时画面上也要有东西（不是幽灵）',
+        (WidgetTester tester) async {
+      const String shell = '文字。\$\$\n\n尾段\n';
+      final DocBuffer buf = DocBuffer(shell);
+      await _mount(tester, buf);
+      buf.setCaret(5); // 空壳**之后**（= 粘贴/删空之后最常见的情形）
+      await tester.pump();
+
+      expect(find.textContaining('❌'), findsNothing);
+      final Finder ms = find.byType(Math);
+      expect(ms, findsWidgets,
+          reason: '空公式也要渲染出来（占位字形）—— 否则既看不见也点不到');
+      expect(tester.getSize(ms.first).width, greaterThan(5),
+          reason: '★ 空公式若渲染成零尺寸，用户会看到"按了没反应"');
+    });
+  });
 }

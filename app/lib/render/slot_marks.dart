@@ -75,6 +75,14 @@ SlotMarkResult injectSlotMarks(String tex, {required int caretRel}) {
   return SlotMarkResult(out, rel);
 }
 
+/// ★ 空公式的占位字形（2026-10-15，§6.1.1）。
+///
+/// `tex` 为空 / 全白时，公式本来渲染成**零尺寸** —— 既看不见也点不到。
+/// 而 §4.6 决定"在公式内删到空 → **留空壳**"（有撤回、能接着重打），
+/// 若空壳是零尺寸，它就成了一只**幽灵**（用户实测："按了没反应"，只能再按一次退格清掉）。
+/// ⇒ **"留空壳"与"画出来"是一对，不能只做一半。** 观感上复用空槽那一套（同一个字形、同一档颜色）。
+const String kEmptyFormulaTex = kEmptySlotTex;
+
 /// ★ 一段数学的**渲染 tex** —— 注入链的**唯一入口**。
 ///
 /// 抽成纯函数的目的（2026-10-15）：注入链原先散在两个 widget 里各写一遍
@@ -84,6 +92,12 @@ SlotMarkResult injectSlotMarks(String tex, {required int caretRel}) {
 ///
 /// 顺序不能反：**先注空槽占位**（它给光标偏移做了补偿），**再注光标**。
 String renderMathTex(String tex, {required int caretRel}) {
+  // ★ 空公式也要画出来（§6.1.1）——它没有任何槽可注入，所以要单独兜一句
+  if (tex.trim().isEmpty) {
+    final String mark = caretRel < 0 ? kEmptyFormulaTex : kCurrentSlotTex;
+    // 光标在里面时再补一根光标条（否则用户不知道自己停在哪儿）
+    return caretRel < 0 ? mark : mark + kCursorTex;
+  }
   final SlotMarkResult marks = injectSlotMarks(tex, caretRel: caretRel);
   // 光标不在这段里 → 只画空槽，不画光标（`marks.rel` 此时为负，不能喂给 injectCursor）
   if (caretRel < 0) return marks.tex;
