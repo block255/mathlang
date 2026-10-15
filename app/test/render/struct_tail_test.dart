@@ -39,8 +39,10 @@ Future<EditViewState> _mountEdit(WidgetTester tester, DocBuffer buf) async {
   return st;
 }
 
-Future<RenderBox> _pumpMath(WidgetTester tester, String tex, GlobalKey key) async {
-  await tester.pumpWidget(MaterialApp(
+/// `\overline{AB}` —— §11.21 那组用例里反复出现（用 raw 常量避开"多余转义"的 lint）
+const String kOverlineTex = r'\overline{AB}';
+
+Future<RenderBox> _pumpMath(WidgetTester tester, String tex, GlobalKey key) async {  await tester.pumpWidget(MaterialApp(
     home: Scaffold(
       body: Center(
         child: Math.tex(
@@ -136,6 +138,11 @@ void main() {
       r'\frac{}{}',
       r'\frac{a}{} + \sqrt{2}',
       r'\sqrt{\frac{a}{b}}',
+      // ⚠️ **线型 accent 家族（`\overline{AB}` 等）暂时不在语料里**：
+      //    它们的**装饰自己就是一个叶盒**（实测 `\overline{AB}`：3 盒 vs 2 原子，
+      //    那条横线是 32.8 × 0.6 px 的细线）⇒ **逼得守门人红** —— 但那是**既有 bug**
+      //    （`hitTestMathTex` 对 accent 一直静默返回 null），与本尾垫无关。
+      //    修法与步骤见设计稿 §11.21 与 `slot_marks.kTailCommands` 的注释。
     ];
 
     testWidgets('每个 tex × 几种光标态', (WidgetTester tester) async {
@@ -197,6 +204,66 @@ void main() {
           isNot(renderToSourceOffset(renderTex, hitDigit.offset!)));
     });
   });
+
+  // ─────────────────────────────────────────────────────────────
+  // 五之一、⚠️ **线型 accent 家族：暂缓**（2026-10-15 晚，用户同意后试做，被守门人拦下）
+  //
+  //   为什么暂缓（探针数据，见设计稿 §11.21）：
+  //     · `\overline{AB}` 的**横线自己就是一个叶盒**：`[0..32.8 × 0..0.6]`（32.8 × **0.6 px**）
+  //       ⇒ 有效叶盒 **3** vs 可见原子 **2** ⇒ `hitTestMathTex` **静默返回 null**
+  //     · `\hat{x}` / `\tilde{x}` 更甚：装饰盒与字形盒**完全重合**（16×16 两个）⇒ 一原子两盒
+  //     · 这两个都是**既有 bug**（与本尾垫无关）；⇒ **先修"装饰盒误入有效叶盒"**，
+  //       才谈得上给 accent 加尾垫
+  //   可行判据（下一步）：**按高度滤掉细线**（装饰线 0.6 px vs 字形 16 px），
+  //     但尾垫自己**不能是零高**（现在是 `\rule{3pt}{0pt}`，高 0 ⇒ 会被一起滤掉）
+  //     ⇒ 尾垫换成"**隐形但非零高**"的形式（候选 `\hphantom{\rule{3pt}{8pt}}`，**先探针**）。
+  //   本组先以 `skip` 占位，写明复核条件（**不是**默默删掉）。
+  // ─────────────────────────────────────────────────────────────
+  group('§11.21 线型 accent 家族：同一个尾垫机制（待装饰盒过滤就位）', () {
+    test(r'\overline{AB} → 尾垫插在花括号之内（横线跟着变长）', () {
+      expect(renderMathTex(r'\overline{AB}', caretRel: -1),
+          '\\overline{AB$kStructTailTex}');
+    });
+
+    test(r'★ 两个光标分开：内容末尾在尾垫**之前**、结构末尾在**之后**', () {
+      const String tex = r'\overline{AB}'; // 长度 13；内容末尾 12、结构末尾 13
+      expect(renderMathTex(tex, caretRel: 12),
+          '\\overline{AB$kCursorTex$kStructTailTex}');
+      expect(renderMathTex(tex, caretRel: tex.length),
+          '\\overline{AB$kStructTailTex}$kCursorTex');
+    });
+
+    test(r'★ 点尾垫 → **结构末尾**（`\overline{AB}` 的 tex 末尾 = 13）', () {
+      final String t = renderMathTex(r'\overline{AB}', caretRel: -1);
+      final int at = t.indexOf(kStructTailTex);
+      expect(renderToSourceOffset(t, at), 12);
+      expect(renderToSourceOffset(t, at + 1), 13);
+    });
+
+    testWidgets(r'★ 端到端：点横线那一截 + `⌫` ⇒ **整个 \overline{AB} 走**（留空壳）',
+        (WidgetTester tester) async {
+      final DocBuffer buf = DocBuffer(r'$\overline{AB}$尾');
+      await _mountEdit(tester, buf);
+      await tester.pumpAndSettle();
+
+      final Offset tl = tester.getTopLeft(find.byType(Math));
+      final RenderObject root =
+          tester.renderObject<RenderObject>(find.byType(Math));
+      final LeafBoxScan scan = scanLeafBoxes(root);
+      final Rect tail = scan.eligible.last.rect;
+      await tester.tapAt(tl + Offset(tail.right - 1, tail.center.dy));
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.backspace);
+      await tester.pump();
+
+      expect(buf.buf, r'$$尾',
+          reason: '★ 点横线末端 + ⌫ 应当删掉**整个 `$kOverlineTex`**；实际：${buf.buf}');
+    });
+  },
+      skip: r'前置条件未就位：accent 的**装饰自己就是一个叶盒**（`\overline{AB}` 实测 3 盒 vs 2 原子，'
+          r'横线是 32.8×0.6 px）⇒ 命中静默返回 null。必须先按**高度**把装饰盒从有效叶盒里滤掉，'
+          r'且尾垫要换成"隐形但非零高"的形式（候选 `\hphantom{\rule{3pt}{8pt}}`，先探针）。'
+          r'数据与步骤见设计稿 §11.21 与 `slot_marks.kTailCommands` 注释。');
 
   // ─────────────────────────────────────────────────────────────
   // 五、★★ 端到端（用户看得见的那一步）：
