@@ -132,7 +132,7 @@ void main() {
   });
 
   // ─────────────────────────────────────────────────────────────
-  // 二、竖条：在 / 不在，以及能不能查到
+  // 二、竖条：在 / 不在，以及**高度随当地那一行自适应**
   // ─────────────────────────────────────────────────────────────
   group('竖条：光标在这段里才画', () {
     testWidgets('光标在里面 ⇒ 有一根竖条', (WidgetTester tester) async {
@@ -144,6 +144,93 @@ void main() {
         (WidgetTester tester) async {
       await _pump(tester, renderMathTex(r'\hat{x}', caretRel: -1), caret: false);
       expect(_hasBar(tester), isFalse);
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────
+  // 二之二、★★ 高度自适应（用户第二轮实测：「分母的光标会顶穿分数线、
+  //          根号里的会顶穿根号」—— 固定 20 px 高在 10–11 px 高的行里必然捅出去）
+  // ─────────────────────────────────────────────────────────────
+  group('★★ 竖条高度随当地那一行自适应（不许顶穿分数线 / 根号）', () {
+    /// 取当前竖条
+    Rect barOf(WidgetTester tester) {
+      for (final CustomPaint p
+          in tester.widgetList<CustomPaint>(find.byType(CustomPaint))) {
+        if (p.child is Math) {
+          return (p.foregroundPainter! as MathCaretPainter).rect;
+        }
+      }
+      fail('找不到竖条');
+    }
+
+    /// 数学段里全部字形盒（¶）
+    List<Rect> glyphsOf(WidgetTester tester) {
+      final RenderObject root =
+          tester.renderObject<RenderObject>(find.byType(Math));
+      final List<Rect> out = <Rect>[];
+      void walk(RenderObject o) {
+        var hasChild = false;
+        o.visitChildren((RenderObject c) {
+          hasChild = true;
+          walk(c);
+        });
+        if (!hasChild &&
+            o is RenderBox &&
+            o.hasSize &&
+            o.size != Size.zero &&
+            o.runtimeType.toString().contains('Paragraph')) {
+          out.add(o.localToGlobal(Offset.zero, ancestor: root) & o.size);
+        }
+      }
+
+      walk(root);
+      return out;
+    }
+
+    testWidgets('★ 分式**分母**里的光标：整体待在分母那一格里，**没有越过分数线**',
+        (WidgetTester tester) async {
+      // `\frac{a}{b}` 的项表：0-4 命令 / 5 { / 6  / 7 } / 8 { / 9  ⇒ 分母内容起点 = 9
+      await _pump(tester, renderMathTex(r'\frac{a}{b}', caretRel: 9), caret: true);
+      final Rect bar = barOf(tester);
+      final List<Rect> gl = glyphsOf(tester);
+      final Rect num = gl.first, den = gl.last; // 先分子后分母（源码顺序）
+      expect(bar.top, greaterThan(num.bottom),
+          reason: '★ 竖条必须在**分子那一格的下方**（分数线就画在两格之间）'
+              '：bar=$bar 分子=$num 分母=$den');
+      expect(bar.top, greaterThanOrEqualTo(den.top - 2),
+          reason: '竖条上端不许超出分母那一格：bar=$bar 分母=$den');
+      expect(bar.bottom, lessThanOrEqualTo(den.bottom + 2));
+    });
+
+    testWidgets(r'★ 根号里的光标：待在内容格里，没有越过根号横线',
+        (WidgetTester tester) async {
+      await _pump(tester, renderMathTex(r'\sqrt{x}', caretRel: 6), caret: true);
+      final Rect bar = barOf(tester);
+      final Rect content = glyphsOf(tester).single;
+      expect(bar.top, greaterThanOrEqualTo(content.top - 2),
+          reason: '竖条上端不许超出被开方数那一格（横线在它上面）：bar=$bar');
+      expect(bar.bottom, lessThanOrEqualTo(content.bottom + 2));
+    });
+
+    testWidgets('★ **上标/下标**（0.7 倍字号）⇒ 竖条自动变矮（比主行短）',
+        (WidgetTester tester) async {
+      await _pump(tester, renderMathTex(r'x^{2}', caretRel: 0), caret: true);
+      final double main = barOf(tester).height;
+      await _pump(tester, renderMathTex(r'x^{2}', caretRel: 3), caret: true);
+      final double script = barOf(tester).height;
+      expect(script, lessThan(main),
+          reason: '脚本行的字号是主行的 0.7 倍 ⇒ 竖条也必须跟着矮（主行 $main，脚本 $script）');
+    });
+
+    testWidgets('★ 主行的竖条高度 ≈ 字形盒高度（不是固定 20 px）',
+        (WidgetTester tester) async {
+      await _pump(tester, renderMathTex(r'x+1', caretRel: 1), caret: true);
+      final Rect bar = barOf(tester);
+      final Rect glyph = glyphsOf(tester).first;
+      expect(bar.height, lessThan(glyph.height),
+          reason: '竖条在字形盒里（上下各留 8% 内缩）：bar=$bar 字形=$glyph');
+      expect(bar.height, greaterThan(glyph.height * 0.7),
+          reason: '也不许缩得太小：bar=$bar 字形=$glyph');
     });
   });
 
