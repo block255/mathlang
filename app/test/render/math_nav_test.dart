@@ -80,41 +80,52 @@ void main() {
   });
 
   // ─────────────────────────────────────────────────────────────
-  // ★★ §4.0 通则：**删除的目标 = 左右紧邻的那一个「可见对象」**
-  //    文字里一个对象 = 一个字符；**数学段一个对象 = 整个公式段**。
+  // ★★ §4.0 通则（2026-10-15 改口径）：**删除目标 = 与光标【同层】的、紧邻的那一个渲染对象**
+  //    · 文字里一个对象 = 一个字符
+  //    · 公式**外侧**（或公式内的**主行层**）紧邻的是那个**结构** ⇒ **整个结构走**（内容一起）
+  //    · 公式**里面某一层**（如分母槽）里 ⇒ 删的是**那一层**的对象
+  //    · `$` / `$$` **不属于任何层** ⇒ 永远不是删除目标
   //
-  //    由来（2026-10-15 用户实测）：光标停在分式**后面**按退格，
-  //    原先只删掉了那个**看不见**的收尾 `$` → `\frac{}{}` 的编码爆出来。
-  //    §3.3 原先的删除规则**只有"公式首"一行**，公式尾从来没写 —— 规格缺口。
+  //    两段由来（都是用户实测）：
+  //    ① 光标停在分式**后面**按退格，原先只删掉了那个**看不见**的收尾 `$`
+  //       → `\frac{}{}` 的编码爆出来（§3.3 原先的删除规则只有"公式首"一行）。
+  //    ② ★ 光标停在分式**整体**后面按删除，原先只删掉分母里的 `b`、出现空位框 ——
+  //       用户原话：「并不是像预期那样删除了整个 `a/b`」⇒ 判据原先**不带层级**。
+  //    ★★ 特别注意「公式末尾」与「公式之后」：`$` 不可见 ⇒ 两者**是同一根像素** ⇒
+  //       必须给出**同一个结果**（§3.3）。
   // ─────────────────────────────────────────────────────────────
-  group(r'★ §4.0：公式在文字里就是「一个对象」', () {
-    test(r'Backspace 在公式**之后** → 删掉整个公式段（含定界符），而不是那个看不见的 `$`', () {
+  group(r'★ §4.0：删除目标 = 与光标同层的、紧邻的那一个渲染对象', () {
+    test(r'Backspace 在公式**之后** → 删掉公式里那个对象（整个分式），不碰看不见的 `$`', () {
       final e = smartEditAt(kDoc, kCloseEnd, forward: false);
       expect(e.deletes, isTrue);
-      expect(e.from, kOpenDollar, reason: r'从开 `$` 起删');
-      expect(e.to, kCloseEnd, reason: r'删到闭 `$` 之后');
-      expect(kDoc.substring(e.from!, e.to!), r'$\frac{a}{b}$',
-          reason: '被删的必须是**整个公式段**');
+      expect(kDoc.substring(e.from!, e.to!), r'\frac{a}{b}',
+          reason: '★ 被删的是**公式里的那个结构**，定界符一个都不许碰');
     });
 
-    test('Delete 在公式**之前** → 同样删掉整个公式段（对称的另一面）', () {
+    test('Delete 在公式**之前** → 同样删掉公式里第一个对象（整个分式）', () {
       final e = smartEditAt(kDoc, kOpenDollar, forward: true);
       expect(e.deletes, isTrue);
-      expect(e.from, kOpenDollar);
-      expect(e.to, kCloseEnd);
+      expect(kDoc.substring(e.from!, e.to!), r'\frac{a}{b}');
     });
 
-    test('★ 公式**内**末尾退格 → 只删最后一个可见原子（不是整段）', () {
+    test('★ 公式**内**末尾（= 公式之后，同一根像素）退格 → **同一个结果**', () {
       final e = smartEditAt(kDoc, kContentEnd, forward: false);
       expect(e.deletes, isTrue);
-      expect(kDoc.substring(e.from!, e.to!), 'b',
-          reason: '光标在公式里 → 对象就是公式内的最小可见单位');
+      expect(kDoc.substring(e.from!, e.to!), r'\frac{a}{b}',
+          reason: '同一根像素必须同一种行为（否则用户无法预期）');
     });
 
-    test('★ 公式**内**开头删除 → 只删第一个可见原子', () {
+    test('★ 公式**内**开头删除 → 同样是那一个对象（整个分式）', () {
       final e = smartEditAt(kDoc, kTexStart, forward: true);
       expect(e.deletes, isTrue);
-      expect(kDoc.substring(e.from!, e.to!), 'a');
+      expect(kDoc.substring(e.from!, e.to!), r'\frac{a}{b}');
+    });
+
+    test(r'★ 光标在**分母里** `b` 之后退格 → 只删 `b`（出现空位框），分式还在', () {
+      final e = smartEditAt(kDoc, kAfterB, forward: false);
+      expect(e.deletes, isTrue);
+      expect(kDoc.substring(e.from!, e.to!), 'b',
+          reason: '★ 用户原话：「在 b 后面点删除就删 b 出现空位框」—— 层内删除只碰那一层');
     });
 
     test('紧贴公式**左边**退格 → 删的是左边那个文字（公式不动）', () {

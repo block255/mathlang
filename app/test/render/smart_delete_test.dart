@@ -38,28 +38,48 @@ void main() {
     });
   });
 
-  group('§4.3 结构单元：**全空才删**', () {
+  group('§4.0/§4.3 结构单元：在**它自己那一层**上被整体删', () {
     test(r'\frac{}{} 全空 → 9 个字符一次消失', () {
       final CaretSiteTable t = buildCaretSites(r'\frac{}{}');
-      final SmartEdit e = smartBackspace(t, 9);
+      final SmartEdit e = smartBackspace(t, 9); // tex 末尾 = 主行层
       expect(e.from, 0);
       expect(e.to, 9);
       expect(e.caret, 0);
     });
 
-    test(r'\frac{a}{b} 有内容 → **绝不拆结构**，只删掉一个原子', () {
+    // ★★ 2026-10-15 改口径（用户实测）：**主行层紧邻结构 ⇒ 整个结构一起走**。
+    //    旧规格写的是"有内容 → 绝不拆结构，只删一个原子"—— 那正是用户报的那条：
+    //    「点分式整体后面删 → 只删了分母里的 b，出现空位框，并不是像预期那样删除了整个 a/b」。
+    test(r'\frac{a}{b} 在**分式整体之后**退格 → 整个分式走（含内容）', () {
       final CaretSiteTable t = buildCaretSites(r'\frac{a}{b}');
-      final SmartEdit e = smartBackspace(t, 11);
-      expect(e.deletes, isTrue);
-      expect(e.from, 9, reason: '删的是分母里的 b，不是整个 \\frac');
+      final SmartEdit e = smartBackspace(t, 11); // tex 末尾 = 主行层
+      expect(e.from, 0, reason: '整段，从 `\\frac` 起');
+      expect(e.to, 11);
+      expect(e.caret, 0);
+    });
+
+    test(r'★ 反过来：光标在**分母里** `b` 之后退格 → 只删 `b`，分式还在', () {
+      final CaretSiteTable t = buildCaretSites(r'\frac{a}{b}');
+      final SmartEdit e = smartBackspace(t, 10); // 分母槽内、b 之后
+      expect(e.from, 9, reason: '层内删除只碰那一层');
       expect(e.to, 10);
     });
 
-    test(r'\sqrt{} 全空 → 整段删', () {
+    test(r'\sqrt{} 全空 → 在结构层位点（tex 末尾）整段删', () {
       final CaretSiteTable t = buildCaretSites(r'\sqrt{}');
       final SmartEdit e = smartBackspace(t, 7);
       expect(e.from, 0);
       expect(e.to, 7);
+    });
+
+    // ★★ 空槽**不是**可删对象：里面退格只移动（2026-10-15 用户拍板）——
+    //    这条同时是「删不掉根号」的正解：根号要从**结构层位点**删，
+    //    而不是靠"空槽里连坐删结构"（那会把 `\frac{a}{}` 的分子一起带走）。
+    test(r'★ 空槽里退格 = **只移动**，绝不连坐删掉结构', () {
+      final CaretSiteTable t = buildCaretSites(r'\sqrt{}');
+      final SmartEdit e = smartBackspace(t, 6); // 空槽里唯一的位点
+      expect(e.isMove, isTrue, reason: '空槽里退格等同方向键');
+      expect(e.caret, 0);
     });
 
     test('structureUnits：同一次结构调用的多个参数算**一个**实例', () {
@@ -167,6 +187,9 @@ void main() {
     });
   });
 
+  // ─────────────────────────────────────────────────────────────
+  // 文档级：空壳 / 公式首的边界语义（§3.3 + §4.6）
+  // ─────────────────────────────────────────────────────────────
   group('文档级：空壳公式在公式首退格 → 连定界符整段删（§3.3）', () {
     test(r'a $$b 里的空公式：退格删掉的是整个 `$$`', () {
       const String src = r'a $$b';
@@ -185,6 +208,59 @@ void main() {
       expect(e.from, 1, reason: r'删掉空格，而不是删 `$`（删 `$` 会破坏配对）');
       expect(e.to, 2);
       expect(e.caret, 1);
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────
+  // ★★ §4.0 通则的两个全域不变量（学"光标归属表"那套：全域断言，不逐例抽查）
+  // ─────────────────────────────────────────────────────────────
+  group('★★ 全域不变量：任何位点上删除都不留"悬空脚本"/不越层', () {
+    const List<String> corpus = <String>[
+      r'b^2',
+      r'b^{2}',
+      r'x_1^2',
+      r'a_{i}',
+      r'x^{2n}+1',
+      r'\frac{a}{b}',
+      r'\frac{x^2}{y_1}',
+      r'\sqrt{b^2-4ac}',
+      r'\sum_{i=1}^{n}a_i',
+      r'\frac{\sqrt{x}}{y}',
+    ];
+
+    /// 悬空脚本 = `^`/`_` 后面直接是**结尾 / 运算符 / 右括号** ——
+    /// 引擎会当场报 `Parser Error: Expected group after '^'`（用户实测抓过）。
+    final RegExp dangling = RegExp(r'[\^_]\s*($|[-+*/=)])');
+
+    test('每个位点 × 两个方向：`^`/`_` 之后必须仍有参数', () {
+      for (final String tex in corpus) {
+        final CaretSiteTable t = buildCaretSites(tex);
+        for (final int rel in t.offsets) {
+          for (final bool forward in <bool>[false, true]) {
+            final SmartEdit e =
+                forward ? smartDelete(t, rel) : smartBackspace(t, rel);
+            if (!e.deletes) continue;
+            final String after = tex.replaceRange(e.from!, e.to!, '');
+            expect(dangling.hasMatch(after), isFalse,
+                reason: '$tex 在 rel=$rel ${forward ? "Delete" : "Backspace"} '
+                    '之后得到 `$after`（悬空脚本会让渲染当场炸）');
+          }
+        }
+      }
+    });
+
+    test(r'透明包装（`\text{}`）里没有可见原子时，删的是包装自己 —— 不留"删不掉的陷阱"', () {
+      final CaretSiteTable t = buildCaretSites(r'\text{}');
+      final SmartEdit e = smartBackspace(t, 7);
+      expect(e.from, 0);
+      expect(e.to, 7);
+    });
+
+    test(r'透明包装里有内容时，删的是**内容里**的对象（裸组同理）', () {
+      final CaretSiteTable t = buildCaretSites(r'\text{ab}');
+      final SmartEdit e = smartBackspace(t, 9);
+      expect(e.deletes, isTrue);
+      expect(r'\text{ab}'.substring(e.from!, e.to!), 'b');
     });
   });
 }

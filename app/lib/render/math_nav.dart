@@ -5,7 +5,8 @@
 //   · 找到光标所在的数学段（行内 `$...$` 走投影；行间 `$$ … $$` 走块模型）
 //   · `←→` 跨 `$` 边界**进出公式**（§3.3：光标**不落在 `$` 上**）
 //   · `Tab` / `↑↓` 在段内没有落点时**走出公式**
-//   · **公式首退格**（§3.3）：前面是文字 → 删该文字；公式是空壳 → 连定界符整段删
+//   · **公式外侧的删除**（§3.3 + §4.0）：紧邻的是**空壳** → 连定界符整段删；
+//     否则**委托进公式的内层边界**（公式末尾与公式之后是同一根像素 ⇒ 行为必须相同）
 //
 // **纯 Dart，不依赖 Flutter。**
 
@@ -246,29 +247,46 @@ SmartEdit smartEditAt(String source, int offset, {required bool forward}) {
 /// **文字层**的删除：删的是"左右紧邻的那一个**可见对象**"（设计稿 §4.0 通则）。
 ///
 /// · 文字里一个对象 = **一个字符**
-/// · **数学段一个对象 = 整个公式段**（含定界符）—— 它渲染出来就是**一个**东西
+/// · **数学段**：★ **空壳**（tex 空）本身就是一个可见对象 ⇒ 连定界符整段删；
+///   **非空** ⇒ **委托进公式的内层边界**（§3.3：公式末尾与公式之后是**同一根像素**，
+///   必须给出同一个结果 ⇒ 删的是公式里最后 / 最前那个**同层对象**；删空了 ⇒ 留空壳 §4.6）
 ///
-/// ★★ 为什么必须这样（2026-10-15 用户实测 + 全域不变量测试）：
-/// 定界符 `$` 对用户**不可见**，删掉它只会让"半个公式"的源码爆出来（违反原则 2）。
-/// 原先这里是两句字节级 `remove(o∓1, o)`，于是两条路都会删到 `$`：
-///   ① 光标在公式**之后**退格 → 删掉收尾 `$`（**用户报的那条**）
-///   ② 光标在公式 A 的**末尾**按 `Delete` → A 之后紧邻的正好是公式 B 的开头 `$`
-///      → 把 B 的定界符删了（**新写的全域测试当场抓出来的**）
+/// ★★ 为什么**不再"整段删"**（2026-10-15 改口径，用户实测）：那是**公式块**思路
+/// （把 `$` 当成一层）。用户原话：「点分式**整体**后面删 = 删掉整个分式」——
+/// 而"整个分式"是**公式里的一个对象**，不是"整个公式段"。
+///
+/// ★ 也不能在这里写"删一个字符"：外侧紧邻的可能**又是一个公式段**
+/// （`$\frac{}{}$$\frac{}{}$` 这种相邻写法，公式 A 的末尾按 `Delete` 就是这种情形）——
+/// 那种情况要把决定权交给**那个公式的内层边界**，而不是去碰它那个看不见的定界符。
 SmartEdit _textLayerDelete(String source, int offset, {required bool forward}) {
   final int o = offset.clamp(0, source.length);
-  if (!forward) {
-    // `Backspace`：左边紧邻的是一个公式段？→ 删整段
-    final MathRegion? prev = o - 1 >= 0 ? mathRegionAt(source, o - 1) : null;
-    if (prev != null && prev.closeEnd == o) {
-      return SmartEdit.remove(prev.openStart, prev.closeEnd, prev.openStart);
+  final MathRegion? adj = forward
+      ? (o + 1 <= source.length ? mathRegionAt(source, o + 1) : null)
+      : (o - 1 >= 0 ? mathRegionAt(source, o - 1) : null);
+  final bool adjacent =
+      adj != null && (forward ? adj.openStart == o : adj.closeEnd == o);
+  if (adjacent) {
+    // 空壳 = 一个可见对象 ⇒ 整段删（含定界符）
+    if (adj.tex.trim().isEmpty) {
+      return SmartEdit.remove(adj.openStart, adj.closeEnd, adj.openStart);
     }
-    return o <= 0 ? SmartEdit.none : SmartEdit.remove(o - 1, o, o - 1);
+    return _innerBoundaryDelete(adj, forward: forward);
   }
-  // `Delete`：右边紧邻的是一个公式段？→ 删整段
-  final MathRegion? next =
-      o + 1 <= source.length ? mathRegionAt(source, o + 1) : null;
-  if (next != null && next.openStart == o) {
-    return SmartEdit.remove(next.openStart, next.closeEnd, next.openStart);
-  }
+  // 文字：一个对象 = 一个字符
+  if (!forward) return o <= 0 ? SmartEdit.none : SmartEdit.remove(o - 1, o, o - 1);
   return o >= source.length ? SmartEdit.none : SmartEdit.remove(o, o + 1, o);
+}
+
+/// 从**公式外侧**删除 ⇒ **委托进公式的内层边界**（§3.3「同一根像素」）：
+/// 把光标当作停在 tex 末尾（退格）/ tex 开头（`Delete`）来算同一个"同层对象"。
+SmartEdit _innerBoundaryDelete(MathRegion r, {required bool forward}) {
+  final CaretSiteTable t = buildCaretSites(r.tex);
+  final int rel = forward ? 0 : r.tex.length;
+  final SmartEdit e = forward ? smartDelete(t, rel) : smartBackspace(t, rel);
+  if (e.isNone) {
+    // tex 非空却找不到同层对象（理论上不该发生）⇒ 稳妥：整段删
+    return SmartEdit.remove(r.openStart, r.closeEnd, r.openStart);
+  }
+  if (!e.deletes) return SmartEdit.move(r.abs(e.caret));
+  return SmartEdit.remove(r.abs(e.from!), r.abs(e.to!), r.abs(e.caret));
 }

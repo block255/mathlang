@@ -78,6 +78,51 @@ class SlotSpan {
       '${path.map((SlotStep s) => s.label).join(" › ")}[$start,$end)${isEmpty ? " 空" : ""}';
 }
 
+/// 一个内容项（渲染出来的一"块"东西）：一段连续语法（原子 / 命令 / 结构 / 裸组）。
+///
+/// ★ 它是 §4.0 通则「与光标**同层**的、紧邻的那一个渲染对象」的**唯一判据来源**。
+/// `command` 为空 = 裸花括号组或单字符（**透明**：渲染出来就是它自己 / 它的内容）；
+/// 结构命令（`\frac` / `\sqrt` / 上下标 / 环境…）见 `smart_delete.dart` 的 `kOpaqueCommands`。
+class TexItem {
+  const TexItem(this.start, this.end, {this.command, required this.hasSlots});
+
+  /// tex 里的区间 `[start, end)`；结构含它自己的收尾 `}`
+  final int start;
+  final int end;
+
+  /// 结构 / 命令名（`^` / `_` 就是 `'^'` / `'_'`；裸组与单字符为 `null`）
+  final String? command;
+
+  /// 是否自带参数区域（结构 / 命令带参数 / 上下标）
+  final bool hasSlots;
+
+  @override
+  String toString() =>
+      'TexItem[$start,$end)${command == null ? "" : " \\$command"}${hasSlots ? " 结构" : ""}';
+}
+
+/// 一个**内容区域**（主行 / 某个槽内部 / 裸花括号组 / 环境的一格）—— "层"的载体。
+///
+/// `path` 空 = 主行**或裸组**（裸组**不产生层级**，见 §2.2）；
+/// 非空 = 某个槽内部。同一区域里的 [items] 是**同层**的兄弟。
+class TexRegion {
+  const TexRegion(this.start, this.end, this.path, this.items,
+      {required this.isSlot});
+
+  /// 内容的可插入区间 `[start, end)`；空区域时 `start == end`
+  final int start;
+  final int end;
+
+  final List<SlotStep> path;
+  final List<TexItem> items;
+  final bool isSlot;
+
+  @override
+  String toString() => 'TexRegion[$start,$end)'
+      '${isSlot ? " 槽(${path.map((SlotStep s) => s.label).join(" › ")})" : " 主行/裸组"}'
+      ' items=${items.length}';
+}
+
 /// 位点表。
 class CaretSiteTable {
   CaretSiteTable._(
@@ -86,6 +131,7 @@ class CaretSiteTable {
     this.slots,
     this.degraded,
     this.degradeReason,
+    this.regions,
   );
 
   final String tex;
@@ -95,6 +141,10 @@ class CaretSiteTable {
 
   /// 全部槽（供 S3-3 邻接表使用）
   final List<SlotSpan> slots;
+
+  /// ★ **内容区域表**：每个区域带着它**同层的兄弟项**（§4.0 通则的判据来源）。
+  /// 降级位点表里为空（降级时删除退化为字节级，不用层级）。
+  final List<TexRegion> regions;
 
   /// 是否退化为「纯字符级位点表」（配对失败时；见设计稿 §2.3）
   final bool degraded;
@@ -337,6 +387,7 @@ CaretSiteTable _buildDegraded(String tex, String reason) {
     const <SlotSpan>[],
     true,
     reason,
+    const <TexRegion>[],
   );
 }
 
@@ -413,10 +464,13 @@ List<_Tok> _tokenize(String tex) {
 
 /// 一个内容项（渲染出来的一"块"东西），可自带子槽。
 class _Item {
-  _Item(this.start, this.end, [this.slots = const <_Region>[]]);
+  _Item(this.start, this.end, [this.slots = const <_Region>[], this.cmd]);
   final int start;
   final int end;
   final List<_Region> slots;
+
+  /// 结构 / 命令名（`^` / `_` 就是它们自己；裸组与单字符为 `null`）—— 供"可见对象"判定用
+  final String? cmd;
 }
 
 /// 一个**内容列表**（主行 / 某槽内部 / 环境的一格）。
@@ -453,6 +507,8 @@ class _Parser {
     final _Region root = _Region(0, tex.length, const <SlotStep>[], items);
     final List<CaretSite> raw = <CaretSite>[];
     _emit(root, raw);
+    final List<TexRegion> regions = <TexRegion>[];
+    _collectRegions(root, regions);
     final List<SlotSpan> slots = _withFullPaths(<SlotSpan>[
       for (final _Region r in _slots) SlotSpan(r.path, r.start, r.end),
     ]);
@@ -465,7 +521,27 @@ class _Parser {
       List<SlotSpan>.unmodifiable(slots),
       false,
       null,
+      List<TexRegion>.unmodifiable(regions),
     );
+  }
+
+  /// 导出「内容区域 → 同层内容项」的层级表（§4.0 通则的唯一判据）。
+  void _collectRegions(_Region r, List<TexRegion> out) {
+    out.add(TexRegion(
+      r.start,
+      r.end,
+      r.path,
+      <TexItem>[
+        for (final _Item it in r.items)
+          TexItem(it.start, it.end, command: it.cmd, hasSlots: it.slots.isNotEmpty),
+      ],
+      isSlot: r.isSlot,
+    ));
+    for (final _Item it in r.items) {
+      for (final _Region s in it.slots) {
+        _collectRegions(s, out);
+      }
+    }
   }
 
   /// 把「单步路径」补成**从根到该槽的完整链**。
@@ -598,7 +674,7 @@ class _Parser {
     if (t.name == 'end') {
       _i++;
       _readGroupName(); // 孤儿 `\end{...}`：跳过
-      return _Item(t.start, t.end);
+      return _Item(t.start, t.end, const <_Region>[], t.name);
     }
     final _ArgSpec? spec = _kArgSpec[t.name];
     if (spec == null) {
@@ -607,7 +683,7 @@ class _Parser {
       if (_kDelimCommands.contains(t.name) && _i < _toks.length) {
         final int e = _toks[_i].end;
         _i++;
-        return _Item(t.start, e);
+        return _Item(t.start, e, const <_Region>[], t.name);
       }
       // ★ 命令后紧跟 `{...}` → 那是它的**参数**，必须合成为一个内容项。
       //   否则"命令与参数之间"会变成一个位点，往那儿注入会让命令吃掉注入内容 ——
@@ -615,9 +691,9 @@ class _Parser {
       //   （对 `\alpha{x}` 这种"命令本来不吃参数"的写法，合并只是少一个位点，无副作用。）
       if (_i < _toks.length && _toks[_i].kind == _K.lbrace) {
         final _Item it = _parseArgItem(t.name, 0);
-        return _Item(t.start, it.end, it.slots);
+        return _Item(t.start, it.end, it.slots, t.name);
       }
-      return _Item(t.start, t.end);
+      return _Item(t.start, t.end, const <_Region>[], t.name);
     }
     _i++;
     var end = t.end;
@@ -634,7 +710,7 @@ class _Parser {
       slots.addAll(it.slots);
       end = it.end;
     }
-    return _Item(t.start, end, slots);
+    return _Item(t.start, end, slots, t.name);
   }
 
   bool _isOpenBracket(int at) =>
@@ -695,9 +771,9 @@ class _Parser {
   _Item _parseScript(_Tok t) {
     final String name = t.kind == _K.sup ? '^' : '_';
     _i++;
-    if (_i >= _toks.length) return _Item(t.start, t.end);
+    if (_i >= _toks.length) return _Item(t.start, t.end, const <_Region>[], name);
     final _Item it = _parseArgItem(name, 0);
-    return _Item(t.start, it.end, it.slots);
+    return _Item(t.start, it.end, it.slots, name);
   }
 
   /// 单个原子（命令 / 字符 / 组）—— 供单 token 参数使用
@@ -771,7 +847,7 @@ class _Parser {
         col++;
       }
     }
-    return _Item(begin.start, end, cells);
+    return _Item(begin.start, end, cells, 'begin');
   }
 
   /// 读 `{name}`（吃掉整组），返回组内原始文本

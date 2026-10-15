@@ -70,6 +70,30 @@ bool _samePath(List<SlotStep> a, List<SlotStep> b) {
   return true;
 }
 
+// ---------------------------------------------------------------- 同层区域（§4.0）
+
+/// 包含 [rel] 的**最内层内容区域**（主行 / 某槽 / 裸花括号组 / 环境的一格）。
+///
+/// ★ 「同层」= 落在同一个区域里 —— 这是 §4.0 通则「删除目标 = 与光标**同层**的、
+/// 紧邻的那一个渲染对象」的**唯一层级判据**（区域表由解析器导出：`caret_sites.dart`
+/// 的 [TexRegion]，构造时与位点表同一次遍历）。
+///
+/// ⚠️ **裸花括号组不产生槽**（§2.2），但它是**更小的区域** ⇒ 光标在 `{ab}` 里面时，
+/// 同层兄弟是 `a` `b`，而不是外层的那个"组对象"。
+TexRegion? innermostRegionAt(CaretSiteTable t, int rel) {
+  TexRegion? best;
+  for (final TexRegion r in t.regions) {    if (rel < r.start || rel > r.end) continue;
+    if (best == null || _narrower(r, best)) best = r;
+  }
+  return best;
+}
+
+/// 更内层 = 路径更深；同深度取**区间更小**的那个（裸组不加深路径，但区间更小）。
+bool _narrower(TexRegion a, TexRegion b) {
+  if (a.path.length != b.path.length) return a.path.length > b.path.length;
+  return (a.end - a.start) < (b.end - b.start);
+}
+
 // ---------------------------------------------------------------- Tab 走槽
 
 /// `Tab` 的落点（相对偏移）；`null` = **走出公式**。

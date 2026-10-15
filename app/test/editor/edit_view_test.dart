@@ -751,13 +751,17 @@ $$
   // ─────────────────────────────────────────────────────────────
   // ★ §4.0 通则的端到端复验（2026-10-15 用户实测那条）：
   //   「光标在分式后面，删除只删掉了那个末尾分界符，里面的编码爆出来了」
-  //   现在：光标贴着公式**外侧** → 删的是**整个公式段**（含定界符）；
-  //        光标在公式**里面** → 才按原子删。
+  //   以及「点分式**整体**后面删，只删了分母里的 b，并不是像预期那样删除了整个 a/b」。
+  //
+  //   现行口径：**删除目标 = 与光标【同层】的、紧邻的那一个渲染对象** ——
+  //     · 公式**外侧**（与公式末尾同一根像素）→ 删的是公式里紧邻的那个**结构**（整个分式）
+  //     · 光标在公式**里面某一层**（如分母槽）→ 删的是**那一层**的对象（`b`）
+  //     · `$` / `$$` **不属于任何层** ⇒ 一个都不许碰
   // ─────────────────────────────────────────────────────────────
-  group('★ 回归：光标在公式后面退格 → 整个公式段消失（不再爆编码）', () {
+  group('★ 回归：光标在公式后面退格 → 删掉公式里紧邻的那个对象（不再爆编码）', () {
     const String doc = '文字。\$\\frac{a}{b}\$\n\n尾段\n';
 
-    testWidgets('退格 → 整个公式段没了，画面上也不许出现 `\\frac` 源码',
+    testWidgets('退格 → 整个分式没了、留空壳；画面上不许出现 `\\frac` 源码',
         (WidgetTester tester) async {
       final DocBuffer buf = DocBuffer(doc);
       await _mount(tester, buf);
@@ -768,15 +772,15 @@ $$
       await tester.pump();
 
       expect(buf.buf.contains(r'\frac'), isFalse,
-          reason: '★ 整个公式段都该消失。实际缓冲区：\n${buf.buf}');
-      expect(buf.buf.contains(r'$'), isFalse,
-          reason: '定界符也不该留下（它们是渲染提示，不是内容）');
+          reason: '★ 整个分式都该消失。实际缓冲区：\n${buf.buf}');
+      expect(buf.buf.contains(r'$$'), isTrue,
+          reason: '★ 定界符留着 = 空壳（§4.6），它会被画成一个占位字形（§6.1.1），不是幽灵');
       expect(find.textContaining(r'\frac'), findsNothing,
           reason: '★ 画面上不许出现 LaTeX 源码（原则 2：用户永远不需要看数学编码）');
       expect(find.textContaining('❌'), findsNothing);
     });
 
-    testWidgets('★ 反过来：光标在公式**内**末尾退格 → 只删最后一个原子（公式还在）',
+    testWidgets('★ 反过来：光标在公式**内**末尾退格 → **同一个结果**（同一根像素）',
         (WidgetTester tester) async {
       final DocBuffer buf = DocBuffer(doc);
       await _mount(tester, buf);
@@ -786,8 +790,23 @@ $$
       await tester.sendKeyEvent(LogicalKeyboardKey.backspace);
       await tester.pump();
 
+      expect(buf.buf.contains(r'\frac'), isFalse,
+          reason: '同一根像素必须同一种行为。实际缓冲区：\n${buf.buf}');
+      expect(find.textContaining('❌'), findsNothing);
+    });
+
+    testWidgets('★ 而光标在**分母里** `b` 之后退格 → 只删 `b`（出现空位框），分式还在',
+        (WidgetTester tester) async {
+      final DocBuffer buf = DocBuffer(doc);
+      await _mount(tester, buf);
+      buf.setCaret(doc.indexOf('b}') + 1); // = 分母内容末尾（b 之后）
+      await tester.pump();
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.backspace);
+      await tester.pump();
+
       expect(buf.buf.contains(r'\frac{a}{}'), isTrue,
-          reason: '只该删掉分母里的 b。实际缓冲区：\n${buf.buf}');
+          reason: '★ 层内删除只碰那一层。实际缓冲区：\n${buf.buf}');
       expect(find.textContaining('❌'), findsNothing);
     });
 
