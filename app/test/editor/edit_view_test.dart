@@ -589,4 +589,94 @@ void main() {
           reason: '点内容区右端应落在内容末尾；落在 3 说明又是标记段落在抢点');
     });
   });
+
+  // ─────────────────────────────────────────────────────────────
+  // ★ 用户实测复现路径的回归
+  //
+  // 用户原话：「我点击根号里面的 c 后面，从这里删，一直点删除键，就会触发」
+  // 触发的是 `Parser Error: Expected group after '^'` ——
+  // 删掉 `b^2` 的 `2` 却把裸 `^` 留在原地 → `b^-4ac`。
+  //
+  // ★ 这条测试的两个关键点（缺一就测不到真东西）：
+  //   ① 必须**连按**：单次删除不炸，是"删到最后一步"才留下坏式子
+  //   ② 必须在**嵌套结构内部**（`\frac` 里的 `\sqrt` 里），不是在孤立的 `b^2-4ac` 上 ——
+  //      修复前的 smart_delete 只处理了「光标的直接前后邻居」，
+  //      在嵌套里那个邻居是 `}` 而不是 `^`
+  // ─────────────────────────────────────────────────────────────
+  group(r'★ 回归：行间公式里 \sqrt{b^2-4ac} 连按删除键（用户原始复现路径）', () {
+    const String doc = r'''
+$$
+x = \frac{-b \pm \sqrt{b^2-4ac}}{2a}
+$$
+''';
+
+    /// `c` 之后的那个偏移（= `\sqrt` 被开方槽的末位点）
+    int caretAfterC() => doc.indexOf('4ac') + 3;
+
+    /// 连按 [key] [times] 次，每次都断言画面上没有 `❌` 报错块。
+    Future<void> holdKey(
+      WidgetTester tester,
+      DocBuffer buf,
+      LogicalKeyboardKey key,
+      String label, {
+      int from = -1,
+      int times = 12,
+    }) async {
+      await _mount(tester, buf);
+      await tester.pumpAndSettle();
+      buf.setCaret(from < 0 ? caretAfterC() : from);
+      await tester.pumpAndSettle();
+
+      final List<String> trace = <String>['起始: ${buf.buf}'];
+      for (int i = 1; i <= times; i++) {
+        await tester.sendKeyEvent(key);
+        await tester.pumpAndSettle();
+        trace.add('第 $i 次 $label: ${buf.buf}');
+        expect(find.textContaining('❌'), findsNothing,
+            reason: '删除过程中出现了渲染报错。轨迹：\n${trace.join('\n')}');
+      }
+    }
+
+    // ★★ 这条是**用户原话的那条路**：「点击根号里面的 c 后面，从这里删，一直点删除键」——
+    //    实测确认为 **Backspace**（删除键 = 退格），且**只有它**能抓住这个 bug。
+    //    证据：把 `_removeAtom` 的 `^`/`_` 处理临时回退后，本文件里**只有这一条变红**，
+    //    报出的正是用户看到的那句：`❌ Parser Error: Expected group after '^'`，
+    //    轨迹为 `\sqrt{b^2}` → `\sqrt{b^}`（删掉 `2` 却把裸 `^` 留下）。
+    testWidgets('Backspace 连按 12 次：每一步缓冲区都必须还能渲染',
+        (WidgetTester tester) async {
+      await holdKey(tester, DocBuffer(doc), LogicalKeyboardKey.backspace, 'Backspace');
+    });
+
+    // ⚠️ 诚实标注：**本条的起点碰不到 `^`**（`c` 后面是 `}`，往前删到 `b^2` 才碰到），
+    //    所以它对上面那个 bug 是**假通过** —— 回退修复后它照样绿。
+    //    留着是因为它守的是另一条不变量：**往后删也不许删出坏式子**。
+    testWidgets('Delete 连按 12 次：每一步缓冲区都必须还能渲染',
+        (WidgetTester tester) async {
+      await holdKey(
+          tester, DocBuffer(doc), LogicalKeyboardKey.delete, 'Delete');
+    });
+
+    // ★ 这条才是 Delete 方向的**真**守门人：把光标放在 `b^2` 里原子 `2` **之前**那个位点，
+    //    往右删就直接撞上裸参数 —— 删掉 `2` 留下 `b^` 同样是那句 Parser Error。
+    //    （上一条 Delete 是从 `c` 后面起步，往前删到 `b^2` 时才碰到脚本，
+    //      而那时 `_atomRightOf` 看到的是运算符而不是 `^`，所以绕开了这个 bug。）
+    testWidgets(r'Delete 在裸参数 `^2` 之前：必须把 `^2` 一起删掉',
+        (WidgetTester tester) async {
+      final DocBuffer buf = DocBuffer(doc);
+      await _mount(tester, buf);
+      await tester.pumpAndSettle();
+
+      buf.setCaret(doc.indexOf('b^2') + 2); // 位点表里「原子 `2` 之前」那个位点
+      await tester.pumpAndSettle();
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.delete);
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('❌'), findsNothing,
+          reason: '删掉 `2` 却留下裸 `^` → Parser Error。实际缓冲区：${buf.buf}');
+      expect(buf.buf.contains(r'b^-'), isFalse, reason: '实际缓冲区：${buf.buf}');
+      expect(buf.buf.contains(r'\sqrt{b-4ac}'), isTrue,
+          reason: r'`^2` 应当**整体**消失（`b` 后面直接接 `-`）。实际缓冲区：${buf.buf}');
+    });
+  });
 }
