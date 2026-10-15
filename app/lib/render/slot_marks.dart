@@ -68,9 +68,18 @@ const String kStructTailTex = r'\rule{3pt}{0pt}';
 /// | `\bar{x}` | 横杠 ¶（拉伸字形） | 16.0 → **20.8** | ✅ |
 /// | `\widehat{AB}` / `\widetilde{AB}` | 可拉伸矢量图 | FittedBox 32.8 → **37.6** | ✅ |
 /// | `\overrightarrow{AB}` | 可拉伸矢量图 | FittedBox 32.8 → **37.6** | ✅ |
-/// | `\hat` / `\tilde` / `\dot` / `\ddot` / `\vec` | **固定宽度**标记 | 盒变宽、**墨迹不动** | ❌ 自绘（低优先） |
+/// | `\hat` `\tilde` `\dot` `\ddot` `\bar` `\vec` | ★ **定宽字形**（引擎 `nonStretchyAccents`） | 盒变宽、**墨迹不动** | ❌ 不加 |
 /// | `\frac` | 分数线本来就超出分子分母 | — | ❌ 不需要 |
 /// | `\overbrace` / `\underbrace` | 拉伸花括号（三片矢量图） | 未定（低频） | ⏳ 候选 |
+///
+/// ⚠️ **`\bar` 本在名单里，2026-10-15 晚拿掉了** —— 那次探针**只看盒宽**
+///   （`\bar{x\rule{…}}` 的装饰 ¶ 16.0 → 20.8），把它误当成"拉伸字形"。
+///   读引擎源码（`parser/tex/functions/katex_base/accent.dart`）才看清：`\bar` ∈
+///   `nonStretchyAccents`，它的盒是**被强制撑到内容宽**的（原话："Non stretchy accent
+///   can not contribute to overall width, thus they must fit exactly with the width
+///   even if it means overflow"）⇒ **墨迹不跟着变长**。
+///   ★ **盒变宽 ≠ 装饰变长** —— 这条教训写进设计稿 §11.21.3。
+///   ⇒ 这 6 个定宽 accent 另按「**一个字符**」处理：`smart_delete.kFixedShapeAccents`。
 ///
 /// ★★ **前置条件（2026-10-15 晚已就位）**：accent 的装饰盒原先**自己就是叶盒**
 ///   （`\overline{AB}` 的横线 32.8 × **0.6 px**）⇒ "叶盒数 ≠ 原子数" ⇒ 命中静默 null。
@@ -80,7 +89,6 @@ const Set<String> kTailCommands = <String>{
   'sqrt',
   'overline',
   'underline',
-  'bar',
   'widehat',
   'widetilde',
   'overrightarrow',

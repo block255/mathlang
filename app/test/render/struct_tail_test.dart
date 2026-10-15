@@ -244,18 +244,21 @@ void main() {
       expect(renderToSourceOffset(t, at + 1), 13);
     });
 
-    test('★ 名单：**装饰墨迹跟着内容变长**的才加尾垫（实测表见设计稿 §11.21.3）', () {
+    test('★ 名单：**装饰的墨迹跟着内容变长**的才加尾垫（实测表见设计稿 §11.21.3）', () {
       for (final String cmd in <String>[
-        'sqrt', 'overline', 'underline', 'bar',
+        'sqrt', 'overline', 'underline',
         'widehat', 'widetilde', 'overrightarrow',
       ]) {
         expect(renderMathTex('\\$cmd{AB}', caretRel: -1), '\\$cmd{AB$kStructTailTex}',
             reason: '`\\$cmd` 的装饰会跟着内容变长 ⇒ 应当在 kTailCommands 里');
       }
-      // 反面：**固定宽度标记**不加 —— 尾垫只撑盒、墨迹不动 ⇒ 加了也看不见（低优先自绘）
-      for (final String cmd in <String>['hat', 'tilde', 'dot', 'ddot', 'vec']) {
+      // 反面：**定宽字形**的 accent 不加 —— 尾垫只撑盒、墨迹不动 ⇒ 加了也看不见
+      // ★ `bar` 原先在正面名单里，2026-10-15 晚读引擎源码后**移到反面**
+      //   （它 ∈ `nonStretchyAccents`；那次探针只看盒宽，误当成拉伸字形）
+      for (final String cmd in <String>['hat', 'tilde', 'dot', 'ddot', 'vec', 'bar']) {
         expect(renderMathTex('\\$cmd{AB}', caretRel: -1), '\\$cmd{AB}',
-            reason: '`\\$cmd` 是固定宽度标记 ⇒ 先不加（§11.21 结论第 2 条）');
+            reason: '`\\$cmd` 是**定宽字形** ⇒ 不加尾垫（它的内容末尾另有专门规则，'
+                '见 smart_delete.kFixedShapeAccents）');
       }
       // 分式也不需要：分数线本来就超出分子分母
       expect(renderMathTex(r'\frac{a}{b}', caretRel: -1), r'\frac{a}{b}');

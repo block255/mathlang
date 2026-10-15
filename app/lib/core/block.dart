@@ -319,12 +319,32 @@ class BlockMarkers {
 
   static bool isFence(String s) => s.trimLeft().startsWith(kFence);
 
-  static bool isMathFence(String s) => s.trimLeft().startsWith(kMathFence);
+  /// 行首 `$$` 算不算**行间公式的围栏**？（R5）
+  ///
+  /// ★★ **2026-10-15 晚收紧**（用户实测抓出 `Parser Error`，精确复现见 `block_test.dart`）：
+  /// 原判据只要求"行首是 `$$`"⇒ **空壳公式落在行首**时整行会被判成**行间公式块**。
+  /// 而空壳是**设计要留的**（§4.6：公式里删到空 ⇒ 留 `$$`），并且那一行后面往往还跟着
+  /// 别的行内公式（实测：`$$ $\hat{x}$ $\bar{y}$`）⇒ 整行当 tex 送进渲染器
+  /// ⇒ 行里剩下的 `$` 落进数学模式 ⇒ `Parser Error: Can't use function '$' in math mode`。
+  ///
+  /// 收紧后的判据 —— 只有这两种才算围栏：
+  ///   · **整行就是 `$$`**（开/闭围栏）
+  ///   · **同行闭合的 `$$…$$`**（[isClosedMathFence]）
+  /// `$$ … $`（空壳 + 后续内容）**不算** ⇒ 退回普通段落，那里的 `$$` 按**空的行内公式**渲染
+  /// （§6.1.1 本来就要求把空公式画出来）✓
+  static bool isMathFence(String s) {
+    final String l = s.trimLeft();
+    if (!l.startsWith(kMathFence)) return false;
+    if (l.trimRight() == kMathFence) return true;
+    return isClosedMathFence(l);
+  }
 
   /// 同一行闭合的 `$$...$$`（R5）
   static bool isClosedMathFence(String s) {
     final t = s.trimRight();
-    return t.length > 4 && t.startsWith(kMathFence) && t.endsWith(kMathFence);
+    return t.length > 4 &&
+        t.trimLeft().startsWith(kMathFence) &&
+        t.endsWith(kMathFence);
   }
 
   /// 标题级别；0 = 不是标题。4–6 级按 3 级渲染（R2）

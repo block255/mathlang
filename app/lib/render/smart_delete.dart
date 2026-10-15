@@ -150,9 +150,100 @@ const Set<String> kOpaqueCommands = <String>{
 /// 上标 / 下标：它们**与基座同生共死**（`x^2` 在 TeX 里就是一个原子）
 bool _isScript(TexItem it) => it.command == '^' || it.command == '_';
 
+/// ★★ **形状固定**的 accent（2026-10-15 晚，用户实测提出）—— 它们按**一个字符**处理。
+///
+/// 名单 = 引擎的分类，**读源码得来，不是猜的**（`flutter_math_fork`
+/// `parser/tex/functions/katex_base/accent.dart` 的 `nonStretchyAccents`）：
+/// `\acute \grave \ddot \tilde \bar \breve \check \hat \vec \dot \mathring`。
+///
+/// 为什么它们要当"一个字符"：
+/// · 装饰是**一个小字形**，盒子被**强制撑到内容宽**（引擎原话：
+///   *"Non stretchy accent can not contribute to overall width, thus they must fit exactly
+///   with the width even if it means overflow"*）⇒ **结构右缘 == 内容右缘**
+///   ⇒ "内容末尾"与"结构末尾"**永远在同一根像素**上，尾垫也救不了
+///   （尾垫只把**盒**撑宽，那个定宽字形**不会跟着变长** —— 实测 `\hat{x\rule{3pt}{0pt}}`
+///   的装饰盒 16 → 20.8，但墨迹不动）。
+/// · 于是同一个像素上，"里面"和"外面"给出**两个不同的删除结果**（用户实测：
+///   「点底下和点整体的判定很难分清」）⇒ 违反 §3.3 的规律
+///   「**删除与点击不区分**；方向性语义区分」。
+///
+/// ⇒ 处置（**只合并内容【末尾】**，见 [_fixedShapeAccentOuter]）：
+///   在内容末尾，**退格 = 删整个 `\hat{x}`**（而不是留下 `\hat{}`）、**`Delete` = 删它右边那一个对象** ——
+///   与"结构末尾"那一格**完全一致**（做法是把偏移**重映射到结构末尾**，见下）。
+///
+/// ⚠️ **为什么左端不合并**：内容首位点（`{` 之后）是**"点进去改字"的入口**
+///   （§5.2 归属表：点装饰 = 去改里面的内容）。若左端也整体删，用户就**没法只换里面的字**
+///   （`\hat{a}` → `\hat{b}` 得整段重打，而符号面板还没做）。左端"多按一次退格"的代价是
+///   一次**看不见的移动**，可以接受；右端不合并则是"**根本删不掉整个 accent**"。
+const Set<String> kFixedShapeAccents = <String>{
+  'acute', 'grave', 'ddot', 'tilde', 'bar', 'breve',
+  'check', 'hat', 'vec', 'dot', 'mathring',
+};
+
 /// 该内容项在**它自己那一层**上是不是一个"可见对象"（而不是透明包装）。
 bool isOpaqueItem(TexItem it) =>
     _isScript(it) || (it.command != null && kOpaqueCommands.contains(it.command));
+
+/// 光标停在**形状固定 accent**（[kFixedShapeAccents]）的**内容末尾**时，
+/// 返回它应该被当作"**那一个字符**"的源码区间 —— 否则返回 `null`。
+///
+/// 为什么是区间而不是"偏移重映射"：**裸参数形式**（`\hat x`）下，
+/// 内容末尾、结构末尾、tex 末尾是**同一个偏移**，没有"外面"可去 —— 只能直接给出区间。
+///
+/// **级联到最外层**（`\hat{\bar{x}}`）：三层装饰都不占宽、`{`/`}` 不可见
+/// ⇒ 三者的**像素完全相同** ⇒ 按「同一根像素 ⇒ 同一行为」，取**最外**那一层的区间
+/// （若只取内层，会得到 `[6,13)` 这种"删掉内层 + 外层收尾 `}`"的**坏区间** —— 留下 `\hat{`）。
+///
+/// ★ **只处理内容【末尾】**（左端见 [kFixedShapeAccents] 的注释）：
+///   左端是"点进去改字"的入口，不能整体删。
+_Span? _fixedShapeAccentSpanEndingAt(CaretSiteTable t, int rel) {
+  _Span? acc = _accentItemEndingAtContent(t, rel);
+  if (acc == null) return null;
+  // **级联到最外层**：同一根像素上还可能套着别的定宽 accent（`\hat{\bar{x}}`）——
+  // 内层 accent 的**结构末尾**就是外层 accent 的**内容末尾**，所以要拿 `acc.end` 再问一次。
+  while (true) {
+    final _Span? outer = _accentItemEndingAtContent(t, acc!.end);
+    if (outer == null || outer.end <= acc.end) break;
+    acc = outer;
+  }
+  return acc;
+}
+
+/// 找**内容末尾**正好是 [contentEnd] 的定宽 accent（取最内层 = 区间最短的那一个）。
+///
+/// ★ 必须同时认两种写法（实测的项表，见 `accent_as_one_object_test.dart` 的注释）：
+///   · **花括号**：`\hat{x}` 是一个项 `[0,7) cmd=hat hasSlots=true` ⇒ 项本身就含参数组
+///   · **裸参数**：`\hat x` 是**两个**项 —— `[0,4) cmd=hat hasSlots=false` ＋ `[5,6) x`
+///     ⇒ 参数 = **紧跟着的那一个项**（TeX 的单记号规则：`\hat xy` 只盖住 `x`）
+_Span? _accentItemEndingAtContent(CaretSiteTable t, int contentEnd) {
+  _Span? best;
+  for (final TexRegion r in t.regions) {
+    for (var i = 0; i < r.items.length; i++) {
+      final TexItem it = r.items[i];
+      final String? cmd = it.command;
+      if (cmd == null || !kFixedShapeAccents.contains(cmd)) continue;
+      final int spanEnd;
+      if (it.hasSlots) {
+        spanEnd = it.end;
+      } else {
+        if (i + 1 >= r.items.length) continue; // `\hat` 后面什么都没有
+        spanEnd = r.items[i + 1].end;
+      }
+      if (_contentEnd(t.tex, spanEnd) != contentEnd) continue;
+      if (best == null || (spanEnd - it.start) < (best.end - best.start)) {
+        best = _Span(it.start, spanEnd);
+      }
+    }
+  }
+  return best;
+}
+
+/// 内容项的**内容末尾**：`\hat{x}` 的项是 `[0,7)` ⇒ 内容末尾 **6**；裸参数 `[0,6)` ⇒ 6
+/// （与 [_extentEnd] 互逆）
+int _contentEnd(String tex, int itemEnd) =>
+    (itemEnd > 0 && itemEnd <= tex.length && tex[itemEnd - 1] == '}')
+        ? itemEnd - 1
+        : itemEnd;
 
 // ---------------------------------------------------------------------------
 // 删除
@@ -167,6 +258,12 @@ SmartEdit smartBackspace(CaretSiteTable t, int rel) {
   if (t.degraded) return SmartEdit.remove(r - 1, r, r - 1);
 
   final CaretSite s = t.snap(r);
+
+  // ★★ 形状固定的 accent（`\hat` `\bar` …）：内容末尾 == 结构末尾（同一根像素）
+  //    ⇒ 退格删**整个** `\hat{x}`（与"从外面删"同一结果），而不是留下 `\hat{}`
+  final _Span? acc = _fixedShapeAccentSpanEndingAt(t, s.offset);
+  if (acc != null) return SmartEdit.remove(acc.start, acc.end, acc.start);
+
   final int idx = t.indexOf(s.offset);
   final TexRegion? reg = innermostRegionAt(t, s.offset);
 
@@ -194,6 +291,15 @@ SmartEdit smartDelete(CaretSiteTable t, int rel) {
   if (t.degraded) return SmartEdit.remove(r, r + 1, r);
 
   final CaretSite s = t.snap(r);
+
+  // ★★ 形状固定的 accent：内容末尾 == 结构末尾（同一根像素）⇒ 与"从外面删"同一结果
+  //    · 花括号形式：越过收尾 `}` 之后照常算（删的通常是**它右边**那一个同层对象）
+  //    · 裸参数形式：结构末尾就是 tex 末尾 ⇒ 交给文档层的边界语义（`math_nav`）
+  final _Span? acc = _fixedShapeAccentSpanEndingAt(t, s.offset);
+  if (acc != null) {
+    return acc.end > s.offset ? smartDelete(t, acc.end) : SmartEdit.none;
+  }
+
   final int idx = t.indexOf(s.offset);
   final TexRegion? reg = innermostRegionAt(t, s.offset);
 

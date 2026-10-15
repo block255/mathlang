@@ -114,13 +114,15 @@ void main() {
       });
     });
 
-    testWidgets('★ `\\bar{AB}`：装饰 ¶ 被**拉伸到 32.8 宽**，仍然不算原子',
+    testWidgets('★ `\\bar{AB}`：装饰 ¶ 被**强制撑到 32.8 宽**，仍然不算原子',
         (WidgetTester tester) async {
       final ({String renderTex, LeafBoxScan scan, List<VisibleAtom> atoms}) r =
           await _probe(tester, r'\bar{AB}');
       expect(r.scan.eligible.length, r.atoms.length,
           reason: '有效叶盒 ${r.scan.eligible.length} vs 原子 ${r.atoms.length}');
-      expect(r.scan.eligible.length, 3, reason: 'A + B + 尾垫（`\bar` 的装饰会跟着变长）');
+      expect(r.scan.eligible.length, 2,
+          reason: 'A + B —— ★ `\\bar` 是**定宽字形**（引擎 nonStretchyAccents），'
+              '**不加尾垫**（盒被撑宽但墨迹不动，加了也看不见）');
     });
   });
 
