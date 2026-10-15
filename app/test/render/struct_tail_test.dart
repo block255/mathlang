@@ -138,11 +138,13 @@ void main() {
       r'\frac{}{}',
       r'\frac{a}{} + \sqrt{2}',
       r'\sqrt{\frac{a}{b}}',
-      // ⚠️ **线型 accent 家族（`\overline{AB}` 等）暂时不在语料里**：
-      //    它们的**装饰自己就是一个叶盒**（实测 `\overline{AB}`：3 盒 vs 2 原子，
-      //    那条横线是 32.8 × 0.6 px 的细线）⇒ **逼得守门人红** —— 但那是**既有 bug**
-      //    （`hitTestMathTex` 对 accent 一直静默返回 null），与本尾垫无关。
-      //    修法与步骤见设计稿 §11.21 与 `slot_marks.kTailCommands` 的注释。
+      // ★ accent 家族（2026-10-15 晚修好装饰盒过滤之后加进来；
+      //    更全的一组在 `decoration_boxes_test.dart` 的守门人里）
+      r'\overline{AB}',
+      r'\hat{x}',
+      r'\bar{x}',
+      r'\overrightarrow{AB}',
+      r'\overbrace{AB}',
     ];
 
     testWidgets('每个 tex × 几种光标态', (WidgetTester tester) async {
@@ -206,20 +208,22 @@ void main() {
   });
 
   // ─────────────────────────────────────────────────────────────
-  // 五之一、⚠️ **线型 accent 家族：暂缓**（2026-10-15 晚，用户同意后试做，被守门人拦下）
+  // 五、★ **线型 / 拉伸 accent 家族**：同一个尾垫机制（2026-10-15 晚**已就位**）
   //
-  //   为什么暂缓（探针数据，见设计稿 §11.21）：
-  //     · `\overline{AB}` 的**横线自己就是一个叶盒**：`[0..32.8 × 0..0.6]`（32.8 × **0.6 px**）
-  //       ⇒ 有效叶盒 **3** vs 可见原子 **2** ⇒ `hitTestMathTex` **静默返回 null**
-  //     · `\hat{x}` / `\tilde{x}` 更甚：装饰盒与字形盒**完全重合**（16×16 两个）⇒ 一原子两盒
-  //     · 这两个都是**既有 bug**（与本尾垫无关）；⇒ **先修"装饰盒误入有效叶盒"**，
-  //       才谈得上给 accent 加尾垫
-  //   可行判据（下一步）：**按高度滤掉细线**（装饰线 0.6 px vs 字形 16 px），
-  //     但尾垫自己**不能是零高**（现在是 `\rule{3pt}{0pt}`，高 0 ⇒ 会被一起滤掉）
-  //     ⇒ 尾垫换成"**隐形但非零高**"的形式（候选 `\hphantom{\rule{3pt}{8pt}}`，**先探针**）。
-  //   本组先以 `skip` 占位，写明复核条件（**不是**默默删掉）。
+  //   前置条件原先没满足（所以这组曾是 `skip`）：accent 的**装饰自己就是一个叶盒**
+  //     · `\overline{AB}` 的横线 = `[0..32.8 × 0..0.6]`（32.8 × **0.6 px**）
+  //     · `\hat{x}` / `\tilde{x}` 更甚：装饰盒与字形盒**完全重合**（16 × 16）
+  //   ⇒ 叶盒数 ≠ 原子数 ⇒ `hitTestMathTex` 静默返回 null（**既有 bug**：点不动）
+  //
+  //   ★ 2026-10-15 晚**已修**：`leaf_boxes.dart` 补两条判据（§11.21.2）——
+  //     ③ **高度下限**（`0 < h < 2`）摘掉 0.6 px 的横线；④ **变音字形**（`^ ~ ˙ ¨ ˉ`）
+  //     摘掉 accent 那"一个字"（几何上分不开，只能看它画的是什么）。
+  //     据此 `kTailCommands` 收进**装饰墨迹跟着内容变长**的那几个（实测表见 §11.21.3）：
+  //       `sqrt` `overline` `underline` `bar` `widehat` `widetilde` `overrightarrow`
+  //     而**固定宽度标记**（`hat` `tilde` `dot` `ddot` `vec`）不加 —— 尾垫只撑盒、墨迹不动，
+  //     加了也看不见（要"看得见"只能自绘，低优先；见 §11.21 结论第 2 条）。
   // ─────────────────────────────────────────────────────────────
-  group('§11.21 线型 accent 家族：同一个尾垫机制（待装饰盒过滤就位）', () {
+  group('§11.21.3 线型 / 拉伸 accent 家族：同一个尾垫机制', () {
     test(r'\overline{AB} → 尾垫插在花括号之内（横线跟着变长）', () {
       expect(renderMathTex(r'\overline{AB}', caretRel: -1),
           '\\overline{AB$kStructTailTex}');
@@ -238,6 +242,23 @@ void main() {
       final int at = t.indexOf(kStructTailTex);
       expect(renderToSourceOffset(t, at), 12);
       expect(renderToSourceOffset(t, at + 1), 13);
+    });
+
+    test('★ 名单：**装饰墨迹跟着内容变长**的才加尾垫（实测表见设计稿 §11.21.3）', () {
+      for (final String cmd in <String>[
+        'sqrt', 'overline', 'underline', 'bar',
+        'widehat', 'widetilde', 'overrightarrow',
+      ]) {
+        expect(renderMathTex('\\$cmd{AB}', caretRel: -1), '\\$cmd{AB$kStructTailTex}',
+            reason: '`\\$cmd` 的装饰会跟着内容变长 ⇒ 应当在 kTailCommands 里');
+      }
+      // 反面：**固定宽度标记**不加 —— 尾垫只撑盒、墨迹不动 ⇒ 加了也看不见（低优先自绘）
+      for (final String cmd in <String>['hat', 'tilde', 'dot', 'ddot', 'vec']) {
+        expect(renderMathTex('\\$cmd{AB}', caretRel: -1), '\\$cmd{AB}',
+            reason: '`\\$cmd` 是固定宽度标记 ⇒ 先不加（§11.21 结论第 2 条）');
+      }
+      // 分式也不需要：分数线本来就超出分子分母
+      expect(renderMathTex(r'\frac{a}{b}', caretRel: -1), r'\frac{a}{b}');
     });
 
     testWidgets(r'★ 端到端：点横线那一截 + `⌫` ⇒ **整个 \overline{AB} 走**（留空壳）',
@@ -259,11 +280,7 @@ void main() {
       expect(buf.buf, r'$$尾',
           reason: '★ 点横线末端 + ⌫ 应当删掉**整个 `$kOverlineTex`**；实际：${buf.buf}');
     });
-  },
-      skip: r'前置条件未就位：accent 的**装饰自己就是一个叶盒**（`\overline{AB}` 实测 3 盒 vs 2 原子，'
-          r'横线是 32.8×0.6 px）⇒ 命中静默返回 null。必须先按**高度**把装饰盒从有效叶盒里滤掉，'
-          r'且尾垫要换成"隐形但非零高"的形式（候选 `\hphantom{\rule{3pt}{8pt}}`，先探针）。'
-          r'数据与步骤见设计稿 §11.21 与 `slot_marks.kTailCommands` 注释。');
+  });
 
   // ─────────────────────────────────────────────────────────────
   // 五、★★ 端到端（用户看得见的那一步）：

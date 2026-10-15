@@ -27,9 +27,17 @@ class VisibleAtom {
 
 /// **结构命令**：它们**本身不是可见原子**（不渲染成字符），可见内容由它们的参数贡献。
 /// 其余命令（`\alpha` `\le` `\sum` …）各自算**一个**可见原子。
+///
+/// ⚠️ **漏一个的后果不是"少一个原子"而是"多一个幻影原子"**（2026-10-15 晚探针量出）：
+/// `\widehat` / `\widetilde` / `\overbrace` / `\underbrace` 原先**不在这张表里**
+/// ⇒ 它们各自被当成 1 个可见原子，而引擎**一个字形都不画**（装饰是矢量图/横线）
+/// ⇒ "叶盒数 ≠ 原子数" ⇒ `hitTestMathTex` **静默返回 null**
+/// ⇒ **这些结构里点击也一直没反应**（与 accent 装饰盒是同一个 bug 家族，见 §11.21.2）。
+/// 实测：`\widehat{AB}` 2 盒 vs **3** 原子、`\overbrace{AB}` 2 盒 vs **3** 原子 ✓（修好后 2 = 2）。
 const Set<String> kStructureCommands = <String>{
   'frac', 'dfrac', 'tfrac', 'sqrt', 'left', 'right', 'begin', 'end', 'binom',
   'overline', 'underline', 'vec', 'hat', 'bar', 'tilde', 'dot', 'ddot',
+  'widehat', 'widetilde', 'overbrace', 'underbrace',
   'overrightarrow', 'xrightarrow', 'operatorname', 'mathrm', 'mathbf', 'mathbb',
   'mathcal', 'mathfrak', 'mathit', 'text', 'displaystyle', 'textstyle',
   'quad', 'qquad', 'limits', 'nolimits', 'not', 'color', 'phantom', 'enclose',
