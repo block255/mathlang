@@ -733,15 +733,12 @@ class _DocViewState extends State<DocView> {
         );
 
       case BlockType.math:
-        // 行间公式：光标靠注入 `\cursor{}`（走位点吸附，见 caret_sites.dart）
-        // ★ S3-5：先注入空槽占位（它给光标偏移做了补偿），再注入光标 —— 顺序不能反
-        final SlotMarkResult marks = injectSlotMarks(
+        // 行间公式：注入链只有**一个入口**（`slot_marks.renderMathTex`）——
+        // 先注空槽占位（★ 光标不在里面时**也要注**：空槽必须一直看得见，见该函数注释），再按需注光标。
+        final String tex = renderMathTex(
           text,
           caretRel: caretAbs == null ? -1 : caretAbs - u.renderBase,
         );
-        final String tex = caretAbs == null
-            ? marks.tex
-            : injectCursor(marks.tex, marks.rel).tex;
         return Center(
           child: Math.tex(
             tex,

@@ -1,11 +1,12 @@
 // 空槽可视化测试（S3-5 · §6.1）
 //
-// ⚠️ **本模块已写好但暂时没有接进渲染**：注入占位会虚增"可见原子"，而点击定位
-//   靠"叶盒 ↔ 可见原子"一一对应 → 数量不等时 `hitTestMathTex` 会**静默返回 null**。
-//   要接上必须先修 `visible_atoms.dart`：跳过**不参与渲染的参数**
-//   （`\textcolor`/`\color` 的颜色名、`\rule`/`\hspace`/`\kern` 的尺寸）。
-//   ★ 那条修法同时也修掉**现存**的 `\cursor{}` 注入问题（它现在就在虚增原子）。
-//   见交接快照 §十二。
+// 状态（2026-10-15）：**已接进渲染**，注入链的唯一入口是 `slot_marks.renderMathTex`
+//   （`InlineMathText` 的行内公式与 `DocView` 的行间公式都走它）。
+//
+// ★ 两条关键不变量（都与点击定位的"叶盒数 == 可见原子数"绑在一起）：
+//   1. 占位字形必须是**一个正常字形**（`\square`：1 原子 ↔ 1 叶盒），不能用 `\rule` 那种
+//      "词法上是结构命令、引擎却照样给盒"的东西
+//   2. 注入后**原子数的增量恰好等于空槽数**（不多不少）
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mathlang/render/caret_sites.dart';
@@ -49,9 +50,23 @@ void main() {
       expect(r.rel, 1);
     });
 
-    test('★ 光标不在这个单元里（caretRel < 0）→ 一个都不画（否则点击定位会失效）', () {
-      expect(injectSlotMarks(r'\frac{}{}', caretRel: -1).tex, r'\frac{}{}');
-      expect(injectSlotMarks(r'\frac{a}{}', caretRel: -1).tex, r'\frac{a}{}');
+    test('★ 光标不在这一段（caretRel < 0）→ 照样画空槽，只是没有"当前槽"高亮', () {
+      // ★ 2026-10-15 改：这里原先是"**一个都不画**"，理由是"注入会让点击定位失效"
+      //   （`hitTestMathTex` 要求叶盒数 == 原子数，数量不等就静默返回 null）。
+      //   那个根因当天晚些时候就被根治了（命中改用 `renderTex` + `renderToSourceOffset`），
+      //   而这条临时措施留了下来 —— 后果是**用户粘贴 `$\frac{}{}$` 后什么都看不见**：
+      //   光标恰好停在闭合 `$` 之后那一格，被判"不在这段里"→ 不注入 → 空分数只有 3.4px 宽。
+      //   规格 §6.1 从来没有"只在光标处画占位"这条附加条件：**空槽就该一直看得见**。
+      final SlotMarkResult r = injectSlotMarks(r'\frac{}{}', caretRel: -1);
+      expect(kEmptySlotTex.allMatches(r.tex).length, 2, reason: '两个空槽都要画');
+      expect(kCurrentSlotTex.allMatches(r.tex).length, 0,
+          reason: '光标不在里面 → 没有"当前槽"');
+      expect(injectSlotMarks(r'\frac{a}{}', caretRel: -1).tex, isNot(r'\frac{a}{}'),
+          reason: '分母是空槽 → 必须注入');
+      expect(injectSlotMarks(r'\frac{a}{b}', caretRel: -1).tex, r'\frac{a}{b}',
+          reason: '一个空槽都没有 → 仍然原样返回');
+      expect(injectSlotMarks(r'a}b', caretRel: -1).tex, r'a}b',
+          reason: '降级表里同样什么都不做');
     });
   });
 

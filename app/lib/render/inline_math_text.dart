@@ -10,6 +10,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_math_fork/flutter_math.dart';
 
+import 'caret_ownership.dart';
 import 'caret_sites.dart';
 import 'projection.dart';
 import 'slot_marks.dart';
@@ -86,6 +87,14 @@ class _InlineMathTextState extends State<InlineMathText> {
     final segs = projectInline(widget.source);
     final children = <InlineSpan>[];
 
+    // ★★ 光标归属**只在这里问一次**，后续两个分支都拿这个结果用。
+    //   唯一判据在 `caret_ownership.dart`（那里记着"四份判据漏掉一个偏移"的事故）。
+    final int? rel = widget.caretOffset == null
+        ? null
+        : widget.caretOffset! - widget.baseOffset;
+    final CaretPlacement? pl =
+        rel == null ? null : caretPlacement(widget.source, rel);
+
     // 清掉已经不存在的公式 key（源码变了之后旧 key 会残留）
     if (widget.mathKeys == null) {
       final live = <int>{
@@ -95,16 +104,18 @@ class _InlineMathTextState extends State<InlineMathText> {
       _internalKeys.removeWhere((k, _) => !live.contains(k));
     }
 
-    for (final s in segs) {
+    for (var i = 0; i < segs.length; i++) {
+      final ProjectionSegment s = segs[i];
       if (s.isMath) {
-        children.add(_mathSpan(s));
+        children.add(_mathSpan(s, i, pl));
         // 光标在这个行内公式里 → 组合串接在公式**之后**（拼音不是数学源码，塞进 `$...$` 会破坏渲染）
-        if (_caretInSegment(s) && widget.composingText.isNotEmpty) {
+        if (caretOwnedBy(pl, i, isMath: true) &&
+            widget.composingText.isNotEmpty) {
           children.add(_composingSpan());
         }
         continue;
       }
-      children.addAll(_textSpansWithCaret(s));
+      children.addAll(_textSpansWithCaret(s, i, pl));
     }
 
     return Text.rich(
@@ -112,31 +123,23 @@ class _InlineMathTextState extends State<InlineMathText> {
     );
   }
 
-  /// 文字段：把光标条 + 组合串切开插进去（光标在数学段里时走 `\cursor{}`，见 [_mathSpan]）
-  List<InlineSpan> _textSpansWithCaret(ProjectionSegment s) {
-    final absStart = widget.baseOffset + s.start;
-    final absEnd = widget.baseOffset + s.end;
-    final int? c = widget.caretOffset;
-    if (c == null || c < absStart || c > absEnd) {
+  /// 文字段：把光标条 + 组合串切开插进去（光标在数学段里时走注入，见 [_mathSpan]）
+  List<InlineSpan> _textSpansWithCaret(
+    ProjectionSegment s,
+    int i,
+    CaretPlacement? pl,
+  ) {
+    if (!caretOwnedBy(pl, i, isMath: false)) {
       return <InlineSpan>[TextSpan(text: s.text)];
     }
-    final rel = c - absStart;
+    final int r = pl!.localRel.clamp(0, s.text.length);
     return <InlineSpan>[
-      TextSpan(text: s.text.substring(0, rel)),
+      TextSpan(text: s.text.substring(0, r)),
       _caretBar(),
       // ★ 插入点在光标条之后：光标不动、拼音向右展开，后面的字被真的推开
       if (widget.composingText.isNotEmpty) _composingSpan(),
-      TextSpan(text: s.text.substring(rel)),
+      TextSpan(text: s.text.substring(r)),
     ];
-  }
-
-  /// 光标是否落在这个片段里
-  bool _caretInSegment(ProjectionSegment s) {
-    final int? c = widget.caretOffset;
-    if (c == null) return false;
-    final absStart = widget.baseOffset + s.start;
-    final absEnd = widget.baseOffset + s.end;
-    return c >= absStart && c <= absEnd;
   }
 
   /// 组合中间态（未提交）的观感：正常字色 + **蓝色下划线** —— 与已提交的正文区分开
@@ -150,25 +153,18 @@ class _InlineMathTextState extends State<InlineMathText> {
         ),
       );
 
-  InlineSpan _mathSpan(ProjectionSegment s) {
+  InlineSpan _mathSpan(ProjectionSegment s, int i, CaretPlacement? pl) {
     final absStart = widget.baseOffset + s.start;
-    final absEnd = widget.baseOffset + s.end;
-    var tex = s.tex;
+    final bool caretHere = caretOwnedBy(pl, i, isMath: true);
 
-    // 光标在这个行内公式里 → 注入引擎内置的 `\cursor{}`（默认已注册）。
-    // ★ S3-1：注入点走**位点吸附**（caret_sites.dart），不再用旧的 snapCaretInTex ——
-    //   后者只防"切开命令名"，会把光标留在 `}{` 这类语法夹缝里，注入后公式渲染是错的。
-    // ★ S3-5：先注入**空槽占位**（它给光标偏移做了补偿），再注入光标 —— 顺序不能反。
-    final int? c = widget.caretOffset;
-    final bool caretHere = c != null && c >= absStart && c <= absEnd;
-    final SlotMarkResult marks = injectSlotMarks(
-      tex,
-      caretRel: caretHere ? c - absStart : -1,
-    );
-    tex = marks.tex;
-    if (caretHere) {
-      tex = injectCursor(tex, marks.rel).tex;
-    }
+    // ★★ 注入链的**唯一入口**（`slot_marks.renderMathTex`）：先注空槽占位，再按需注光标。
+    //   ★ `caretHere == false` 时**也要注占位** —— 空槽必须一直看得见。
+    //     2026-10-15 用户实测：粘贴 `$\frac{}{}$` 后光标停在**闭合 `$` 之后那一格**，
+    //     原先"不在这段里就什么都不注入" → 空分数退化成 3.4 × 10.3 px 细线 → 看着像"消失了"。
+    //   ★ 注入点仍走**位点吸附**（`caret_sites.dart` 的 `injectCursor`）——
+    //     旧的 `snapCaretInTex` 只防"切开命令名"，会把光标留在 `}{` 这类语法夹缝里。
+    final String tex =
+        renderMathTex(s.tex, caretRel: caretHere ? pl!.localRel : -1);
 
     final key = _keys.putIfAbsent(absStart, () => GlobalKey());
     final bool baseline = widget.align == MathAlignMode.baseline;
