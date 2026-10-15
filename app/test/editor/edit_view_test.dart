@@ -679,4 +679,72 @@ $$
           reason: r'`^2` 应当**整体**消失（`b` 后面直接接 `-`）。实际缓冲区：${buf.buf}');
     });
   });
+
+  // ─────────────────────────────────────────────────────────────
+  // ★ 用户实测的第二条路径（2026-10-15）：
+  //   「点分式内 → 右箭头到数学区外行末 → 按 Enter → **分式被直接拆出编码**」
+  //
+  //   探针把根因钉死了：那个"行末"其实是**闭合 `$` 之前那一格**（还在公式里），
+  //   插入 `\n\n` 会把 `$` 配成单数 → 整行退化成源码。
+  //   现在**两层一起挡**：
+  //     · `math_nav.nextCaretOffset` —— `→` 不再停在那看不见的一格（甲方案）
+  //     · `insert_guard.planInsert` —— 就算强行停在那儿，插入落点也会被推到公式之后
+  //
+  //   ★ 判据是**客观**的：每一行的 `$` 必须成对（奇数 = 那一行会退化成源码）。
+  // ─────────────────────────────────────────────────────────────
+  group('★ 回归：公式里按 → 出到行末再 Enter，公式必须完好', () {
+    const String doc = '文字。\$\\frac{a}{b}\$\n\n尾段\n';
+
+    void expectDollarsPaired(String buf) {
+      for (final String line in buf.split('\n')) {
+        expect(r'$'.allMatches(line).length.isEven, isTrue,
+            reason: '行「$line」的 \$ 不成对 → 这一行会退化成源码。整份缓冲区：\n$buf');
+      }
+    }
+
+    testWidgets('★ 从分子里出发，落在**每一个可达位置**上按 Enter，公式都必须完好',
+        (WidgetTester tester) async {
+      // ★ 为什么是"逐个停点"而不是"连按 N 次"：
+      //   初版写的是"连按 8 次 → 再 Enter"，结果 8 次已经**越过公式**了 ——
+      //   把源码改动临时收起（`git stash push -- app/lib`）重跑，它**照样绿** = 假通过。
+      //   真正会炸的只有"停在闭合 `$` 之前那一格"这一种，所以必须把每个停点都走一遍。
+      for (var presses = 0; presses <= 8; presses++) {
+        final DocBuffer buf = DocBuffer(doc);
+        await _mount(tester, buf);
+        buf.setCaret(doc.indexOf(r'\frac') + 5); // 分子里
+        await tester.pump();
+
+        for (var i = 0; i < presses; i++) {
+          await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+          await tester.pump();
+        }
+        final int stop = buf.caret;
+
+        await tester.testTextInput.receiveAction(TextInputAction.newline);
+        await tester.pump();
+
+        expectDollarsPaired(buf.buf);
+        expect(find.textContaining('❌'), findsNothing,
+            reason: '按 $presses 次 → 停在 $stop，Enter 之后公式坏了：\n${buf.buf}');
+      }
+    });
+
+    testWidgets('★ 反向也守：强行把光标放在公式内部各个位置再 Enter',
+        (WidgetTester tester) async {
+      final int contentEnd = doc.indexOf('b}') + 2; // = 闭合 `$` 那一格
+      for (var back = 0; back <= 6; back++) {
+        final DocBuffer buf = DocBuffer(doc);
+        await _mount(tester, buf);
+        buf.setCaret(contentEnd - back);
+        await tester.pump();
+
+        await tester.testTextInput.receiveAction(TextInputAction.newline);
+        await tester.pump();
+
+        expectDollarsPaired(buf.buf);
+        expect(find.textContaining('❌'), findsNothing,
+            reason: '在偏移 ${contentEnd - back} 按 Enter 之后渲染报错了：\n${buf.buf}');
+      }
+    });
+  });
 }

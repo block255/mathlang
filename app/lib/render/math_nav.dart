@@ -141,8 +141,21 @@ int nextCaretOffset(String source, int offset) {
   final CaretSiteTable t = buildCaretSites(r.tex);
   final CaretSite s = t.snap(r.rel(o));
   final int i = t.indexOf(s.offset);
-  if (i + 1 < t.sites.length) return r.abs(t.sites[i + 1].offset);
-  return r.closeEnd; // 段内最后一个位点 → 走出到 `$` 之后
+  // ★★ 「甲」方案（2026-10-15 用户拍板）：**`→` 跳过"数学段内的末尾位点"**。
+  //
+  // 为什么：`tex.length` 那个位点（= 闭合 `$` 所在那一格）与 `closeEnd`（公式之后）
+  // **在屏幕上是同一根像素** —— 收尾 `$` 不可见，两者无从分辨。停在它上面有两个害处：
+  //   ① 用户按 `→` 会以为"按了没反应"（光标其实挪了，只是看不出来）
+  //   ② 在它上面断块会把公式**劈开**（`$` 配成单数 → 整行退化成源码；用户实测抓出）
+  // ⇒ `→` 的语义是"往前走 / 出去"，就**一步出公式**，不停在看不见的边界上。
+  //
+  // ★ `←` **故意不跳**（见 [prevCaretOffset]）：从公式外面进到公式末尾，
+  //   是"我要继续改这段数学"的正当动作 —— 这是**有意的不对称**：`←` 进去、`→` 出去。
+  final int next = i + 1;
+  if (next < t.sites.length && t.sites[next].offset < r.tex.length) {
+    return r.abs(t.sites[next].offset);
+  }
+  return r.closeEnd; // 段内没有更靠右的位点了 → 走出到 `$` 之后
 }
 
 /// `←`：上一个文档级光标落点（与 [nextCaretOffset] 镜像）。
@@ -164,6 +177,8 @@ int prevCaretOffset(String source, int offset) {
   if (i > 0) return r.abs(t.sites[i - 1].offset);
   return r.openStart; // 段内第一个位点 → 走出到 `$` 之前
 }
+// ★ 注意：`←` **不做**「跳过 tex 末位点」那件事（与 [nextCaretOffset] 有意不对称）——
+//   从公式外面按 `←` 就是要**进到公式末尾**继续改这段数学，那是正当落点。
 
 // ---------------------------------------------------------------- Tab / ↑↓
 

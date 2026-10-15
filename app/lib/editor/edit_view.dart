@@ -19,6 +19,7 @@ import '../core/block.dart';
 import '../core/doc_buffer.dart';
 import '../core/doc_settings.dart';
 import '../render/caret_sites.dart' show kCaretColorValue;
+import '../render/insert_guard.dart';
 import '../render/math_nav.dart';
 import '../render/normalize.dart';
 import '../render/smart_delete.dart';
@@ -175,7 +176,16 @@ class EditViewState extends State<EditView> {
   ///   输入设备的内容由 [TextInputSurfaceController] 自己维持成"空的"。
   void _commitText(String text) {
     if (text.isEmpty) return;
-    _mutate(() => _buf.insertText(text));
+    // ★★ 插入侧守门人（`render/insert_guard.dart`）：**块级换行不许落在数学段内部**。
+    //   用户实测的路径：点进分式 → `→` 到行末（其实停在"闭合 `$` 之前那一格"）→ `Enter`
+    //   → `$` 被配成单数 → **整行退化成源码**。
+    //   ★ 只调整**落点**，不吞内容：非换行的插入照样进公式
+    //     （在公式末尾打 `+1` = 继续这段数学，那是要保留的能力）。
+    final InsertPlan plan = planInsert(_buf.buf, _buf.caret, text);
+    _mutate(() {
+      if (plan.moved) _buf.setCaret(plan.offset);
+      _buf.insertText(text);
+    });
   }
 
   /// 跑一次可能改缓冲区的操作，**只在真的改动了**的时候记一次编辑。
