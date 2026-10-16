@@ -652,10 +652,20 @@ class _DocViewState extends State<DocView> {
           renderBase: sliceStart + r.offsetInSource,
           renderLength: r.text.length,
           // 列表项的标记区（`- ` / `1. `）也归它 → 光标在标记里时显示在内容开头
-          acceptFrom: (b.type == BlockType.bulletList ||
-                  b.type == BlockType.orderedList)
-              ? sliceStart
-              : null,
+          //
+          // ★★ ③-C（《位点与结构导航》§11.25，2026-10-16）：**行间公式块认领自己整片源码**
+          //    （`$$` 围栏与行尾都算）。原来只认 `[renderBase, renderEnd]`（= 公式本身）⇒
+          //    光标走出公式、停在"块之后那一格"时**没有任何单元认领它**
+          //    ⇒ `showCaret = false`（用户实测的"光标消失"，但删除还能删掉整个分式）。
+          //    `relFor` 会把两端**夹进 tex** ⇒ 光标画在公式的**左 / 右边缘**（与行内对称）。
+          acceptFrom: switch (b.type) {
+            BlockType.bulletList || BlockType.orderedList => sliceStart,
+            // ★ 与行内公式的「两端各多认领一格」对称：**块前那一格**也算（否则光标从上面
+            //   往下走进块时，最后一格没人管 ⇒ 又是"光标消失"）
+            BlockType.math => sliceStart > 0 ? sliceStart - 1 : 0,
+            _ => null,
+          },
+          acceptTo: b.type == BlockType.math ? sliceStart + src.length : null,
         ));
         k++;
       }
