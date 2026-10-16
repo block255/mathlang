@@ -1,21 +1,17 @@
 // 数语引擎 · 空槽可视化（S3-5）
 //
 // 规格：notes/design/位点与结构导航.md §6.1
-//   空槽 → 虚线占位框（浅灰 `#B0BEC5`，宽 ≈ 一个字符）
+//   空槽 → 虚线占位框（1 px、浅灰 `#B0BEC5`、宽 ≥ 一个正文汉字）
 //   当前槽 → 换成实线 + 淡蓝底（`#E3F2FD`，与光标同色系）
 //   非空槽 → 不画
 //
-// ★ 与规格的差别（诚实记账）：规格自己指出"虚线框要**自绘**"（WidgetSpan / 覆盖层）。
-//   本版先用**注入一条短横线**（`\rule`）达到同样的**功能**：让用户看得见"这里有个空槽"，
-//   当前槽用光标蓝区分。真正的"1px 虚线框 + 淡蓝底"要自绘层，留给视觉规范一起做。
-//   代价：占位线会占排版宽度 —— 这正是我们要的（空槽本来就该占位，用户才会去点/Tab）。
+// ★★ 2026-10-16（④-1 / ④-2）：**占位从"看得见的灰方块"改成"看不见的垫子"** ——
+//   垫子只占版面（字形 + 零高宽度垫），**框由自绘层画**（引擎画不出虚线）。
+//   常量、四种做法的探针数据、以及"补 1 个合成原子"的账，全部写在 **`slot_pad.dart`**。
+//   本文件 `export` 它 ⇒ 旧的引用名（`kEmptySlotTex` / `kCurrentSlotTex`）照旧可用。
 //
-// ★★ 为什么占位用 `\square`（一个正常可见字形）而不是画一条 `\rule`：
-//   点击定位的真正不变量是「**我们的可见原子数 == 引擎的叶盒数**」。
-//   · `\square` → **1 个原子 + 1 个叶盒** ✓ 天然对齐
-//   · `\rule`  → 词法上是**结构命令（0 原子）**，但引擎很可能照样给它一个盒 ✗ 反而危险
-//   所以选"原子与盒一一对应"的那个。（`\textcolor` 的颜色名曾经虚增 9 个原子，
-//   那条已在 `visible_atoms.kNonRenderedArgCount` 修掉，见 injection_invariant_test。）
+// ★ 为什么要这么改：旧的 `\textcolor{#B0BEC5}{\square}` 是一个**实心灰方块**，
+//   既不像规格的虚线框（观感像"一个域"），宽度也只有 11.2 px（行内）——比一个正文汉字窄。
 //
 // **纯 Dart。**
 
@@ -23,12 +19,15 @@ import 'attachment.dart';
 import 'caret_sites.dart';
 import 'scope_table.dart';
 import 'site_adjacency.dart';
+import 'slot_pad.dart';
 
-/// 空槽占位（浅灰小方框）
-const String kEmptySlotTex = r'\textcolor{#B0BEC5}{\square}';
+export 'slot_pad.dart';
 
-/// 当前槽占位（光标蓝 —— 与 §6.2 的光标同色系）
-const String kCurrentSlotTex = r'\textcolor{#1E88E5}{\square}';
+/// 空槽占位（**看不见的垫子**；框由 `math_caret` 的自绘层画虚线）
+const String kEmptySlotTex = kSlotPadTex;
+
+/// 当前槽占位（垫子同形，只是墨色淡蓝 —— 自绘层还会盖一层同色底 + 实线框）
+const String kCurrentSlotTex = kSlotPadCurrentTex;
 
 // ---------------------------------------------------------------------------
 // ★★ 结构尾垫（2026-10-15，设计稿 §11.18）
@@ -118,7 +117,8 @@ class _Ins {
   final bool shiftAt;
 }
 
-/// 给 tex 里所有**空槽**注入可见占位；[caretRel] 落在哪个空槽里，它就用"当前槽"样式。
+/// 给 tex 里所有**空槽**注入占位**垫子**（看不见，只占版面；框由自绘层画）；
+/// [caretRel] 落在哪个空槽里，它就用"当前槽"垫子（淡蓝墨）。
 /// 另外给**包裹型结构**（`\sqrt`）的内容末尾注入**尾垫**（§11.18，见 [kStructTailTex]）。
 ///
 /// ★★ **[caretRel] < 0（光标不在这一段里）→ 照样注入，只是没有"当前槽"高亮。**

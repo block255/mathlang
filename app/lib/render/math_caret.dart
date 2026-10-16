@@ -30,11 +30,16 @@
 //
 // **纯 Dart + Flutter（无第三方依赖）。**
 
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_math_fork/flutter_math.dart';
 
 import 'caret_ownership.dart';
 import 'caret_sites.dart';
+import 'leaf_boxes.dart';
+import 'slot_pad.dart';
 
 /// 包一层：给 `Math` 画上我们自己的光标条（**不影响布局**）。
 class MathWithCaret extends StatefulWidget {
@@ -78,8 +83,14 @@ class MathWithCaret extends StatefulWidget {
 }
 
 class _MathWithCaretState extends State<MathWithCaret> {
-  /// 竖条的矩形（相对本盒；帧末量出来；`null` = 还没量到）
+  /// 竖条的矩形（相对本盒；帧末量出来；`null` = 还没量到 / 光标不在这段里）
   Rect? _bar;
+
+  /// ★ 空槽占位垫（④-1）—— **与光标在不在无关，恒要量**（§6.1：空槽就该一直看得见）
+  List<SlotPad> _pads = const <SlotPad>[];
+
+  /// ★ ④-4「甲」瞬时边界刻度（只在"公式之前 / 之后"那两格出现）
+  Rect? _tick;
 
   @override
   void initState() {
@@ -93,8 +104,9 @@ class _MathWithCaretState extends State<MathWithCaret> {
     _scheduleMeasure();
   }
 
+  /// ★★ 无论光标在不在这一段里都要量 —— 空槽垫子（④-1）**恒可见**。
+  ///    （原先这里是 `if (!widget.showCaret) return;`：只有光标在时才量。）
   void _scheduleMeasure() {
-    if (!widget.showCaret) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _measure();
     });
@@ -105,39 +117,81 @@ class _MathWithCaretState extends State<MathWithCaret> {
     if (mc == null) return;
     final RenderObject? root = mc.findRenderObject();
     if (root == null) return;
-    final RenderBox? anchor = findCaretAnchor(root);
-    if (anchor == null) return;
-    final Offset at = anchor.localToGlobal(Offset.zero, ancestor: root);
-    // ★★ **层级决定行**（2026-10-16 用户提出，§11.27）：
-    //   · 公式内部（含主行 / 分子 / 分母 / 上下限 / 次数）⇒ 那一层的 ¶ 盒；
-    //   · 公式两端"多认领"的那两格 ⇒ **文本层**：与"文字后面的光标"地位等同，
-    //     按文本层标准画（字号 × 1.25、贴基线），**不去公式内部找最近的行**
-    //     （否则"分式后面"会被分母抢走 —— 用户实测）。
-    final Rect bar;
-    if (widget.caretEdge == CaretEdge.none) {
-      bar = caretBarRect(
-        at: at,
-        // ★ 把**锚点**一起给它：选行以"锚点所在的那一行"为准（见 findLocalRowBox）
-        localRowBox: findLocalRowBox(root, at, anchor: anchor),
-        width: widget.caretWidth,
-        fontSize: widget.fontSize,
-      );
-    } else {
-      bar = textLayerCaretRect(
-        baseline: at,
-        width: widget.caretWidth,
-        fontSize: widget.textFontSize ?? widget.fontSize,
-      );
+    final RenderBox? anchor = widget.showCaret ? findCaretAnchor(root) : null;
+    final Offset? at = anchor?.localToGlobal(Offset.zero, ancestor: root);
+
+    Rect? bar;
+    Rect? tick;
+    if (at != null) {
+      // ★★ **层级决定行**（2026-10-16 用户提出，§11.27）：
+      //   · 公式内部（含主行 / 分子 / 分母 / 上下限 / 次数）⇒ 那一层的 ¶ 盒；
+      //   · 公式两端"多认领"的那两格 ⇒ **文本层**：与"文字后面的光标"地位等同，
+      //     按文本层标准画（字号 × 1.25、贴基线），**不去公式内部找最近的行**
+      //     （否则"分式后面"会被分母抢走 —— 用户实测）。
+      if (widget.caretEdge == CaretEdge.none) {
+        bar = caretBarRect(
+          at: at,
+          // ★ 把**锚点**一起给它：选行以"锚点所在的那一行"为准（见 findLocalRowBox）
+          localRowBox: findLocalRowBox(root, at, anchor: anchor),
+          width: widget.caretWidth,
+          fontSize: widget.fontSize,
+        );
+      } else {
+        bar = textLayerCaretRect(
+          baseline: at,
+          width: widget.caretWidth,
+          fontSize: widget.textFontSize ?? widget.fontSize,
+        );
+        // ★★ ④-4「甲」**瞬时边界刻度**（§6.5，2026-10-16 用户拍板"甲＋丙"）：
+        //   光标落在"公式之前 / 之后"那两格时，在**公式外侧**画一根 1px × 行高的灰刻度
+        //   ⇒ 用户看得见"公式的边界在哪"（竖条是插入点，刻度是边界）。
+        //   ★ 只在这两格出现、离开即消失（**不常驻、不包围**）—— 过闸表 §7.2 的允许形态。
+        //   ★ 画在外侧（`caretWidth + 1.5`）⇒ 不与竖条重叠。
+        final double w =
+            (root is RenderBox && root.hasSize) ? root.size.width : 0.0;
+        final double x = widget.caretEdge == CaretEdge.before
+            ? -(widget.caretWidth + 1.5)
+            : w + 1.5;
+        tick = Rect.fromLTWH(x, bar.top, 1.0, bar.height);
+      }
     }
-    if (_bar == null || _bar != bar) setState(() => _bar = bar);
+
+    // ★ 空槽垫子：**当前槽**靠"锚点落在哪个垫子盒里"认出来（实测：空槽里锚点正好在垫子右缘）
+    final List<SlotPad> pads = scanSlotPads(root, caretAt: at);
+
+    if (!_samePads(pads, _pads) || _bar != bar || _tick != tick) {
+      setState(() {
+        _bar = bar;
+        _pads = pads;
+        _tick = tick;
+      });
+    }
+  }
+
+  static bool _samePads(List<SlotPad> a, List<SlotPad> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i].rect != b[i].rect || a[i].current != b[i].current) return false;
+    }
+    return true;
   }
 
   @override
   Widget build(BuildContext context) {
-    final Rect? bar = _bar;
+    final bool caretVisible = widget.showCaret && _bar != null;
+    // ★ 只要"有竖条 / 有垫子 / 有刻度"就要挂 painter（垫子与光标在不在无关）
+    final bool any = caretVisible || _pads.isNotEmpty || _tick != null;
     return CustomPaint(
-      foregroundPainter: (widget.showCaret && bar != null)
-          ? MathCaretPainter(rect: bar, color: const Color(kCaretColorValue))
+      foregroundPainter: any
+          ? MathCaretPainter(
+              rect: _bar ?? Rect.zero,
+              color: const Color(kCaretColorValue),
+              caretVisible: caretVisible,
+              pads: _pads,
+              tick: _tick,
+              // 虚线的"一格"跟随本段字号（不写死像素，§6.4）
+              dashUnit: widget.fontSize / 16.0,
+            )
           : null,
       child: Math.tex(
         widget.tex,
@@ -325,19 +379,161 @@ Rect? findLocalRowBox(RenderObject root, Offset at, {RenderObject? anchor}) {
   return best?.rect;
 }
 
-/// 画那根竖条（矩形已经在 [_MathWithCaretState._measure] 里算好）
-class MathCaretPainter extends CustomPainter {
-  const MathCaretPainter({required this.rect, required this.color});
+/// 一个**空槽占位垫**的矩形（Math 盒局部坐标）＋ 它是不是**当前槽**
+class SlotPad {
+  const SlotPad(this.rect, {required this.current});
 
+  final Rect rect;
+  final bool current;
+
+  @override
+  String toString() => 'SlotPad($rect${current ? ' · 当前槽' : ''})';
+}
+
+/// 空槽虚线 / 边界刻度的灰（§6.1 `#B0BEC5`）
+const int kSlotDashColorValue = 0xFFB0BEC5;
+
+/// 当前槽的淡蓝底（§6.1 `#E3F2FD`）
+const int kSlotCurrentFillColorValue = 0xFFE3F2FD;
+
+/// ★★ 在渲染子树里认出**我们注入的空槽垫子**，给出它们的矩形（④-1）。
+///
+/// **判据（两条都要满足 —— 都是"认渲染事实"，与 `leaf_boxes` 那四条同一层）**：
+///   ① **宽度垫**：`_RenderColoredBox`、**高 ≈ 0**、宽 ≥ [kMinLeafWidth]；
+///   ② 它**左边紧邻**的那个叶盒是 `RenderParagraph`，¶ 文本**恰好是** [kSlotPadGlyph]（`□`），
+///      且两者 x 相接（≤ 0.75 px）。
+/// ① 把"光标锚点"（0×0）滤掉；② 把"结构尾垫"（左边是内容字形，如 `2`）滤掉。
+///
+/// 矩形 = 字形盒 ∪ 宽度垫盒 —— 实测两者**严格相接**（display 17.9 = 17.9、text 13.1 = 13.1），
+/// 合起来就是**整个槽的占位矩形**（行内 16.8 × 11.0、行间 20.8 × 16.0，字号 16）。
+///
+/// [caretAt] 给了就顺便判"当前槽"：锚点落在哪个垫子盒里，哪个就是当前槽
+/// （空槽里锚点正好落在垫子右缘 ⇒ 用 `inflate(1)`；实测分母的垫子**不**含这个锚点）。
+List<SlotPad> scanSlotPads(RenderObject root, {Offset? caretAt}) {
+  final List<({Rect rect, String type, String? glyph})> leaves =
+      <({Rect rect, String type, String? glyph})>[];
+
+  void walk(RenderObject o) {
+    var hasChild = false;
+    o.visitChildren((RenderObject c) {
+      hasChild = true;
+      walk(c);
+    });
+    if (hasChild || o is! RenderBox || !o.hasSize) return;
+    final Rect r = o.localToGlobal(Offset.zero, ancestor: root) & o.size;
+    leaves.add((
+      rect: r,
+      type: o.runtimeType.toString(),
+      glyph: o is RenderParagraph ? o.text.toPlainText() : null,
+    ));
+  }
+
+  walk(root);
+
+  final List<SlotPad> out = <SlotPad>[];
+  for (var i = 1; i < leaves.length; i++) {
+    final ({Rect rect, String type, String? glyph}) filler = leaves[i];
+    if (filler.rect.height.abs() > 0.5) continue; // ① 零高
+    if (filler.rect.width < kMinLeafWidth) continue; // ① 不是锚点（0 宽）
+    if (!filler.type.contains('ColoredBox')) continue; // ① 是"填色盒"（`\rule` 的画法）
+    final ({Rect rect, String type, String? glyph}) glyph = leaves[i - 1];
+    if (glyph.glyph != kSlotPadGlyph) continue; // ② 左边是我们垫的字形
+    if ((glyph.rect.right - filler.rect.left).abs() > 0.75) continue; // ② 紧邻
+    final Rect r = glyph.rect.expandToInclude(filler.rect);
+    out.add(SlotPad(r, current: caretAt != null && r.inflate(1.0).contains(caretAt)));
+  }
+  return out;
+}
+
+/// 画**竖条 ＋ 空槽占位框 ＋ 瞬时边界刻度**（三者同一支画笔，一次 `CustomPaint`）
+class MathCaretPainter extends CustomPainter {
+  const MathCaretPainter({
+    required this.rect,
+    required this.color,
+    this.caretVisible = true,
+    this.pads = const <SlotPad>[],
+    this.tick,
+    this.dashUnit = 1.0,
+  });
+
+  /// 竖条的矩形（[caretVisible] 为 `false` 时无意义）
   final Rect rect;
   final Color color;
 
+  /// 竖条在不在（`false` = 光标不在这段里 ⇒ 只画垫子 / 刻度）
+  final bool caretVisible;
+
+  /// 空槽占位垫（④-1）：空槽 ⇒ 虚线灰框；当前槽 ⇒ 实线蓝框 ＋ 淡蓝底
+  final List<SlotPad> pads;
+
+  /// ★ ④-4「甲」**瞬时边界刻度**（只出现在"公式之前 / 之后"那两格；离开即消失）
+  final Rect? tick;
+
+  /// 虚线的尺度（= 本段字号 / 16 ⇒ 跟随字号，不写死像素）
+  final double dashUnit;
+
   @override
   void paint(Canvas canvas, Size size) {
-    canvas.drawRect(rect, Paint()..color = color);
+    for (final SlotPad p in pads) {
+      final Rect r = p.rect.deflate(0.5);
+      final Paint stroke = Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.0
+        ..color = Color(p.current ? kCaretColorValue : kSlotDashColorValue);
+      if (p.current) {
+        // 当前槽：实线 + 淡蓝底（§6.1）。底色先铺，再描边
+        canvas.drawRect(
+          p.rect,
+          Paint()..color = const Color(kSlotCurrentFillColorValue),
+        );
+        canvas.drawRect(r, stroke);
+      } else {
+        // 空槽：1px 虚线（引擎画不出来 ⇒ 自己走线）
+        _dashRect(canvas, r, stroke, 3.0 * dashUnit, 2.0 * dashUnit);
+      }
+    }
+    if (caretVisible) canvas.drawRect(rect, Paint()..color = color);
+    final Rect? t = tick;
+    if (t != null) {
+      canvas.drawRect(t, Paint()..color = const Color(kSlotDashColorValue));
+    }
   }
 
   @override
   bool shouldRepaint(MathCaretPainter old) =>
-      old.rect != rect || old.color != color;
+      old.rect != rect ||
+      old.color != color ||
+      old.caretVisible != caretVisible ||
+      old.tick != tick ||
+      old.dashUnit != dashUnit ||
+      !_samePads(old.pads, pads);
+
+  static bool _samePads(List<SlotPad> a, List<SlotPad> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i].rect != b[i].rect || a[i].current != b[i].current) return false;
+    }
+    return true;
+  }
+}
+
+/// 一个矩形的**1px 虚线**（Flutter 的 `Canvas` 没有 dash ⇒ 自己沿四条边走线）
+void _dashRect(Canvas canvas, Rect r, Paint p, double dash, double gap) {
+  if (r.width <= 0 || r.height <= 0) return;
+  _dashLine(canvas, r.topLeft, r.topRight, p, dash, gap);
+  _dashLine(canvas, r.topRight, r.bottomRight, p, dash, gap);
+  _dashLine(canvas, r.bottomRight, r.bottomLeft, p, dash, gap);
+  _dashLine(canvas, r.bottomLeft, r.topLeft, p, dash, gap);
+}
+
+void _dashLine(Canvas canvas, Offset a, Offset b, Paint p, double dash, double gap) {
+  final double total = (b - a).distance;
+  if (total <= 0 || dash <= 0) return;
+  final Offset dir = (b - a) / total;
+  var t = 0.0;
+  while (t < total) {
+    final double end = math.min(t + dash, total);
+    canvas.drawLine(a + dir * t, a + dir * end, p);
+    t = end + gap;
+  }
 }

@@ -8,6 +8,8 @@
 // 它同时给出**原子边界** → 直接支撑 S3 的「按结构删除」（smart delete）与行内选区。
 // **纯 Dart，不依赖 Flutter。**
 
+import 'slot_pad.dart';
+
 /// 一个「可见原子」：渲染出来、用户看得见的一个最小单位。
 class VisibleAtom {
   const VisibleAtom(this.start, this.end, this.kind);
@@ -123,6 +125,17 @@ List<VisibleAtom> lexVisibleAtoms(String tex) {
   final out = <VisibleAtom>[];
   var i = 0;
   while (i < tex.length) {
+    // ★★ 空槽占位垫的**宽度垫**（`slot_pad.kSlotPadFiller`）：词法上 0 原子，
+    //   而引擎照样给它一个叶盒（零高 `_RenderColoredBox`，实测 4.8 × 0）⇒
+    //   不在这里补 **1 个合成原子**，就会"叶盒数 ≠ 原子数" ⇒
+    //   `hitTestMathTex` **静默返回 null**（公式内点击全废）—— 与 §11.18 尾垫同一个坑。
+    //   ★ 必须**在走查顺序里**产出（= 渲染顺序）：`\sqrt[n]{…}` 的次数渲染在后、
+    //     算子的上下限折进算子 —— 若改成"按源码偏移排序"补账，这些结构里会整体错位（§11.26 三）。
+    if (tex.startsWith(kSlotPadFiller, i)) {
+      out.add(VisibleAtom(i, i + kSlotPadFiller.length, 'slotpad'));
+      i += kSlotPadFiller.length;
+      continue;
+    }
     if (tex.startsWith(r'\\', i)) {
       i += 2; // 行分隔，不是可见原子
       continue;

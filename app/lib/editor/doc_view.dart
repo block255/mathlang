@@ -530,9 +530,21 @@ class _DocViewState extends State<DocView> {
     RenderParagraph? first;
     void visit(RenderObject o) {
       if (o is RenderParagraph) {
-        first ??= o;
-        if (o.text.toPlainText().replaceAll('\uFFFC', '') == expectedPlain) {
-          exact ??= o;
+        // ★★ 2026-10-16：**帧末回调可能晚于子树的卸载** —— `RenderParagraph.text`
+        //   内部是 `_textPainter.text!`，此时会抛 `Null check operator used on a null value`
+        //   （**既有缺陷**，快照 §十二·B-15 记过："组件刚被 dispose"就会撞；
+        //   `accent_as_one_object_test` 的连挂扫描把它撞实了，挡住了 ④ 这一批的验证）。
+        //   本站只是**诊断遍历**（找内容段落）⇒ 拿不到文本就当它不是候选，
+        //   **绝不让它把整帧打挂**。真机上（不反复挂卸）不会走到这里。
+        if (o.attached && o.hasSize) {
+          first ??= o;
+          final String plain;
+          try {
+            plain = o.text.toPlainText();
+          } catch (_) {
+            return;
+          }
+          if (plain.replaceAll('\uFFFC', '') == expectedPlain) exact ??= o;
         }
         return;
       }
@@ -818,6 +830,10 @@ class _DocViewState extends State<DocView> {
         final bool beforeBlock = rawCaret != null && rawCaret < u.renderBase;
         final bool afterBlock =
             rawCaret != null && rawCaret > u.renderBase + u.renderLength;
+        // ★★ ④-5：行间公式用**自己的字号**（`DocSettings.effectiveDisplayFontSize`，
+        //   默认 = 正文 × 1.25）。块内的光标不需要另设判据 —— 它取自当地 ¶ 盒（自动跟随）；
+        //   块**之前 / 之后**那两格仍按**段落文本层**标准（`textFontSize: body`，§11.27）。
+        final double display = _s.effectiveDisplayFontSize;
         return Center(
           child: MathWithCaret(
             tex: tex,
@@ -828,7 +844,7 @@ class _DocViewState extends State<DocView> {
                 : (afterBlock ? CaretEdge.after : CaretEdge.none),
             textFontSize: body,
             mathKey: mathKey,
-            fontSize: body,
+            fontSize: display,
             mathStyle: MathStyle.display,
             onErrorFallback: (e) => Text(
               '❌ ${e.messageWithType}',

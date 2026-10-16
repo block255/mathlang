@@ -4,9 +4,9 @@
 //   （`InlineMathText` 的行内公式与 `DocView` 的行间公式都走它）。
 //
 // ★ 两条关键不变量（都与点击定位的"叶盒数 == 可见原子数"绑在一起）：
-//   1. 占位字形必须是**一个正常字形**（`\square`：1 原子 ↔ 1 叶盒），不能用 `\rule` 那种
-//      "词法上是结构命令、引擎却照样给盒"的东西
-//   2. 注入后**原子数的增量恰好等于空槽数**（不多不少）
+//   1. 垫子 = **字形（`\square`）＋ 零高宽度垫（`\rule{0.3em}{0pt}`）** ⇒ **2 原子 ↔ 2 叶盒**
+//      （宽度垫在 `visible_atoms` 里补一个**合成原子**；见 `slot_pad.dart` 的探针表）
+//   2. 注入后**原子数的增量恰好等于 2 × 空槽数**（不多不少）
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mathlang/render/caret_sites.dart';
@@ -14,17 +14,23 @@ import 'package:mathlang/render/slot_marks.dart';
 import 'package:mathlang/render/visible_atoms.dart';
 
 void main() {
-  group('占位串的选取', () {
-    test(r'占位用 `\square`：它天然"1 个可见原子 ↔ 引擎 1 个叶盒"', () {
-      expect(kEmptySlotTex.contains(r'\square'), isTrue);
-      expect(lexVisibleAtoms(kEmptySlotTex).length, 1,
-          reason: '颜色名已被 visible_atoms 跳过 → 只剩 \\square 这一个原子，与叶盒一一对应');
-      expect(lexVisibleAtoms(kCurrentSlotTex).length, 1);
+  group('占位串的选取（④-1/④-2：**看不见的垫子** ＋ 自绘框）', () {
+    test(r'垫子 = `\square` + 零高宽度垫 ⇒ **2 个可见原子 ↔ 2 个叶盒**', () {
+      expect(kEmptySlotTex.contains(r'\square'), isTrue,
+          reason: '字形垫（渲染成 $kSlotPadGlyph）：给槽一个**自然的行高与基线**');
+      expect(kEmptySlotTex.contains(kSlotPadFiller), isTrue,
+          reason: '宽度垫（`0.3em` 零高）：行内槽宽从 11.2 补到 ≥16（一个正文汉字）');
+      expect(lexVisibleAtoms(kEmptySlotTex).length, 2,
+          reason: '★ `\\square` 1 个 + 宽度垫 **1 个合成原子** = 2。'
+              '引擎给宽度垫一个零高叶盒 ⇒ 不补这个原子就"叶盒数 ≠ 原子数"'
+              '⇒ hitTestMathTex 静默 null（公式内点击全废，本仓踩过四次）');
+      expect(lexVisibleAtoms(kCurrentSlotTex).length, 2);
     });
 
-    test('当前槽用光标蓝，普通空槽用浅灰', () {
-      expect(kCurrentSlotTex.contains('#1E88E5'), isTrue);
-      expect(kEmptySlotTex.contains('#B0BEC5'), isTrue);
+    test('墨色：空槽用纸色（看不见）、当前槽淡蓝（自绘层缺席时的兜底）', () {
+      expect(kEmptySlotTex.contains('#FFFFFF'), isTrue,
+          reason: '看不见 —— 框由自绘层画虚线（§6.1）');
+      expect(kCurrentSlotTex.contains('#E3F2FD'), isTrue, reason: '§6.1 当前槽的淡蓝底');
     });
   });
 
@@ -83,9 +89,9 @@ void main() {
     });
   });
 
-  group('★ 真正的不变量：注入后"可见原子数"的增量 == 空槽数', () {
-    // 点击定位要求「我们的可见原子数 == 引擎叶盒数」。占位是**一个正常字形**（1↔1），
-    // 所以原子数会随空槽数一起增加 —— 要守的是"**增量恰好等于空槽数**"（不多不少）。
+  group('★ 真正的不变量：注入后"可见原子数"的增量 == **2 × 空槽数**', () {
+    // 点击定位要求「我们的可见原子数 == 引擎叶盒数」。垫子是**两个盒**（字形 + 零高宽度垫），
+    // 所以原子数按"每个空槽 +2"增加 —— 要守的是"**增量恰好等于 2 × 空槽数**"（不多不少）。
     for (final String tex in <String>[
       r'\frac{}{}',
       r'\frac{a}{}',
@@ -97,11 +103,13 @@ void main() {
         final SlotMarkResult r = injectSlotMarks(tex, caretRel: 0);
         final int before = lexVisibleAtoms(tex).length;
         final int after = lexVisibleAtoms(r.tex).length;
-        final int empties = RegExp(RegExp.escape(kEmptySlotTex))
-            .allMatches(r.tex)
-            .length;
-        expect(after, before + empties,
-            reason: '每个空槽恰好 +1 个原子（占位字形）；多一个少一个都会让点击定位错位');
+        final int pads = RegExp(RegExp.escape(kEmptySlotTex))
+                .allMatches(r.tex)
+                .length +
+            RegExp(RegExp.escape(kCurrentSlotTex)).allMatches(r.tex).length;
+        expect(after, before + 2 * pads,
+            reason: '每个空槽恰好 +2 个原子（字形垫 1 + 零高宽度垫 1）；'
+                '多一个少一个都会让点击定位错位');
       });
     }
 
@@ -109,8 +117,9 @@ void main() {
       const String tex = r'\frac{a}{}';
       final SlotMarkResult m = injectSlotMarks(tex, caretRel: 6);
       final String withCursor = injectCursor(m.tex, m.rel).tex;
-      expect(lexVisibleAtoms(withCursor).length, lexVisibleAtoms(tex).length + 1,
-          reason: '只有**空槽占位**那 1 个原子；光标是零尺寸锚点（`\\rule{0pt}{0pt}`）'
+      expect(lexVisibleAtoms(withCursor).length, lexVisibleAtoms(tex).length + 2,
+          reason: '只有**空槽垫子**那 2 个原子（字形 + 宽度垫）；'
+              '光标是零尺寸锚点（`\\rule{0pt}{0pt}`）'
               '—— 词法 0 个原子、渲染 0×0 盒子（2026-10-15 晚改）');
     });
   });

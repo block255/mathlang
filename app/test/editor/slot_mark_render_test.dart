@@ -30,8 +30,9 @@ void main() {
             '若这里挂了，说明占位字形（$kEmptySlotTex）引擎画不出来，要换一个。');
   });
 
-  test('占位字形本身：恰好 1 个可见原子（与引擎 1 个叶盒对齐）', () {
-    expect(lexVisibleAtoms(kEmptySlotTex).length, 1);
-    expect(lexVisibleAtoms(kCurrentSlotTex).length, 1);
+  test('垫子本身：恰好 2 个可见原子（字形 + 宽度垫 ⇒ 与引擎 2 个叶盒对齐）', () {
+    expect(lexVisibleAtoms(kEmptySlotTex).length, 2,
+        reason: '宽度垫是"词法 0 原子、引擎给盒"的东西 ⇒ 由 `visible_atoms` 补一个合成原子');
+    expect(lexVisibleAtoms(kCurrentSlotTex).length, 2);
   });
 }

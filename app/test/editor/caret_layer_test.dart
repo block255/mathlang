@@ -73,6 +73,25 @@ Rect? _caretBar(WidgetTester tester) {
   return all.isEmpty ? null : all.first;
 }
 
+/// ★ ④-4「甲」**瞬时边界刻度**（`MathCaretPainter.tick`）—— 只在这两格出现，离开即消失
+List<Rect> _ticks(WidgetTester tester) {
+  final List<Rect> out = <Rect>[];
+  for (final Element e in find.byType(MathWithCaret).evaluate()) {
+    final RenderObject? ro = e.renderObject;
+    if (ro is! RenderBox) continue;
+    void walk(RenderObject o) {
+      if (o is RenderCustomPaint && o.foregroundPainter is MathCaretPainter) {
+        final Rect? t = (o.foregroundPainter! as MathCaretPainter).tick;
+        if (t != null) out.add(t);
+      }
+      o.visitChildren(walk);
+    }
+
+    walk(ro);
+  }
+  return out;
+}
+
 void main() {
   // ─────────────────────────────────────────────────────────────
   group('A 公式之后 ≡ 文字之后（同权）', () {
@@ -279,6 +298,55 @@ void main() {
           reason: '竖条上沿必须落在**主行** y 带内；画到分子 / 分母那一行 = 选行退化成了"谁含基线"');
       expect(bar.bottom, closeTo(band.bottom - inset, 1.0),
           reason: '竖条下沿必须落在**主行** y 带内');
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────
+  group('E ④-4「甲」瞬时边界刻度（§6.5：只在公式前后那两格、离开即消失）', () {
+    testWidgets('★ 行中公式：之后那一格 ⇒ 有刻度；文字里、公式内部 ⇒ 没有',
+        (WidgetTester tester) async {
+      final DocBuffer buf = DocBuffer(r'AB$\frac{c}{d}$CD');
+      await _mount(tester, buf);
+
+      // ① 闭合 `$` 之后那一格（15 = 公式之后）
+      buf.setCaret(15);
+      await tester.pump();
+      await tester.pump();
+      expect(_ticks(tester).length, 1,
+          reason: '★ 这两格要看得见"公式的边界"（改前：没有任何提示）');
+
+      // ② 正文文字里（16）⇒ 一格都不该有
+      buf.setCaret(16);
+      await tester.pump();
+      await tester.pump();
+      expect(_ticks(tester), isEmpty, reason: '刻度**只**属公式前后那两格，不许常驻');
+
+      // ③ 公式内部（7 = 分子末尾附近）⇒ 也没有
+      buf.setCaret(7);
+      await tester.pump();
+      await tester.pump();
+      expect(_ticks(tester), isEmpty, reason: '公式内部靠**层级光标**表达，再画刻度就成了"容器感"');
+
+      // ④ "公式之前"（开 `$` 那一格 = 2）—— ★ 这一格被**前面的文字段**先认领了
+      //    （`caretPlacement` 是**先到先得**：文字段 `AB` 覆盖 `[0,2]`）
+      //    ⇒ 它由**文本层**画光标、不属数学段 ⇒ **没有刻度**。
+      //    这不变量要钉住：否则"同一格被两段抢"会变成随机行为。
+      buf.setCaret(2);
+      await tester.pump();
+      await tester.pump();
+      expect(_ticks(tester), isEmpty,
+          reason: '有文字在前时，"公式之前那一格"是**文字段的末尾**（先到先得）⇒ 不画刻度');
+    });
+
+    testWidgets('★ 行首公式：之前那一格（数据上属数学段）⇒ 有刻度',
+        (WidgetTester tester) async {
+      final DocBuffer buf = DocBuffer(r'$\frac{c}{d}$CD');
+      await _mount(tester, buf);
+      buf.setCaret(0); // 开 `$` 那一格，左边没有文字段 ⇒ 由数学段认领（edge=before）
+      await tester.pump();
+      await tester.pump();
+      expect(_ticks(tester).length, 1,
+          reason: '★ 这一格数据上属数学段 ⇒ 必须给"公式边界"提示（画在公式**左外侧**）');
     });
   });
 }
