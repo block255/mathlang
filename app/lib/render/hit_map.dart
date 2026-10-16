@@ -22,6 +22,7 @@ class MathHit {
     required this.boxCount,
     required this.atomCount,
     this.boxRect,
+    this.onGlyph = false,
   });
 
   /// 命中得到的源偏移；`null` = 没命中，或叶盒数与原子数不等（映射不可靠）
@@ -32,6 +33,13 @@ class MathHit {
 
   /// `包含命中` / `就近命中(x px)`
   final String how;
+
+  /// ★ **这一下真的点在某个字形盒上吗**（包含 / 外扩命中 = `true`；"就近"兜底 = `false`）。
+  ///
+  /// 为 `false` 时调用方**不该**用 [offset]（那是"最近的字形"，可能隔着结构边界 ——
+  /// 实测：点分式右端的装饰区会被判成"点分母"）⇒ 应当走
+  /// `structure_geometry.glyphlessLanding`（§5.2 归属表）。
+  final bool onGlyph;
 
   /// 叶盒数与原子数是否一致
   final bool reliable;
@@ -77,11 +85,16 @@ MathHit hitTestMathTex({
   }
 
   var how = '包含命中';
+  // ★★ `onGlyph` 必须用**布尔标记**，不能比对 `how` 字符串 ——
+  //    最近兜底那个 `how` 带着 `(x px)` 后缀，`how != '就近命中'` 恒真
+  //    （实测踩到：③-B 接线后行为完全没变，就是这个判据写错）。
+  var onGlyph = hit >= 0;
   if (hit < 0) {
     for (var i = 0; i < boxes.length; i++) {
       if (boxes[i].rect.inflate(inflate).contains(localPos)) {
         hit = i;
         how = '外扩命中';
+        onGlyph = true;
         break;
       }
     }
@@ -96,6 +109,7 @@ MathHit hitTestMathTex({
       }
     }
     how = '就近命中(${best.toStringAsFixed(1)}px)';
+    onGlyph = false; // 只是"最近"，不是真的点中了
   }
 
   final bool reliable = hit >= 0 && boxes.length == list.length;
@@ -116,5 +130,6 @@ MathHit hitTestMathTex({
     boxCount: boxes.length,
     atomCount: list.length,
     boxRect: (hit >= 0 && hit < boxes.length) ? boxes[hit].rect : null,
+    onGlyph: onGlyph,
   );
 }

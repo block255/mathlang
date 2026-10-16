@@ -35,10 +35,11 @@ import '../render/caret_sites.dart';
 import '../render/hit_map.dart';
 import '../render/inline_math_text.dart';
 import '../render/injection_map.dart';
+import '../render/leaf_boxes.dart';
 import '../render/math_caret.dart';
 import '../render/projection.dart';
 import '../render/slot_marks.dart';
-import '../render/visible_atoms.dart';
+import '../render/structure_geometry.dart';
 import 'page_sheet.dart';
 import 'unit_pool.dart';
 
@@ -429,6 +430,49 @@ class _DocViewState extends State<DocView> {
     return caretRel == null ? m.tex : injectCursor(m.tex, m.rel).tex;
   }
 
+  /// ★★ 一次数学段点击 → **段内 tex 偏移**（`null` = 这一格不归数学管，交回行级落点）。
+  ///
+  /// 判据分两条（③-B，《位点与结构导航》§5.2 归属表 + §11.25）：
+  /// 1. **真点在字形盒上**（`onGlyph`）⇒ 用 `hitTestMathTex` 的叶盒 ↔ 原子映射（原行为）；
+  /// 2. 只点在**装饰 / 结构盒 / 公式外侧留白** ⇒ 用 `structure_geometry.glyphlessLanding`：
+  ///    结构盒内 ⇒ 左半=结构之前、右半=结构之后；盒外 ⇒ 公式之前 / 之后。
+  ///
+  /// ★ 为什么必须分这两条：`hitTestMathTex` 在没点中字形时的兜底是"**几何最近的字形盒**"，
+  ///   于是在分式右端的装饰区里最近的是**分母** ⇒ "点分式右边"变成"点进分母"（用户实测 ①）。
+  /// ★ 顺带收益：叶盒 ↔ 原子配对失败（`\sin` 一族的多字母算子名）时不再"点了没反应"，
+  ///   而是落到**结构层**（结构之前 / 之后）—— 精确落点仍要等那条配对缺陷修好。
+  int? _mathTapTexOffset({
+    required String tex,
+    required String renderTex,
+    required RenderObject root,
+    required Offset global,
+  }) {
+    final Offset localPos = (root as RenderBox).globalToLocal(global);
+    final MathHit hit = hitTestMathTex(
+      root: root,
+      localPos: localPos,
+      tex: renderTex, // ★ 必须用渲染时的 tex（见 injection_map.dart）
+      atoms: atomsForHitTest(renderTex), // ★ 且原子表要补上尾垫的合成原子
+    );
+    if (hit.onGlyph && hit.offset != null) {
+      return renderToSourceOffset(renderTex, hit.offset!);
+    }
+
+    final StructureGeometry g =
+        buildStructureGeometry(tex: tex, renderTex: renderTex, mathRoot: root);
+    Rect? hull;
+    for (final LeafBox b in scanLeafBoxes(root).eligible) {
+      hull = hull == null ? b.rect : hull.expandToInclude(b.rect);
+    }
+    return glyphlessLanding(
+      objects: g.objects,
+      rects: g.rects,
+      glyphHull: hull,
+      localPos: localPos,
+      texLength: tex.length,
+    );
+  }
+
   /// 行间公式块被点中
   void _onMathBlockTap(_Unit u, Offset global, String rawTex) {
     final void Function(int)? cb = widget.onTapOffset;
@@ -437,16 +481,14 @@ class _DocViewState extends State<DocView> {
     if (ro is! RenderBox || !ro.hasSize) return;
     final int? caretRel = _caret == null ? null : u.relFor(_caret);
     final String renderTex = _renderTexFor(rawTex, caretRel);
-    final List<VisibleAtom> hitAtoms = atomsForHitTest(renderTex);
-    final MathHit hit = hitTestMathTex(
+    final int? texRel = _mathTapTexOffset(
+      tex: rawTex,
+      renderTex: renderTex,
       root: ro,
-      localPos: ro.globalToLocal(global),
-      tex: renderTex, // ★ 必须用渲染时的 tex（见 injection_map.dart）
-      atoms: hitAtoms, // ★ 且原子表要剔除光标条（它的盒会被最小宽度过滤掉）
+      global: global,
     );
-    if (hit.offset == null) return;
-    final int src = renderToSourceOffset(renderTex, hit.offset!);
-    cb(u.renderBase + buildCaretSites(rawTex).snap(src).offset);
+    if (texRel == null) return;
+    cb(u.renderBase + buildCaretSites(rawTex).snap(texRel).offset);
   }
 
   /// 行内公式被点中（`InlineMathText.onMathTap` 给的是**段内相对**的 tex、
@@ -457,17 +499,15 @@ class _DocViewState extends State<DocView> {
     if (cb == null) return;
     final RenderObject? ro = key.currentContext?.findRenderObject();
     if (ro is! RenderBox || !ro.hasSize) return;
-    final List<VisibleAtom> hitAtoms = atomsForHitTest(renderTex);
-    final MathHit hit = hitTestMathTex(
+    final int? texRel = _mathTapTexOffset(
+      tex: seg.tex,
+      renderTex: renderTex,
       root: ro,
-      localPos: ro.globalToLocal(global),
-      tex: renderTex, // ★ 同上：必须是渲染用的那份
-      atoms: hitAtoms, // ★ 且剔除光标条
+      global: global,
     );
-    if (hit.offset == null) return;
-    final int src = renderToSourceOffset(renderTex, hit.offset!);
+    if (texRel == null) return;
     // ★ 位点吸附：落点必须是合法位点（设计稿 §2.4 的 P3）
-    final int rel = buildCaretSites(seg.tex).snap(src).offset;
+    final int rel = buildCaretSites(seg.tex).snap(texRel).offset;
     cb(u.renderBase + seg.start + rel);
   }
 

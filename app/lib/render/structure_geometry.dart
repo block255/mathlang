@@ -314,6 +314,54 @@ bool _onlySpace(String tex, int from, int to) {
 }
 
 // ---------------------------------------------------------------------------
+// 一·五、★ **字形之外的落点**（§5.2 归属表的直译，2026-10-16 ③-B）
+// ---------------------------------------------------------------------------
+
+/// 点在**可见字形之外**时的落点（返回 **tex 偏移**；`null` = 这一格不归数学管）。
+///
+/// 为什么需要它：`hitTestMathTex` 在"没点在任何字形盒上"时的兜底是
+/// **几何最近的字形盒**（`hit_map.dart:89`）—— 在分式右端的装饰区里，最近的字形是
+/// **分母**，于是"点分式右边"变成了"点进分母"（用户实测 ①）。
+///
+/// 归则（照抄 **§5.2 归属表**）：
+/// | 点在哪 | 落点 |
+/// |---|---|
+/// | **某个结构盒内**（分数线 / 根号横 / 括号 / 上下限连线…字形之外的部分） | **该结构那一层**：左半 ⇒ **结构之前**（`start`）、右半 ⇒ **结构之后**（`end`）—— §5.2「分数线正中/右侧 = 分式之后，左侧 = 分式之前」 |
+/// | **所有结构盒之外**、且在**字形并集**的右侧 | **`texLength`（公式之后）** |
+/// | 同上、在并集左侧 | **`0`（公式之前）** |
+/// | 既不在结构内、也没有字形并集可依 | `null` ⇒ 交给**行级**落点（③-A 已经让"行末之后的空白"落到行末） |
+///
+/// ★ 取"最内层"结构（面积最小）—— 嵌套时分母里的根号优先于外层分式。
+int? glyphlessLanding({
+  required List<StructureObject> objects,
+  required List<Rect?> rects,
+  required Rect? glyphHull,
+  required Offset localPos,
+  required int texLength,
+}) {
+  // ① 落在某个结构盒内 ⇒ 按"左半 / 右半"给该结构的前 / 后
+  StructureObject? inner;
+  Rect? innerRect;
+  for (var i = 0; i < objects.length; i++) {
+    final Rect? r = i < rects.length ? rects[i] : null;
+    if (r == null || !r.contains(localPos)) continue;
+    if (innerRect == null || r.width * r.height < innerRect.width * innerRect.height) {
+      inner = objects[i];
+      innerRect = r;
+    }
+  }
+  if (inner != null && innerRect != null) {
+    return localPos.dx < innerRect.center.dx ? inner.start : inner.end;
+  }
+
+  // ② 在所有结构盒之外 ⇒ 用字形并集判"公式之前 / 之后"
+  if (glyphHull == null) return null;
+  if (localPos.dx > glyphHull.right) return texLength;
+  if (localPos.dx < glyphHull.left) return 0;
+  return null; // 与字形并集纵向错开（如行间块的上下留白）⇒ 交回行级
+}
+
+// ---------------------------------------------------------------------------
 // 二、渲染侧：结构承载节点表
 // ---------------------------------------------------------------------------
 
