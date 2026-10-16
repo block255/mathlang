@@ -809,11 +809,15 @@ class _DocViewState extends State<DocView> {
             ? _mathBlockKeys.putIfAbsent(u.id, () => GlobalKey())
             : GlobalKey();
         // ★★ 层级（§11.27）：块**之前 / 之后**那两格由块认领（③-C，否则光标没处落），
-        //   但它们**视觉上属于文本层** ⇒ 让竖条按**文本层标准**画（字号×1.25、贴基线），
-        //   而不是拿公式内部那一行的 ¶ 盒（那会画成"分母的矮条" —— 用户实测）。
-        final bool beforeBlock = caretAbs != null && caretAbs < u.renderBase;
+        //   但它们**视觉上属于文本层** ⇒ 让竖条按**文本层标准**画（字号×1.25、贴基线）。
+        //   ⚠️ 判"在块外"必须用**原始缓冲区光标** `_caret`（不是 `caretAbs`）——
+        //      `relFor()` 会把两端**夹进** `[renderBase, renderEnd]`，用 clamped 值判
+        //      `caretAbs > renderEnd` **永远不成立**（2026-10-16 实测：用户看到的
+        //      "行间还是分母位高度"就是这个），块后那一格会退回数学层标准。
+        final int? rawCaret = _caret;
+        final bool beforeBlock = rawCaret != null && rawCaret < u.renderBase;
         final bool afterBlock =
-            caretAbs != null && caretAbs > u.renderBase + u.renderLength;
+            rawCaret != null && rawCaret > u.renderBase + u.renderLength;
         return Center(
           child: MathWithCaret(
             tex: tex,

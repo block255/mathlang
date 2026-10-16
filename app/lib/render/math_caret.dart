@@ -117,7 +117,8 @@ class _MathWithCaretState extends State<MathWithCaret> {
     if (widget.caretEdge == CaretEdge.none) {
       bar = caretBarRect(
         at: at,
-        localRowBox: findLocalRowBox(root, at),
+        // ★ 把**锚点**一起给它：选行以"锚点所在的那一行"为准（见 findLocalRowBox）
+        localRowBox: findLocalRowBox(root, at, anchor: anchor),
         width: widget.caretWidth,
         fontSize: widget.fontSize,
       );
@@ -226,20 +227,58 @@ RenderBox? findCaretAnchor(RenderObject root) {
   return found;
 }
 
-/// ★★ 找**光标所在那一行的字形盒**：竖直上"住着"这条基线、水平上离光标最近的 ¶ 盒。
+/// 一个渲染对象**最近的 `RenderLine` 祖先**（= 它坐在哪一行上）。
 ///
-/// **两趟判据**（2026-10-16 修，用户实测"分式后面的光标看着像分母的"）：
-/// 1. **只认"严格含基线"**的盒（`at.dy ∈ [top, bottom]`）⇒ 同一行内的盒里取水平最近；
-/// 2. ★ 一个都没有，**才**退回"±2 px 容忍"（引擎的盒与基线偶有微小偏差）。
+/// ★ 一直走到顶（**含** [root] 自己那一层）—— 实测锚点常常直接坐在**根行**上，
+/// 若在 root 处停下就会返回 null，"层优先"整条判据被跳过（踩过）。
+/// ★ 这是"**行**"的权威判据：嵌套结构里分子 / 分母的 ¶ 盒虽然几何上落在外层行的范围内，
+/// 但它们**最近的**行祖先是**内层**那一行（配合 [sameLayer] 的"不跨结构节点"就分得开）。
+RenderObject? rowOf(RenderObject o, RenderObject root) {
+  RenderObject? cur = o;
+  while (cur != null) {
+    if (cur.runtimeType.toString().contains('RenderLine')) return cur;
+    cur = cur.parent;
+  }
+  return null;
+}
+
+/// [row] 与 [anchorRow] 是不是**同一层**？
 ///
-/// 为什么必须分两趟：原来只有第 2 趟 —— 基线恰落在两行盒子的边界上时
-/// （实测 `x=\frac{a}{b}` 的主行盒 7..20.4、分母盒 16.7..32.7），**下一行的盒也进候选**，
-/// 而分母正在公式末尾正下方、水平最近 ⇒ 竖条被画到**分母那一行**。
+/// ★★ 定义（2026-10-16，第三次迭代后收敛）：从 [row] 往上走到 [anchorRow] 的途中
+/// **不许穿过结构节点**（`RenderCustomLayout<_FracPos>` / `_SqrtPos` / `_ScriptPos` …）。
+/// · `x` 的行 → 主行：途中没有结构节点 ⇒ 同一层 ✓
+/// · 分母的行 → 主行：途中要穿过 `_FracPos` ⇒ **不同层** ✓（这正是"分式后面的光标不许
+///   被分母抢走"的判据；`\sum` 的上下限、`\sqrt[n]` 的次数槽同理）
+/// · 光标在分母里时，锚点行就是分母那一行 ⇒ 分母的字形与它同层 ✓
+///
+/// ⚠️ 一度用过"同一个 `RenderLine` 实例"（太严：引擎给单个原子还裹一层内层行）和
+/// "锚点行的后代行"（太宽：分母的行也是主行的后代）—— 都不对。
+bool sameLayer(RenderObject? row, RenderObject? anchorRow) {
+  if (row == null || anchorRow == null) return false;
+  RenderObject? cur = row;
+  while (cur != null) {
+    if (identical(cur, anchorRow)) return true;
+    if (cur.runtimeType.toString().contains('CustomLayout')) return false;
+    cur = cur.parent;
+  }
+  return false;
+}
+
+/// ★★ 找**光标所在那一行的字形盒**。
+///
+/// **判据（2026-10-16，两轮用户实测驱动）**：
+/// 1. **层优先**：给 [anchor] 时，候选 = "**最近的 `RenderLine` 祖先是锚点那一行、或是它的后代行**"
+///    的 ¶ 盒 —— 而且**竖直上要含这条基线**（先严格、再 ±2 px）。
+///    ★ 为什么不能只靠几何：显示式分式里 **分子盒下沿 ≈ 分数线 ≈ 分母盒上沿 ≈ 主行基线**，
+///    "谁的盒含基线"会有两三个盒同时成立，再按"水平最近"就选到分式那一列（分子 / 分母）
+///    —— 用户实测"分式后面的光标像分母的"。
+/// 2. 拿不到 [anchor]（或那一行里量不到字形）⇒ 退回纯几何两趟判据。
 ///
 /// 为什么用 ¶ 盒（字形盒）而不是引擎的行盒：**行盒太紧**（16 px 字号下行盒只有 10–11 px），
 /// 拿它当光标会明显偏矮；而 ¶ 盒 = 字形的**行高盒**（主行 16、上标 / 下标 11.2 —— 正好 0.7 倍）。
-Rect? findLocalRowBox(RenderObject root, Offset at) {
-  final List<({Rect rect, double dx})> hits = <({Rect rect, double dx})>[];
+Rect? findLocalRowBox(RenderObject root, Offset at, {RenderObject? anchor}) {
+  final List<({Rect rect, double dx, RenderObject? row})> hits =
+      <({Rect rect, double dx, RenderObject? row})>[];
   void walk(RenderObject o) {
     var hasChild = false;
     o.visitChildren((RenderObject c) {
@@ -249,20 +288,36 @@ Rect? findLocalRowBox(RenderObject root, Offset at) {
     if (hasChild || o is! RenderBox || !o.hasSize || o.size == Size.zero) return;
     if (!o.runtimeType.toString().contains('Paragraph')) return; // 只认字形盒
     final Rect r = o.localToGlobal(Offset.zero, ancestor: root) & o.size;
-    hits.add((rect: r, dx: (r.center.dx - at.dx).abs()));
+    hits.add((rect: r, dx: (r.center.dx - at.dx).abs(), row: rowOf(o, root)));
   }
 
   walk(root);
 
-  ({Rect rect, double dx})? best;
-  // 第 1 趟：**严格**含基线
-  for (final ({Rect rect, double dx}) h in hits) {
+  // ① 层优先：锚点那一行（及其后代行）里、且竖直含基线的字形盒
+  final RenderObject? anchorRow = anchor == null ? null : rowOf(anchor, root);
+  if (anchorRow != null) {
+    ({Rect rect, double dx, RenderObject? row})? pick(double slack) {
+      ({Rect rect, double dx, RenderObject? row})? best;
+      for (final ({Rect rect, double dx, RenderObject? row}) h in hits) {
+        if (!sameLayer(h.row, anchorRow)) continue;
+        if (at.dy < h.rect.top - slack || at.dy > h.rect.bottom + slack) continue;
+        if (best == null || h.dx < best.dx) best = h;
+      }
+      return best;
+    }
+
+    final ({Rect rect, double dx, RenderObject? row})? inRow = pick(0) ?? pick(2);
+    if (inRow != null) return inRow.rect;
+  }
+
+  // ② 退路：纯几何（严格含基线 → ±2 px）
+  ({Rect rect, double dx, RenderObject? row})? best;
+  for (final ({Rect rect, double dx, RenderObject? row}) h in hits) {
     if (at.dy < h.rect.top || at.dy > h.rect.bottom) continue;
     if (best == null || h.dx < best.dx) best = h;
   }
-  // 第 2 趟：±2 px 容忍
   if (best == null) {
-    for (final ({Rect rect, double dx}) h in hits) {
+    for (final ({Rect rect, double dx, RenderObject? row}) h in hits) {
       if (at.dy < h.rect.top - 2 || at.dy > h.rect.bottom + 2) continue;
       if (best == null || h.dx < best.dx) best = h;
     }

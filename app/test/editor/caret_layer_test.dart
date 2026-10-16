@@ -216,4 +216,69 @@ void main() {
       expect(headBar.height / bodyBar.height, closeTo(28 / 16, 0.02));
     });
   });
+
+  // ─────────────────────────────────────────────────────────────
+  group('D 行间块：块后那一格 = 文本层；块内末位落在**主行**', () {
+    const String doc = '前\n\n\$\$\nx=\\frac{a}{b}\n\$\$\n\n后\n';
+    const String tex = r'x=\frac{a}{b}';
+
+    testWidgets(r'块**之后**那一格 ⇒ 文本层标准（字号×1.25 = 20）', (WidgetTester tester) async {
+      final DocBuffer buf = DocBuffer(doc);
+      await _mount(tester, buf);
+      final int open = doc.indexOf(r'$$');
+      final int close = doc.indexOf(r'$$', open + 2);
+      buf.setCaret(close + 2); // 闭合围栏之后那一格
+      await tester.pump();
+      await tester.pump();
+
+      final List<Rect> bars = _mathBars(tester, global: false);
+      debugPrint('块后 bars=$bars');
+      expect(bars.length, 1, reason: '③-C：块后那一格必须有竖条（不许"光标消失"）');
+      expect(bars.first.height, closeTo(16 * 1.25, 0.5),
+          reason: '块后那一格**视觉上属文本层** ⇒ 高度按文本层标准 20；'
+              '偏矮（≈13.4）说明层级判定又用了被 clamp 的 caretAbs');
+    });
+
+    testWidgets(r'块内 **tex 末位** ⇒ 竖条落在**主行**（与 `x`/`=` 同一行，不是分母行）',
+        (WidgetTester tester) async {
+      final DocBuffer buf = DocBuffer(doc);
+      await _mount(tester, buf);
+      final int texStart = doc.indexOf('x=');
+      buf.setCaret(texStart + tex.length); // 公式末尾（主行位点）
+      await tester.pump();
+      await tester.pump();
+
+      final List<Rect> bars = _mathBars(tester, global: false);
+      expect(bars.length, 1);
+      final Rect bar = bars.first;
+
+      RenderObject? root;
+      for (final Element e in find.byType(MathWithCaret).evaluate()) {
+        if ((e.widget as MathWithCaret).showCaret) root = e.renderObject;
+      }
+      final String renderTex = renderMathTex(tex, caretRel: tex.length);
+      final LeafBoxScan scan = scanLeafBoxes(root!);
+      final List<VisibleAtom> atoms = atomsForHitTest(renderTex);
+      expect(scan.eligible.length, atoms.length, reason: '这一段的配对必须是好的');
+      final CaretSiteTable t = buildCaretSites(tex);
+      bool inSlot(int src) => t.slots.any((SlotSpan sp) => src >= sp.start && src < sp.end);
+      final List<Rect> mainBoxes = <Rect>[];
+      for (var i = 0; i < atoms.length; i++) {
+        final int src = renderToSourceOffset(renderTex, atoms[i].start);
+        if (!inSlot(src)) mainBoxes.add(scan.eligible[i].rect);
+      }
+      debugPrint('tex 末位：bar=$bar  主行字形盒=$mainBoxes（分子/分母=${scan.eligible.length - mainBoxes.length} 个）');
+      expect(mainBoxes, isNotEmpty);
+      // ★ 强断言：竖条必须精确落在**主行那一行**的 y 带里（上下各内缩 kCaretInset）
+      //   —— 只断言"相交"会被"跨行的大条"骗过去（实测过：18.0..31.4 与主行 5.7..21.7 也相交）；
+      //   而"中心落在字形盒内"又太严（光标在公式末尾，水平上已在最后一个字形之外）。
+      final Rect band = mainBoxes.first;
+      final double inset = band.height * kCaretInset;
+      debugPrint('tex 末位：bar=$bar  主行 y 带=${band.top}..${band.bottom}（内缩 $inset）');
+      expect(bar.top, closeTo(band.top + inset, 1.0),
+          reason: '竖条上沿必须落在**主行** y 带内；画到分子 / 分母那一行 = 选行退化成了"谁含基线"');
+      expect(bar.bottom, closeTo(band.bottom - inset, 1.0),
+          reason: '竖条下沿必须落在**主行** y 带内');
+    });
+  });
 }
