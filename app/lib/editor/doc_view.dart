@@ -97,8 +97,18 @@ class _UnitHitBoxState extends State<_UnitHitBox> {
           behavior: HitTestBehavior.opaque,
           onPointerDown: (PointerDownEvent e) =>
               widget.onHit(widget.unit, context, e.position),
-          // 子节点是**池里缓存的同一实例** → 这层包装不破坏"整棵子树跳过"
-          child: widget.child,
+          // ★★ ③-A（《编辑地基与手感》§7.3）：**命中盒一律铺满文本栏**，与块类型无关。
+          //   实测（《位点与结构导航》§11.25 第五轮）：列表项因为 `Row[标记, Expanded(内容)]`
+          //   命中盒是满栏宽 ⇒ 点"行末之后的空白"会夹到**行末**；而标题 / 普通段落只有**内容宽**
+          //   ⇒ 同一列**落空**。同一段文字因块类型不同而地位不同 —— 这是实现细节泄漏，必须消除。
+          //   `Align`（**松约束**）只把**命中盒**撑满文本栏 —— ★ 必须用松约束：
+          //   紧约束的 `SizedBox(width: ∞)` 会把子节点也定宽，段落尺寸就不再随内容变化
+          //   （实测踩到：`edit_view_test` 那条"拼音接进排版 ⇒ 段落宽度增大"当场变红）。
+          //   子节点是**池里缓存的同一实例** → 这层包装不破坏"整棵子树跳过"
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: widget.child,
+          ),
         ),
       );
 }
