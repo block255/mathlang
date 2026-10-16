@@ -31,6 +31,7 @@ import '../core/doc_buffer.dart';
 import '../core/doc_settings.dart';
 import '../layout/page_metrics.dart';
 import '../layout/paginator.dart';
+import '../render/caret_ownership.dart';
 import '../render/caret_sites.dart';
 import '../render/hit_map.dart';
 import '../render/inline_math_text.dart';
@@ -807,10 +808,21 @@ class _DocViewState extends State<DocView> {
         final GlobalKey mathKey = interactive
             ? _mathBlockKeys.putIfAbsent(u.id, () => GlobalKey())
             : GlobalKey();
+        // ★★ 层级（§11.27）：块**之前 / 之后**那两格由块认领（③-C，否则光标没处落），
+        //   但它们**视觉上属于文本层** ⇒ 让竖条按**文本层标准**画（字号×1.25、贴基线），
+        //   而不是拿公式内部那一行的 ¶ 盒（那会画成"分母的矮条" —— 用户实测）。
+        final bool beforeBlock = caretAbs != null && caretAbs < u.renderBase;
+        final bool afterBlock =
+            caretAbs != null && caretAbs > u.renderBase + u.renderLength;
         return Center(
           child: MathWithCaret(
             tex: tex,
-            showCaret: caretAbs != null && caretAbs >= u.renderBase,
+            // 块前那一格（`renderBase - 1`）也要画 —— 它已被本单元认领（acceptFrom）
+            showCaret: caretAbs != null,
+            caretEdge: beforeBlock
+                ? CaretEdge.before
+                : (afterBlock ? CaretEdge.after : CaretEdge.none),
+            textFontSize: body,
             mathKey: mathKey,
             fontSize: body,
             mathStyle: MathStyle.display,

@@ -28,6 +28,14 @@
 
 import 'projection.dart';
 
+/// 光标落在**公式两端多认领的那两格**上（开 `$` 那一格 / 闭 `$` 之后那一格）。
+///
+/// ★★ 为什么单列出来（2026-10-16，用户提出）：这两格**数据上属于这段数学**
+/// （否则光标没处落），但**视觉上属于文本层** —— 与"文字后面的光标"**地位等同**
+/// （§7.1 顶层无墙、内部有层）。⇒ 渲染层要按**文本层标准**画它们
+/// （高度 = 字号 × 1.25、贴文本基线），而不是拿公式内部最近的那一行（分母！）来画。
+enum CaretEdge { none, before, after }
+
 /// 光标该由**哪个分段**认领、画在**哪个相对位置**。
 class CaretPlacement {
   const CaretPlacement({
@@ -36,6 +44,7 @@ class CaretPlacement {
     required this.segStart,
     required this.localRel,
     required this.paragraphPos,
+    this.edge = CaretEdge.none,
   });
 
   /// 在 `projectInline(source)` 结果里的下标
@@ -58,6 +67,10 @@ class CaretPlacement {
   /// · 文字段 = 光标条那一格
   /// · 数学段 = **该公式所占的那一格**（与 `projection.mathPlaceholderAt` 同义）
   final int paragraphPos;
+
+  /// ★★ **是不是"两端多认领的那两格"**（见 [CaretEdge]）。
+  /// 是 ⇒ 渲染层按**文本层**标准画（与"文字后面的光标"地位等同）。
+  final CaretEdge edge;
 
   @override
   String toString() => 'CaretPlacement(seg=$segIndex '
@@ -98,6 +111,10 @@ CaretPlacement? caretPlacement(String source, int caretRel) {
           segStart: s.start,
           localRel: (c - s.start).clamp(0, s.tex.length),
           paragraphPos: units,
+          // ★★ 落在两端"多认领"的格子上 ⇒ **视觉上属于文本层**（见 [CaretEdge]）
+          edge: c < s.start
+              ? CaretEdge.before
+              : (c > s.end ? CaretEdge.after : CaretEdge.none),
         );
       }
       units += 1;

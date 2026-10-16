@@ -182,6 +182,9 @@ class _InlineMathTextState extends State<InlineMathText> {
     final key = _keys.putIfAbsent(absStart, () => GlobalKey());
     final bool baseline = widget.align == MathAlignMode.baseline;
     final onTap = widget.onMathTap;
+    // ★★ 层级（§11.27）：光标落在**两端多认领的那两格**上时，这一格**视觉上属于文本层**
+    //   ⇒ 交给 `MathWithCaret` 按文本层标准画（与"文字后面的光标"地位等同）。
+    final CaretEdge edge = caretHere ? (pl?.edge ?? CaretEdge.none) : CaretEdge.none;
 
     return WidgetSpan(
       alignment: baseline
@@ -189,12 +192,12 @@ class _InlineMathTextState extends State<InlineMathText> {
           : PlaceholderAlignment.middle,
       baseline: baseline ? TextBaseline.alphabetic : null,
       child: onTap == null
-          ? _mathWidget(key, tex, caretHere: caretHere)
+          ? _mathWidget(key, tex, caretHere: caretHere, edge: edge)
           : GestureDetector(
               onTapDown: (d) => onTap(s, tex, d.globalPosition, key),
               child: MouseRegion(
                 cursor: SystemMouseCursors.text,
-                child: _mathWidget(key, tex, caretHere: caretHere),
+                child: _mathWidget(key, tex, caretHere: caretHere, edge: edge),
               ),
             ),
     );
@@ -206,10 +209,14 @@ class _InlineMathTextState extends State<InlineMathText> {
   ///
   /// ★★ 2026-10-15 晚：光标改成 **零尺寸锚点 + 自绘竖条**（`MathWithCaret`）——
   ///   以前注入的引擎 `\cursor{}` 会**参与排版**（把公式盒子撑高/撑宽 ⇒ accent "跳"）。
-  Widget _mathWidget(GlobalKey key, String tex, {bool caretHere = false}) =>
+  Widget _mathWidget(GlobalKey key, String tex,
+          {bool caretHere = false, CaretEdge edge = CaretEdge.none}) =>
       MathWithCaret(
         tex: tex,
         showCaret: caretHere,
+        caretEdge: edge,
+        // ★ 文本层字号（"公式前后那两格"按它画，与文字后面的光标地位等同）
+        textFontSize: _textFontSize,
         mathKey: key,
         fontSize: widget.mathFontSize,
         onErrorFallback: (e) => Text(
@@ -228,18 +235,24 @@ class _InlineMathTextState extends State<InlineMathText> {
         alignment: PlaceholderAlignment.middle,
         child: SizedBox(
           width: 0,
-          height: widget.mathFontSize * 1.25,
+          // ★★ 文本层高度 = `字号 × 1.25`（**旧值**，也是"文字后面的光标"的标准）。
+          //   字号取**本行文本 style** 的字号（标题 28 / 正文 16）—— 不再用数学字号，
+          //   否则以后两处字号不一致时又是"两份判据"。
+          height: textCaretHeight(_textFontSize),
           child: OverflowBox(
             alignment: Alignment.centerLeft,
             minWidth: 0,
             maxWidth: widget.caretWidth * 4,
             child: Container(
               width: widget.caretWidth,
-              height: widget.mathFontSize * 1.25,
+              height: textCaretHeight(_textFontSize),
               // ★ 必须与数学侧的光标同色（数学侧靠 `\textcolor` 注入，见 caret_sites.dart）
               color: widget.caretColor ?? const Color(kCaretColorValue),
             ),
           ),
         ),
       );
+
+  /// 本行的**文本字号**（文本侧光标与"公式前后那两格"都用它当文本层标准）
+  double get _textFontSize => widget.textStyle?.fontSize ?? widget.mathFontSize;
 }
