@@ -388,6 +388,18 @@ NeutralPoint neutralPoint(String tex, int rel) {
     return NeutralPoint(wrapped, r + 1, (start: r, end: end));
   }
 
+  // ②b ★★ 位点紧跟在**裸参数的末尾**（normalize 会把 `^{n}` 去成 `^n`，见 §11.37）：
+  //     这时若就地注入，锚点落在**主行**（`n` 之后就是 `a` 之前），光标看着像"掉到 ∑ 与 a 之间"。
+  //     ⇒ 把这个裸参数**包上花括号**、锚点放进组内末尾 ⇒ 光标留在**上标那一行**，版面不变。
+  if (r > 0) {
+    final int argStart = _bareArgStartEndingAt(tex, r);
+    if (argStart >= 0) {
+      final String wrapped =
+          '${tex.substring(0, argStart)}{${tex.substring(argStart, r)}}${tex.substring(r)}';
+      return NeutralPoint(wrapped, r + 1, (start: argStart, end: r));
+    }
+  }
+
   // ③ 就地
   return NeutralPoint(tex, r, null);
 }
@@ -1092,4 +1104,28 @@ class _Parser {
     if (_i < _toks.length) _i++; // 吃掉 `}`
     return sb.toString();
   }
+}
+
+/// 「紧挨着、并以 `pos` 结尾的那个**裸参数**」的起点；不是裸参数返回 -1。
+///
+/// 判据：`pos` 前一个字符是字母（`\cmd` 要连反斜杠一起算）或单个字符，
+/// 再往前（跳空格）是 `^` / `_` ⇒ 它就是那个脚本的裸参数。
+int _bareArgStartEndingAt(String tex, int pos) {
+  if (pos <= 0 || pos > tex.length) return -1;
+  var s = pos - 1;
+  if (tex[s] == '}' || tex[s] == '{' || tex[s] == ' ') return -1;
+  if (_isLetter(tex.codeUnitAt(s))) {
+    // 可能是 `\cmd`
+    var k = s;
+    while (k >= 0 && _isLetter(tex.codeUnitAt(k))) {
+      k--;
+    }
+    if (k >= 0 && tex[k] == r'\') s = k;
+  }
+  var p = s - 1;
+  while (p >= 0 && tex[p] == ' ') {
+    p--;
+  }
+  if (p >= 0 && (tex[p] == '^' || tex[p] == '_')) return s;
+  return -1;
 }

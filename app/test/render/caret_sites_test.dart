@@ -169,6 +169,14 @@ void main() {
       expect(t.snap(9).offset, 9);
     });
 
+    test('★★ 裸参数**末尾**的注入要留在那一行（§11.37：失焦 normalize 会把 `^{n}` 去成 `^n`）', () {
+      // 失焦后 tex 变成 `\sum_{i=1}^na_i`，"n 之后"= 12；就地注入会让锚点掉到**主行**
+      // ⇒ 必须包成 `^{n…}`，锚点留在**上标那一行**（版面不变）。
+      final CursorInjection a = injectCursor(r'\sum_{i=1}^na_i', 12);
+      expect(a.tex, r'\sum_{i=1}^{n' + kCursorTex + r'}a_i', reason: '锚点要在花括号内、n 之后');
+      final CursorInjection b = injectCursor(r'x^2', 3);
+      expect(b.tex, r'x^{2' + kCursorTex + r'}', reason: b.tex);
+    });
     test('越界不崩', () {
       final CaretSiteTable t = buildCaretSites(r'\frac{a}{b}');
       expect(t.snap(-5).offset, 0);
@@ -250,6 +258,10 @@ void main() {
         final CaretSiteTable t = buildCaretSites(tex);
         for (final int off in t.offsets) {
           final CursorInjection r = injectCursor(tex, off);
+          // ★ 2026-10-17：**包花括号的注入**（裸参数开头 §11.31 ②、裸参数末尾 §11.37 ②b）
+          //   会让偏移变大，旧表里当然没有那个位置 ⇒ 跳过；它们由"中性性"守
+          //   （`caret_neutral_test`：包完之后 Math 盒尺寸必须**完全不变**）。
+          if (r.tex.length != tex.length) continue;
           expect(t.isSite(r.offset), isTrue, reason: '$tex @$off');
         }
       }
