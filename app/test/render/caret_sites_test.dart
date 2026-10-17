@@ -195,12 +195,15 @@ void main() {
       expect(r.tex, '\\frac{}{$kCursorTex}');
     });
 
-    test(r'★ 注入点紧跟 ^ 时不能报错（裸锚点会被当成上标基座）', () {
+    test(r'★ 注入点紧跟 ^ 时不能报错，而且**不许顶掉上标**（2026-10-17 升级）', () {
       // 用户实测报错：Parser Error: Got function '\cursor' with no arguments as superscript
+      // ★★ 2026-10-17：光"包进 \textcolor 不报错"不够 —— 那样 `^2` 会**改绑到注入的组上**，
+      //   而 `\sum` 那族一改绑，上下限就整块散架（用户实测截图）。
+      //   现在注入点**挪进上标的组内部**（裸参数先补花括号）：`x^{\textcolor{…}{}2}` ⇒ 渲染一模一样。
       final CursorInjection r = injectCursor(r'x^2', 1);
-      expect(r.offset, 1);
-      expect(_parses(r.tex), isTrue,
-          reason: '裸注入会变成 x\\rule{0pt}{0pt}^2（把 2 挤出上标）；包进 \\textcolor 后应正常：${r.tex}');
+      expect(r.offset, 3, reason: '`^{` 之内第一格');
+      expect(r.tex, 'x^{${kCursorTex}2}');
+      expect(_parses(r.tex), isTrue, reason: '注入后必须仍能解析：${r.tex}');
     });
 
     test(r'★ 文本模式 \text{} 内：拆组注入（\cursor 在文本模式里不被接受）', () {

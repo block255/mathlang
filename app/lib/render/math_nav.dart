@@ -73,6 +73,10 @@ MathRegion? mathRegionAt(String source, int offset) {
     if (b.type != BlockType.math) break;
     final int start = lines.starts[b.lineFrom];
     final int end = lines.ends[b.lineTo - 1];
+    // ★★ 2026-10-17：**围栏字符本身也算"在公式里"**（区间看作 `(start, end]`）。
+    //   为什么：光标停在两个 `$` 之间时，插入/换行会把 `$` 配成单数 ⇒ 公式退化成源码。
+    //   只放掉 `start`（块所在行**行首之前**那一格）—— 那一格按 `Enter` 应该在块**之前**断段。
+    if (o <= start || o > end) continue;
     final String body = source.substring(start, end);
     final _Fence? f = _stripFence(body);
     if (f == null) break;
@@ -106,11 +110,23 @@ MathRegion? mathRegionAt(String source, int offset) {
   return null;
 }
 
-/// 行间公式块只有**围栏式**（第一行就是 `$$`）才算得出 tex；
-/// 其它形态（`$$x$$` 一行写完）本版不处理，返回 null（宁可不动，也不要算错）。
+/// 剥掉行间公式块的围栏，给出（tex 起点相对块文本的偏移, tex）。
+///
+/// ★★ 2026-10-17 修：**单行闭合的 `$$…$$` 原先认不出来**（只认"`$$` 独占一行 … `$$` 独占一行"），
+///   于是 `$$x=1$$` 掉进行内分支、被当成 `$x=1$`（`display=false`，`closeEnd` 落在**两个闭合 `$` 之间**）
+///   ⇒ 在那格按 `Enter` 就把 `\n\n` 插进 `$$` 中间 ⇒ **围栏被劈开、公式退化成源码**
+///   （用户实测："点在 `a_i` 后面按回车，编码就爆出来了"）。同一族的还有退格/删除。
 _Fence? _stripFence(String body) {
+  final String trimmed = body.trimRight();
+  final int lead = trimmed.length - trimmed.trimLeft().length;
+  final String l = trimmed.substring(lead);
+  // ① **单行闭合**：`$$…$$`（判据与块模型 `BlockMarkers.isClosedMathFence` 一致：长度 > 4）
+  if (!l.contains('\n')) {
+    if (l.length <= 4 || !l.startsWith(r'$$') || !l.endsWith(r'$$')) return null;
+    return _Fence(lead + 2, l.substring(2, l.length - 2));
+  }
+  // ② **多行**：首行 `$$`、末行 `$$`
   final int nl = body.indexOf('\n');
-  if (nl < 0) return null;
   if (body.substring(0, nl).trim() != r'$$') return null;
   final int lastNl = body.lastIndexOf('\n');
   if (lastNl <= nl) return null;

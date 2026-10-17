@@ -301,6 +301,105 @@ class CursorInjection {
   String toString() => 'CursorInjection(@$offset)';
 }
 
+/// ★★ **结构中性**的注入点（2026-10-17 用户实测抓出，见 [neutralPoint]）。
+class NeutralPoint {
+  const NeutralPoint(this.tex, this.at, this.wrap);
+
+  /// 改写后的 tex（**可能已给裸参数补上花括号**；语义不变）
+  final String tex;
+
+  /// 注入 / 插入偏移（相对 [tex]）
+  final int at;
+
+  /// 源侧要做的"给裸参数补花括号"编辑：`(start, end)` 是**原 tex** 里的裸参数区间。
+  /// `null` = 不需要补。
+  final ({int start, int end})? wrap;
+
+  @override
+  String toString() => 'NeutralPoint(@$at${wrap == null ? '' : ' wrap=$wrap'})';
+}
+
+/// ★★ **注入物绝不许改变语法结合**（2026-10-17，用户实测：点 `\sum` 的几格，版面整个变了）。
+///
+/// 探针（`\sum_{i=1}^{n}a_i`，display，Math 盒基准 **48.6 × 58.6**）：
+///
+/// | 位点 | 就地注入得到的 tex | Math 盒 | 后果 |
+/// |---|---|---|---|
+/// | 4（`\sum` 之后 = 它的上下限之前） | `\sum␣_{i=1}^{n}a_i` | **72.3 × 32.0** | 上下限**掉到右边**（"∑ 缩成一行"） |
+/// | 10（下限 `}` 之后 = 上限 `^` 之前） | `\sum_{i=1}␣^{n}a_i` | **58.0 × 46.6** | 上限掉到右边 |
+/// | 16（`a_i` 的裸参数之前） | `a_␣i` | 50.7 × 58.6 | `i` 变成**普通字号**（"i 被放大了"） |
+///
+/// ★ 根因一句话：**`^`/`_` 绑在"紧挨它前面的那个节点"上**。注入的 `\textcolor{...}{...}`
+///   自带一个组 ⇒ 它一旦插在"算子 / 极限 / 裸参数"与 `^`/`_` 之间，脚本就**改绑到组上**。
+///   零尺寸只保证"不占版面"，**不保证"不改变结合"** —— 这是 2026-10-15 那次"光标不参与排版"
+///   只解决了一半的原因（当时只在 `x^2` 这种看得不太出来的地方验证过）。
+///
+/// 规则（三条，**只挪注入点，不改任何语义**）：
+///   ① 位点之后紧跟 `^`/`_` ⇒ 注入进**那个脚本的内容开头**（`\sum_{␣i=1}`）；
+///   ② 位点紧跟在 `^`/`_` 之后（裸参数起点）⇒ 先**给这个裸参数补花括号**，再注入到内容开头
+///      （`a_␣i` → `a_{␣i}`）；
+///   ③ 其它位点 ⇒ 就地注入（零尺寸锚点本来就是版面上不存在的）。
+///   ★ 三种情形下"**光标画在哪**"与"**打字会插在哪**"都保持一致（插入侧走同一条规则，
+///     见 `insert_guard.planInsert`）。
+NeutralPoint neutralPoint(String tex, int rel) {
+  final int r = rel.clamp(0, tex.length);
+
+  // ① 位点之后紧跟 `^` / `_`
+  var k = r;
+  while (k < tex.length && tex[k] == ' ') {
+    k++;
+  }
+  if (k < tex.length && (tex[k] == '^' || tex[k] == '_')) {
+    var a = k + 1;
+    while (a < tex.length && tex[a] == ' ') {
+      a++;
+    }
+    if (a < tex.length && tex[a] == '{') {
+      final int at = a + 1;
+      return NeutralPoint(tex, at, null);
+    }
+    final int end = _bareArgEnd(tex, a);
+    final String wrapped =
+        '${tex.substring(0, a)}{${tex.substring(a, end)}}${tex.substring(end)}';
+    return NeutralPoint(wrapped, a + 1, (start: a, end: end));
+  }
+
+  // ② 位点紧跟在 `^` / `_` 之后（**裸参数**的起点）
+  var p = r - 1;
+  while (p >= 0 && tex[p] == ' ') {
+    p--;
+  }
+  if (p >= 0 &&
+      (tex[p] == '^' || tex[p] == '_') &&
+      r < tex.length &&
+      tex[r] != '{') {
+    final int end = _bareArgEnd(tex, r);
+    final String wrapped =
+        '${tex.substring(0, r)}{${tex.substring(r, end)}}${tex.substring(end)}';
+    return NeutralPoint(wrapped, r + 1, (start: r, end: end));
+  }
+
+  // ③ 就地
+  return NeutralPoint(tex, r, null);
+}
+
+/// 裸参数（一个原子）的结束位置：`{...}` / `\cmd` / 单字符
+int _bareArgEnd(String tex, int at) {
+  if (at >= tex.length) return at;
+  if (tex[at] == '{') {
+    final int c = _matchBrace(tex, at);
+    return c < 0 ? tex.length : c + 1;
+  }
+  if (tex[at] == r'\') {
+    var j = at + 1;
+    while (j < tex.length && _isLetter(tex.codeUnitAt(j))) {
+      j++;
+    }
+    return j <= at + 1 ? at + 1 : j;
+  }
+  return at + 1;
+}
+
 /// 把「光标」注入到 tex 里，**注入点先做位点吸附**。
 ///
 /// ★ 这是"光标画进数学内部"的唯一入口（`InlineMathText` 与实验页都走它）。
@@ -309,21 +408,22 @@ class CursorInjection {
 /// 1. **注入点必须在合法位点上**。S1 时代的 `snapCaretInTex`（已删）只防"切开命令名"，
 ///    会把光标留在 `}{` 这类语法夹缝里 —— `\frac{a}{b}` 的偏移 8 会注入成 `\frac{a}\cursor{}{b}`，
 ///    `\frac` 的第二个参数被 `\cursor` 顶替，**分母被挤到主行**。位点吸附后落到 7 ✓。
-/// 2. ★ **必须包在 `\textcolor{...}{...}` 里**，不能裸注入 `\cursor{}`：
-///    · 注入点紧跟 `^` / `_` 时（如 `x^2` 的 x 与 2 之间），裸 `\cursor` 会被当成**上标基座**
-///      → `Parser Error: Got function '\cursor' with no arguments as superscript`（用户实测截图）。
-///      `\textcolor` 自带一个组，脚本就绑在组上，不再报错。
-///    · 顺带把光标染成与文本侧**同一个颜色**（见 [kCaretColorValue]）。
+/// 2. ★★ **注入物必须结构中性**（见 [neutralPoint]）—— 2026-10-17 前的做法只管住了"尺寸为零"，
+///    没管住"不改变结合"：插在 `\sum` 与它的上下限之间，上下限就掉到右边去了（用户实测截图）。
+/// 3. ★ **必须包在 `\textcolor{...}{...}` 里**，不能裸注入：`\textcolor` 自带一个组，
+///    顺带把光标染成与文本侧**同一个颜色**（见 [kCaretColorValue]）。
 CursorInjection injectCursor(String tex, int relOffset) {
   final int rel = buildCaretSites(tex).snap(relOffset).offset;
   final String cursor = kCursorTex; // ★ 零尺寸锚点（见它的注释）
   final _TextGroup? g = _textGroupAt(tex, rel);
 
-  // 一般情况：直接在位点处注入
+  // 一般情况：先算"结构中性"的注入点，再把锚点塞进去
   if (g == null) {
+    final NeutralPoint np = neutralPoint(tex, rel);
+    final int at = np.at;
     return CursorInjection(
-      '${tex.substring(0, rel)}$cursor${tex.substring(rel)}',
-      rel,
+      '${np.tex.substring(0, at)}$cursor${np.tex.substring(at)}',
+      at,
     );
   }
 

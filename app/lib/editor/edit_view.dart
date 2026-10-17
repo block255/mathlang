@@ -176,14 +176,22 @@ class EditViewState extends State<EditView> {
   ///   输入设备的内容由 [TextInputSurfaceController] 自己维持成"空的"。
   void _commitText(String text) {
     if (text.isEmpty) return;
-    // ★★ 插入侧守门人（`render/insert_guard.dart`）：**块级换行不许落在数学段内部**。
-    //   用户实测的路径：点进分式 → `→` 到行末（其实停在"闭合 `$` 之前那一格"）→ `Enter`
-    //   → `$` 被配成单数 → **整行退化成源码**。
+    // ★★ 插入侧守门人（`render/insert_guard.dart`）：
+    //   ① **块级换行不许落在数学段内部**（用户实测的路径：点进分式 → `→` 到行末
+    //      （其实停在"闭合 `$` 之前那一格"）→ `Enter` → `$` 被配成单数 → **整行退化成源码**）。
+    //   ② ★ 2026-10-17 加：**插在语法粘合处要挪位**（`\sum` 与它的上下限之间、裸参数里）——
+    //      插入物会顶掉 `^`/`_` 的结合，版面当场变（用户实测"点 ∑ 就散架"）。
+    //      ⇒ 与光标注入**同一条规则**（`caret_sites.neutralPoint`），保证"画在哪 = 插在哪"。
     //   ★ 只调整**落点**，不吞内容：非换行的插入照样进公式
-    //     （在公式末尾打 `+1` = 继续这段数学，那是要保留的能力）。
     final InsertPlan plan = planInsert(_buf.buf, _buf.caret, text);
     _mutate(() {
-      if (plan.moved) _buf.setCaret(plan.offset);
+      final ({int start, int end})? wrap = plan.wrapBareArg;
+      if (wrap != null) {
+        // 先把裸参数包上花括号（语义完全不变），落点就是"参数内容开头"
+        final String arg = _buf.buf.substring(wrap.start, wrap.end);
+        _buf.replace(wrap.start, wrap.end, '{$arg}');
+      }
+      if (_buf.caret != plan.offset) _buf.setCaret(plan.offset);
       _buf.insertText(text);
     });
   }
