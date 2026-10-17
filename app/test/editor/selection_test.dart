@@ -140,6 +140,21 @@ void main() {
     expect(buf.selectionEnd - buf.selectionStart, greaterThan(0));
   });
 
+  testWidgets('★★ 收起选区后**所有行**的高亮都要消失（用户实测：只有最后一排取消）',
+      (WidgetTester tester) async {
+    // 四行文档全选 ⇒ 每行都该有底色
+    const String doc = '第一行\n第二行\n第三行\n第四行';
+    final DocBuffer buf = await _pump(tester, doc, a: 0, b: doc.length);
+    expect(_highlightedTexts(tester), isNotEmpty, reason: '全选后应当有高亮');
+    // 模拟"点了别处" ⇒ 选区收起
+    buf.setCaret(2);
+    await tester.pumpAndSettle();
+    expect(buf.hasSelection, isFalse);
+    expect(_highlightedTexts(tester), isEmpty,
+        reason: '收起选区后**一个底色 span 都不该留** —— 改前池键不含选区，'
+            '不含光标的行会拿回旧 widget，高亮留在屏幕上');
+  });
+
   testWidgets('★ 退格：有选区 ⇒ 只删那一段', (WidgetTester tester) async {
     final DocBuffer buf = await _pump(tester, '甲乙丙丁', a: 1, b: 3);
     await tester.tap(find.textContaining('甲').first); // 取焦点

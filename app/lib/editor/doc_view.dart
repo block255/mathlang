@@ -332,6 +332,7 @@ class DocView extends StatefulWidget {
     this.onTapOffset,
     this.onCaretRect,
     this.composingText = '',
+    this.hideCaretAndSelection = false,
   });
 
   final DocBuffer buffer;
@@ -357,6 +358,9 @@ class DocView extends StatefulWidget {
   /// 只对「含光标的那一个单元」生效，且**行间公式块不接**（那种情况由 `EditView` 叠画兜底）。
   /// 它**不进缓冲区**（设计稿 §11.7），纯粹是渲染期的临时内容。
   final String composingText;
+
+  /// ★ ⑤ 失焦时**不画**光标与选区（数据仍保留；重新聚焦即恢复）
+  final bool hideCaretAndSelection;
 
   @override
   State<DocView> createState() => DocViewState();
@@ -699,15 +703,31 @@ class DocViewState extends State<DocView> {
   /// 池是按**内容**寻址的，而光标让"包含光标的那个单元"的 widget 变了：
   /// 若不加进键，光标从 A 移到 B 时，A 会从池里拿回**带光标的旧实例** → 屏幕上留一个幽灵光标。
   /// 加上之后：一次击键最多重建 2 个单元，空转时池照样全命中（S2 的 2.8 ms 空帧不退化）。
+  /// 本单元的**局部选区**（渲染坐标）；无选区 / 与本单元无交集 ⇒ null。
+  ({int from, int to})? _localSelFor(_Unit u) {
+    if (widget.hideCaretAndSelection || _selEnd <= _selStart) return null;
+    final int a = (_selStart - u.renderBase).clamp(0, u.renderLength);
+    final int b = (_selEnd - u.renderBase).clamp(0, u.renderLength);
+    if (b > a) return (from: a, to: b);
+    if (_selStart <= u.renderBase && _selEnd >= u.renderBase + u.renderLength) {
+      return (from: 0, to: u.renderLength); // 整单元被选中（含两端）
+    }
+    return null;
+  }
   String _poolKeyFor(_Unit u) {
     final int? rel = u.relFor(_caret);
-    if (rel == null) return u.contentKey;
+    // ★★ ⑤ 实测踩到的坑（用户："拖选全部后再点下面，只有最后一排取消"）：
+    //   池键原来**不含选区** ⇒ 不含光标的那些单元会从池里拿回**上一帧（带高亮）的 widget**
+    //   ⇒ 只有"光标所在那一行"被重建、高亮消失，其余行的高亮**留着不动**。
+    final ({int from, int to})? sel = _localSelFor(u);
+    final String selKey = sel == null ? '' : '#s${sel.from}-${sel.to}';
+    if (rel == null) return '${u.contentKey}$selKey';
     // ★ 组合态也要进键：拼音变化会改变"含光标那个单元"的 widget 内容，
     //   不进键就会从池里拿回上一帧的旧拼音（叠字/不刷新）。
     final String comp = _composingFor(u, rel).isEmpty
         ? ''
         : '#k${_composingFor(u, rel).hashCode}';
-    return '${u.contentKey}#c$rel$comp';
+    return '${u.contentKey}#c$rel$comp$selKey';
   }
 
   /// 这个单元要不要接组合串（**只给含光标的那一个单元，且行间公式块不接**）。
@@ -866,25 +886,16 @@ class DocViewState extends State<DocView> {
     final _Rendered r = _renderParts(u.type, u.source);
     final String text = r.text;
     // ★★ ⑤ 选区 → **本单元的局部区间**（渲染坐标）。与本单元无交集 ⇒ null。
-    int? selFrom;
-    int? selTo;
-    if (_selEnd > _selStart) {
-      final int a = (_selStart - u.renderBase).clamp(0, u.renderLength);
-      final int b = (_selEnd - u.renderBase).clamp(0, u.renderLength);
-      if (b > a) {
-        selFrom = a;
-        selTo = b;
-      } else if (_selStart <= u.renderBase && _selEnd >= u.renderBase + u.renderLength) {
-        // 整单元被选中（含两端）
-        selFrom = 0;
-        selTo = u.renderLength;
-      }
-    }
+    final ({int from, int to})? sel = _localSelFor(u);
+    final int? selFrom = sel?.from;
+    final int? selTo = sel?.to;
     // 光标在本单元内时换算成**绝对偏移**（InlineMathText 用的是绝对偏移）
     // ★ ⑤ 有选区时**不画光标**（标准编辑器行为：选区就是"当前操作对象"，光标让位）
-    final bool selecting = _selEnd > _selStart;
+    final bool selecting = !widget.hideCaretAndSelection && _selEnd > _selStart;
     final int? caretAbs =
-        (caretRel == null || selecting) ? null : u.renderBase + caretRel;
+        (caretRel == null || selecting || widget.hideCaretAndSelection)
+            ? null
+            : u.renderBase + caretRel;
     // ★ 组合中间态：只接给含光标的那一个单元，且行间公式块不接（见 _composingFor）
     final String composing = _composingFor(u, caretRel);
     // 只有渲染树需要接点击（测量树是离屏的，接了也没用，还会多两个对象）
