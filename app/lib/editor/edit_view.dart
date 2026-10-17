@@ -12,6 +12,8 @@
 // ★ 为什么不让平台元素自己当编辑器：那样用户就会看见 `\frac{}{}` 的源码 —— 违背原则 2。
 //   平台元素永远是**透明**的，用户看到的只有 ①。
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -127,6 +129,19 @@ class EditViewState extends State<EditView> {
   /// 这次按下有没有命中到某个偏移（`onTapOffset` 是否被调用过）
   bool _pressHit = false;
 
+  /// 焦点状态（失焦 ⇒ 不画光标与选区）
+  /// 失焦过（首次进页面不算失焦，保持'上电就有光标'的既有观感）
+  bool _blurred = false;
+
+  // ---------------- 闪烁 / 拖到边缘自动滚动 ----------------
+  /// 光标闪烁的"亮/灭"（530 ms 一个来回，与常见编辑器一致）
+  bool _blinkOn = true;
+  Timer? _blink;
+
+  /// 拖选自动滚动
+  Timer? _autoScroll;
+  Offset? _pointerAt;
+
   /// 连击计数（同一处 400 ms 内）
   int _clickCount = 0;
   DateTime? _lastClickAt;
@@ -174,6 +189,8 @@ class EditViewState extends State<EditView> {
 
   @override
   void dispose() {
+    _blink?.cancel();
+    _autoScroll?.cancel();
     // ★ 顺序要紧：**先摘监听再 dispose**。
     //   `_input.dispose()` 内部会 `detach()` → `notifyListeners()` → 我们的监听器 `setState()`
     //   → 断言 `_lifecycleState != defunct` 炸掉（实测踩过；`mounted` 在 dispose 期间**仍是 true**，挡不住）。
@@ -207,9 +224,13 @@ class EditViewState extends State<EditView> {
     //      插入物会顶掉 `^`/`_` 的结合，版面当场变（用户实测"点 ∑ 就散架"）。
     //      ⇒ 与光标注入**同一条规则**（`caret_sites.neutralPoint`），保证"画在哪 = 插在哪"。
     //   ★ 只调整**落点**，不吞内容：非换行的插入照样进公式
-    // ★ ⑤ 有选区 ⇒ **先替换掉选区**（标准编辑器行为），再做插入守门
+    // ★★ ⑤ 有选区 ⇒ **一次区间替换**（标准编辑器行为），而且必须是**一步撤销**。
+    //   （原来是"先删选区、再插入" = 两次 `_mutate` ⇒ Ctrl+Z 要按两下 —— 记账里那条
+    //    "撤销分组复核"就是查这个。）替换语义下也不走 `planInsert` 的粘合处挪位：
+    //   用户已经把要替换的范围选中了，按选中的意图办。
     if (_buf.hasSelection) {
-      _mutate(() => _buf.replace(_buf.selectionStart, _buf.selectionEnd, ''));
+      _mutate(() => _buf.replace(_buf.selectionStart, _buf.selectionEnd, text));
+      return;
     }
     final InsertPlan plan = planInsert(_buf.buf, _buf.caret, text);
     _mutate(() {
@@ -262,9 +283,15 @@ class EditViewState extends State<EditView> {
   // ---------------- 焦点 / 输入通道 ----------------
 
   void _onFocusChanged() {
+    // ★ ⑤ 失焦 ⇒ **不画光标与选区**（数据保留）；同时停掉闪烁
+    if (mounted) {
+      setState(() => _blurred = !_focus.hasFocus);
+    }
     if (_focus.hasFocus) {
+      _startBlink();
       _input.ensureAttached();
     } else {
+      _stopBlink();
       // ★ **提交点**（§七）：失焦时把光标所在的数学段 normalize 一遍。
       //   绝不在逐击键时回收 —— 否则用户删到一半，结构就被自动撤走了。
       _normalizeOnCommit();
@@ -272,6 +299,23 @@ class EditViewState extends State<EditView> {
     }
   }
 
+  void _startBlink() {
+    _blink?.cancel();
+    if (mounted && !_blinkOn) setState(() => _blinkOn = true);
+    _blink = Timer.periodic(const Duration(milliseconds: 530), (Timer t) {
+      if (!mounted || !_focus.hasFocus) {
+        t.cancel();
+        return;
+      }
+      setState(() => _blinkOn = !_blinkOn);
+    });
+  }
+
+  void _stopBlink() {
+    _blink?.cancel();
+    _blink = null;
+    if (mounted && !_blinkOn) setState(() => _blinkOn = true); // 重新聚焦时立刻可见
+  }
   /// 提交点：**回收全空结构 + 去掉单原子参数的多余花括号**（设计稿 §七）。
   ///
   /// 只处理**光标所在的那一个数学段**（其余段落等它们各自成为提交点时再处理）——
@@ -560,11 +604,57 @@ class EditViewState extends State<EditView> {
     if (start == null) return;
     if (!_dragging && (pos - start).distance < 3) return;
     _dragging = true;
+    _pointerAt = pos;
+    _applyDragAt(pos, anchor);
+    _maybeAutoScroll(pos, anchor);
+  }
+
+  /// 把拖选焦点落到 [pos]（与点击**同一套**判据：行间块走公式命中、文字走段落排版器）
+  void _applyDragAt(Offset pos, int anchor) {
     final State<StatefulWidget>? st = _docKey.currentState;
     if (st is! DocViewState) return;
     final int? off = st.offsetAtGlobal(pos);
-    if (off == null) return; // 页边空白 ⇒ 停住
+    if (off == null) return; // 页边/页间空隙 ⇒ 停住（不跳）
     _buf.setSelection(anchor, off);
+  }
+
+  /// ★ ⑤ 拖到视口**边缘**（或拖出视口）⇒ 持续滚动 = **跨页拖选**
+  ///
+  /// 为什么必须自己做：`SingleChildScrollView` 会**裁剪**子树，指针在裁剪区外
+  /// **命中不到任何单元** ⇒ 不自己滚，就只能选到"当前可见的那一屏"。
+  /// 滚动速度按"离边缘多近"线性加速；滚完立刻重算落点。
+  void _maybeAutoScroll(Offset pos, int anchor) {
+    final ScrollableState? sc = Scrollable.maybeOf(context);
+    final RenderBox? box = context.findRenderObject() as RenderBox?;
+    if (sc == null || box == null || !box.hasSize) return;
+    final Offset local = box.globalToLocal(pos);
+    // 感应带跟着字号走（不写死像素）：约 3 行字高
+    final double edge = widget.settings.bodyFontSize * 3;
+    final double over = local.dy < edge
+        ? local.dy - edge
+        : (local.dy > box.size.height - edge
+            ? local.dy - (box.size.height - edge)
+            : 0);
+    if (over == 0) {
+      _autoScroll?.cancel();
+      _autoScroll = null;
+      return;
+    }
+    if (_autoScroll != null) return; // 已经在滚
+    _autoScroll = Timer.periodic(const Duration(milliseconds: 16), (Timer t) {
+      final ScrollPosition sp = sc.position;
+      final double step = (over.abs() / edge).clamp(0.15, 1.0) * 14.0;
+      final double next = (sp.pixels + (over < 0 ? -step : step))
+          .clamp(sp.minScrollExtent, sp.maxScrollExtent);
+      if (next == sp.pixels) {
+        t.cancel();
+        _autoScroll = null;
+        return;
+      }
+      sp.jumpTo(next);
+      final Offset? at = _pointerAt;
+      if (at != null && _dragAnchor != null) _applyDragAt(at, _dragAnchor!);
+    });
   }
 
   void _endDrag() {
@@ -574,6 +664,9 @@ class EditViewState extends State<EditView> {
     if (!_pressHit && !_dragging && _buf.hasSelection) {
       _buf.setCaret(_buf.caret);
     }
+    _autoScroll?.cancel();
+    _autoScroll = null;
+    _pointerAt = null;
     _pressAt = null;
     _dragging = false;
     _dragAnchor = null;
@@ -642,6 +735,9 @@ class EditViewState extends State<EditView> {
               onCaretRect: _onCaretRect,
               // ★ 组合串接进排版 → 后面的字被真的推开（只在文字类单元里；公式块见 _caretInMathBlock）
               composingText: _caretInMathBlock ? '' : _input.composingText,
+              // ★ ⑤ 失焦不画光标与选区；聚焦时按 530 ms 闪烁
+              hideCaretAndSelection: _blurred,
+              caretVisible: !_blurred && (_focus.hasFocus ? _blinkOn : true),
             ),
           ),
 

@@ -333,6 +333,7 @@ class DocView extends StatefulWidget {
     this.onCaretRect,
     this.composingText = '',
     this.hideCaretAndSelection = false,
+    this.caretVisible = true,
   });
 
   final DocBuffer buffer;
@@ -361,6 +362,9 @@ class DocView extends StatefulWidget {
 
   /// ★ ⑤ 失焦时**不画**光标与选区（数据仍保留；重新聚焦即恢复）
   final bool hideCaretAndSelection;
+
+  /// ★ ⑤ 光标这一帧**画不画**（闪烁用；选区不受它影响）
+  final bool caretVisible;
 
   @override
   State<DocView> createState() => DocViewState();
@@ -893,7 +897,7 @@ class DocViewState extends State<DocView> {
     // ★ ⑤ 有选区时**不画光标**（标准编辑器行为：选区就是"当前操作对象"，光标让位）
     final bool selecting = !widget.hideCaretAndSelection && _selEnd > _selStart;
     final int? caretAbs =
-        (caretRel == null || selecting || widget.hideCaretAndSelection)
+        (caretRel == null || selecting || widget.hideCaretAndSelection || !widget.caretVisible)
             ? null
             : u.renderBase + caretRel;
     // ★ 组合中间态：只接给含光标的那一个单元，且行间公式块不接（见 _composingFor）

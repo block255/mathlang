@@ -155,6 +155,33 @@ void main() {
             '不含光标的行会拿回旧 widget，高亮留在屏幕上');
   });
 
+  testWidgets('★★ 有选区时打字 = 一步撤销', (WidgetTester tester) async {
+    final DocBuffer buf = await _pump(tester, '甲乙丙丁', a: 1, b: 3);
+    await tester.tap(find.textContaining('甲').first);
+    await tester.pumpAndSettle();
+    buf.setSelection(1, 3);
+    await tester.pumpAndSettle();
+    _commitFor(tester, 'X');
+    await tester.pumpAndSettle();
+    expect(buf.buf, '甲X丁', reason: '选区 [1,3) 被替换：${buf.buf}');
+    expect(buf.undo(), isTrue);
+    expect(buf.buf, '甲乙丙丁', reason: '一次 Ctrl+Z 就该完全回到原样');
+  });
+
+  testWidgets('★★ 剪切 = 一步撤销', (WidgetTester tester) async {
+    final DocBuffer buf = await _pump(tester, '甲乙丙丁', a: 1, b: 3);
+    await tester.tap(find.textContaining('甲').first);
+    await tester.pumpAndSettle();
+    buf.setSelection(1, 3);
+    await tester.pumpAndSettle();
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyX);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+    await tester.pumpAndSettle();
+    expect(buf.buf, '甲丁', reason: '剪切删掉选区：${buf.buf}');
+    expect(buf.undo(), isTrue);
+    expect(buf.buf, '甲乙丙丁', reason: '一次撤销就该回来');
+  });
   testWidgets('★ 退格：有选区 ⇒ 只删那一段', (WidgetTester tester) async {
     final DocBuffer buf = await _pump(tester, '甲乙丙丁', a: 1, b: 3);
     await tester.tap(find.textContaining('甲').first); // 取焦点
