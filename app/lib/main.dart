@@ -14,6 +14,7 @@ import 'spike/render_check/render_check_page.dart';
 import 'spike/s2_page/s2_page_page.dart';
 import 'spike/s2_projection/s2_projection_page.dart';
 import 'spike/s3_edit/s3_edit_page.dart';
+import 'ui/editor_page.dart';
 
 void main() => runApp(const MathlangApp());
 
@@ -48,6 +49,12 @@ class ExperimentHome extends StatelessWidget {
             ),
           ),
           const Divider(height: 1),
+          _tile(
+            context,
+            '★★ 应用界面 · 编辑器（S4-b 面板 + 布局）',
+            '顶栏 + A4 页面（偏左）+ 右侧符号面板（宽由格数推算）+ 状态栏；面板插入走「并入/建壳/替换」',
+            const EditorPage(),
+          ),
           _tile(
             context,
             '★ 问 0 · 流内数学映射可行性',

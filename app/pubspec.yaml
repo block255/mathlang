@@ -59,6 +59,10 @@ flutter:
   # the material Icons class.
   uses-material-design: true
 
+  # ★ S4-b：符号库（面板与符号表的**唯一数据源**，见《符号面板与符号表.md》§二）
+  assets:
+    - assets/symbols.json
+
   # To add assets to your application, add an assets section, like this:
   # assets:
   #   - images/a_dot_burr.jpeg

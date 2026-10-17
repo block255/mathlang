@@ -21,6 +21,7 @@ import '../core/block.dart';
 import '../core/doc_buffer.dart';
 import '../core/doc_settings.dart';
 import '../lang/smart_wrap.dart';
+import '../lang/symbol_insert.dart';
 import '../render/caret_sites.dart' show kCaretColorValue;
 import '../render/insert_guard.dart';
 import '../render/math_nav.dart';
@@ -274,6 +275,26 @@ class EditViewState extends State<EditView> {
     if (n <= 0) return;
     _autoWrapped = n;
     if (mounted) _emitStats();
+  }
+
+  /// ★★ S4-b：**面板插入**（符号 / 结构模板）—— 一次区间替换 = **一步撤销**。
+  ///
+  /// 三选一的语义（并入数学段 / 自动建壳 / 替换选区）在 `lang/symbol_insert.dart` 里，
+  /// 这里只做"一次编辑"的落盘与光标定位（模板 ⇒ 第一个空槽）。
+  void insertSymbolTex(String tex, {required bool template}) {
+    final SymbolInsertResult r = applySymbolInsert(
+      doc: _buf.buf,
+      caret: _buf.caret,
+      selStart: _buf.selectionStart,
+      selEnd: _buf.selectionEnd,
+      tex: tex,
+      template: template,
+    );
+    _mutate(() {
+      _buf.replace(0, _buf.length, r.doc);
+      _buf.setCaret(r.caret);
+    });
+    _stampWrapped(r.wrapped ? 1 : 0);
   }
 
   /// 插入 [insert] 之前需不需要先补一个**命令分隔符**（空格）？
