@@ -617,6 +617,13 @@ class EditViewState extends State<EditView> {
             behavior: HitTestBehavior.opaque,
             onPointerDown: (PointerDownEvent e) {
               focusInput();
+              // ★★ 用户实测两次："点了别处，选区没取消"（点标题那次也没取消）。
+              //   ⇒ 改成**按下就收起选区**（点哪儿都收起，包括页边/空隙/标题），
+              //   之后如果真的是拖，拖到 >3px 时再按新锚点重新起选区。
+              //   `Shift+点击` 例外（那是"扩展选区"的意思）。
+              if (!HardwareKeyboard.instance.isShiftPressed && _buf.hasSelection) {
+                _buf.setCaret(_buf.caret);
+              }
               _pressAt = e.position;
               _dragging = false;
               _pressHit = false;
