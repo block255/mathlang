@@ -73,6 +73,22 @@ class MathHit {
           '叶盒 $boxCount / 原子 $atomCount, $how)';
 }
 
+/// 本段**字形盒高度的中位数** —— 用来认"被拉伸的行盒"（高度远超它就不是正常一个字）。
+///
+/// 为什么用中位数而不是字号/em：① `hit_map` 只知道 tex，不知道字号；
+/// ② 上下标本来就矮、大算符本来就高，**中位数**天然落在"这一段的常见行高"上
+/// （实测 `\sum_{i=1}^{n}a_i`：盒高 [14, 46, 14, 18, 18, 21, 14] ⇒ 中位数 **18**，
+///  而 `\sum` 的 46 > 1.6×18 ⇒ 被判为拉伸盒并裁到 18 ✓）。
+double _medianGlyphHeight(List<LeafBox> boxes) {
+  final List<double> hs = <double>[
+    for (final LeafBox b in boxes)
+      if (b.kind == LeafBoxKind.glyph) b.rect.height,
+  ];
+  if (hs.isEmpty) return 0;
+  hs.sort();
+  return hs[hs.length ~/ 2];
+}
+
 /// 在 Math 控件内做命中测试。
 ///
 /// [localPos] 是相对 Math 根盒（`root`）的坐标；[tex] 是该段**渲染用的** tex。
@@ -97,6 +113,19 @@ MathHit hitTestMathTex({
     atoms: list,
   );
 
+  // ★★ **拉伸的行盒要按行高裁剪**（2026-10-17，用户实测"点 `n` 后面落到 ∑ 与 `a_i` 之间"）：
+  //   `\sum` 的字形盒是引擎给的**行盒** —— 实测 **28.9 × 46**，把上限 `n`（y −2.6..11.4）
+  //   与下限 `i=1`（y 43.4..61.4）的格子**整片盖住** ⇒ "第一个包含点的盒"总是它
+  //   ⇒ 点上限右边、点下限 `i` 后面，都落到 `\sum` 的左右半（= 结构之前/之后）。
+  //   ⇒ 命中时把"高度远超本段常见行高"的盒**竖直裁到行高**（横向不动）。
+  //   ★ 判据用本段**字形盒高度的中位数**（不写死 em）：本段大多数盒就是正常字的高度。
+  final double rowH = _medianGlyphHeight(boxes);
+  Rect hitRect(int i) {
+    final Rect r = boxes[i].rect;
+    if (rowH <= 0 || r.height <= rowH * 1.6) return r;
+    return Rect.fromCenter(center: r.center, width: r.width, height: rowH);
+  }
+
   // ★ 两趟命中（S3-2 实测修正）：
   //   只做"外扩后第一个包含"的话，**前一个盒会把点抢走** ——
   //   例：盒子 2 = x41..57、盒子 3 = x57..68，点 x=58 明明在盒子 3 内部，
@@ -104,7 +133,7 @@ MathHit hitTestMathTex({
   //   所以：**严格包含优先**，都落空时才退回"外扩 + 就近"。
   var hit = -1;
   for (var i = 0; i < boxes.length; i++) {
-    if (boxes[i].rect.contains(localPos)) {
+    if (hitRect(i).contains(localPos)) {
       hit = i;
       break;
     }
@@ -117,7 +146,7 @@ MathHit hitTestMathTex({
   var onGlyph = hit >= 0;
   if (hit < 0) {
     for (var i = 0; i < boxes.length; i++) {
-      if (boxes[i].rect.inflate(inflate).contains(localPos)) {
+      if (hitRect(i).inflate(inflate).contains(localPos)) {
         hit = i;
         how = '外扩命中';
         onGlyph = true;
@@ -128,7 +157,7 @@ MathHit hitTestMathTex({
   if (hit < 0 && boxes.isNotEmpty) {
     var best = double.infinity;
     for (var i = 0; i < boxes.length; i++) {
-      final double d = (boxes[i].rect.center - localPos).distance;
+      final double d = (hitRect(i).center - localPos).distance;
       if (d < best) {
         best = d;
         hit = i;
