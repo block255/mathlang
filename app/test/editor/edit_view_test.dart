@@ -11,6 +11,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_math_fork/flutter_math.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:mathlang/core/block.dart';
 import 'package:mathlang/core/doc_buffer.dart';
 import 'package:mathlang/editor/edit_view.dart';
 import 'package:mathlang/render/inline_math_text.dart';
@@ -833,6 +834,66 @@ $$
           reason: '空公式也要渲染出来（占位字形）—— 否则既看不见也点不到');
       expect(tester.getSize(ms.first).width, greaterThan(5),
           reason: '★ 空公式若渲染成零尺寸，用户会看到"按了没反应"');
+    });
+  });
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // ★★ S4-a · A1：多行粘贴的**行边界**（2026-10-17；走真实提交链 `_commitText`）
+  //    用户报的："粘一段 AI 答案就把 `$$` 打坏 ⇒ Parser Error: Can't use function '$'"
+  // ══════════════════════════════════════════════════════════════════════════
+  group(r'★★ S4-a A1：多行载荷的行边界（真实提交链）', () {
+    testWidgets(r'句子中间粘 `$$…$$` ⇒ 两端补出 `\n`、块自成行、**只记一次编辑**',
+        (WidgetTester tester) async {
+      const String src = '前文 甲乙丙 后文';
+      final DocBuffer buf = DocBuffer(src);
+      EditViewStats? last;
+      await _mount(tester, buf, onStats: (EditViewStats s) => last = s);
+      buf.setCaret(5); // = '乙' 与 '丙' 之间（一句话的中间）
+      await tester.pump();
+
+      tester.testTextInput.updateEditingValue(_v('\$\$\nx=1\n\$\$'));
+      await tester.pump();
+
+      expect(buf.buf, '前文 甲乙\n\$\$\nx=1\n\$\$\n丙 后文',
+          reason: r'★ 载荷两端各补一个 `\n` —— 否则 `$$` 与同行文字粘在一起，围栏就没了');
+      expect(last?.edits, 1, reason: '★ 补换行与插入必须是**同一次编辑**（一步撤销）');
+      // 块模型视角：那个 `$$` 块必须是一个**独立的数学块**（不是行内公式碎片）
+      final BlockIndex idx = BlockIndex.parse(buf.buf);
+      expect(idx.blocks.where((Block b) => b.type == BlockType.math).length, 1);
+      // 画面上不许出现源码 / 报错
+      expect(find.textContaining('❌'), findsNothing);
+    });
+
+    testWidgets(r'句子中间粘**纯文字**多行 ⇒ 一个换行都不补（D 口径：原样进门）',
+        (WidgetTester tester) async {
+      const String src = '前文 甲乙丙 后文';
+      final DocBuffer buf = DocBuffer(src);
+      await _mount(tester, buf);
+      buf.setCaret(5);
+      await tester.pump();
+
+      tester.testTextInput.updateEditingValue(_v('第一行\n第二行'));
+      await tester.pump();
+
+      expect(buf.buf, '前文 甲乙第一行\n第二行丙 后文');
+    });
+
+    testWidgets(r'★ 光标停在 `$$` 围栏行末尾 + 粘多行 ⇒ 落到围栏行**之后**（不撑坏围栏）',
+        (WidgetTester tester) async {
+      const String src = '前文\n\n\$\$\nx=1\n\$\$\n\n后文\n';
+      final DocBuffer buf = DocBuffer(src);
+      await _mount(tester, buf);
+      final int closingFenceEnd = src.indexOf(r'$$', 6) + 2;
+      buf.setCaret(closingFenceEnd);
+      await tester.pump();
+
+      tester.testTextInput.updateEditingValue(_v('第一行\n第二行'));
+      await tester.pump();
+
+      expect(buf.buf.startsWith('前文\n\n\$\$\nx=1\n\$\$\n第一行'), isTrue,
+          reason: '载荷必须从围栏行**下一行**开始。实际：\n${buf.buf}');
+      expect(RegExp(r'^\$\$.+$', multiLine: true).hasMatch(buf.buf), isFalse,
+          reason: r'★ 围栏行不许被撑长（`$$第一行` 就不再是围栏了）');
     });
   });
 }

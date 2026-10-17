@@ -11,11 +11,19 @@
 //   ① **每行 `$` 的个数不变**（插入的文本里没有 `$`，所以"多一个少一个"只可能是劈开了围栏）
 //   ② **数学段的结构不变**：块级数学块的数量、每行行内数学段的数量
 //   ⇒ 对 语料 × 每一个偏移 × {一个字符, Enter(\n\n), Shift+Enter(  \n) } 全跑一遍。
+//
+// ★★ 2026-10-17 S4-a 补第二份扫描（用户报的"粘多行文本把 `$$` 打坏 ⇒ Parser Error"）：
+//   上面那三份载荷**一个 `$` 都没有** ⇒ "载荷自带围栏"这一族从来没进过扫描（这就是漏网原因）。
+//   第二份扫描的载荷 = 8 份**含 `$$` 的真实粘贴文本**，判据换成
+//   "每个数学段的 tex **不含 `$`** 且**能被 KaTeX 解析**"（`$` 出现在 tex 里正是那条报错的源头）；
+//   配合的修法是 `insert_guard` 的**规则 ③（围栏行不可落）／④（整行语法补行边界）**。
 
+import 'package:flutter_math_fork/tex.dart' show TexParser, TexParserSettings;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mathlang/core/block.dart';
 import 'package:mathlang/render/insert_guard.dart';
 import 'package:mathlang/render/projection.dart';
+import 'package:mathlang/spike/s3_edit/s3_edit_page.dart' show kEditSample;
 
 const List<String> _corpus = <String>[
   '前文\n\n\$\$\nx=1\n\$\$\n\n后文', // 多行围栏
@@ -57,10 +65,10 @@ List<String> _chunks(String src) {
   final out = <String>[];
   for (final Block b in idx.blocks) {
     if (b.type != BlockType.math) continue;
-    final String body = <String>[
+    final List<String> ls = <String>[
       for (var l = b.lineFrom; l < b.lineTo; l++) idx.lines.text(l),
-    ].join('\n');
-    out.add('B:$body');
+    ];
+    out.add('B:${_blockTex(ls)}');
   }
   for (var i = 0; i < idx.lines.count; i++) {
     for (final ProjectionSegment s in projectInline(idx.lines.text(i))) {
@@ -70,7 +78,21 @@ List<String> _chunks(String src) {
   return out;
 }
 
-/// 模拟 `EditView._commitText`：先补花括号（如需要），再按计划落点插入
+/// 与 `doc_view._mathParts` 同一条判据：剥掉 `$$` 围栏（块的行区间**含**围栏行）
+String _blockTex(List<String> ls) {
+  if (ls.length == 1) {
+    var body = ls.first.trim();
+    if (body.startsWith(r'$$')) body = body.substring(2);
+    if (body.endsWith(r'$$')) body = body.substring(0, body.length - 2);
+    return body;
+  }
+  final bool closed = ls.last.trim().startsWith(r'$$');
+  final List<String> inner =
+      closed ? ls.sublist(1, ls.length - 1) : ls.sublist(1);
+  return inner.join('\n');
+}
+
+/// 模拟 `EditView._commitText`：先补花括号（如需要）、按计划落点插入，**并应用规则 ④ 的补行边界**
 String _apply(String src, InsertPlan plan, String text) {
   var buf = src;
   final ({int start, int end})? wrap = plan.wrapBareArg;
@@ -78,7 +100,8 @@ String _apply(String src, InsertPlan plan, String text) {
     buf = buf.replaceRange(wrap.start, wrap.end, '{${buf.substring(wrap.start, wrap.end)}}');
   }
   final int at = plan.offset.clamp(0, buf.length);
-  return buf.substring(0, at) + text + buf.substring(at);
+  final String payload = plan.padText(text);
+  return buf.substring(0, at) + payload + buf.substring(at);
 }
 
 void main() {
@@ -130,6 +153,108 @@ void main() {
       }
     });
   });
+
+  // ══════════════════════════════════════════════════════════════════════
+  // ★★ 第二份扫描（2026-10-17 S4-a）：**载荷自带围栏**的多行文本
+  // ══════════════════════════════════════════════════════════════════════
+  group(r'★★ 全域：含 `$$` 的多行载荷插到任意偏移后，数学段必须仍可解析', () {
+    test('每一段 tex 都不许含 `\$`、且必须能解析（1840 组）', () {
+      final List<String> bad = <String>[];
+      for (final String src in _pasteCorpus) {
+        for (var o = 0; o <= src.length; o++) {
+          for (int pi = 0; pi < _pastePayloads.length; pi++) {
+            final String text = _pastePayloads[pi];
+            final String after = _apply(src, planInsert(src, o, text), text);
+            final String? why = _firstBrokenSegment(after);
+            if (why != null) {
+              bad.add('语料#${_pasteCorpus.indexOf(src)} 偏移 $o 载荷#$pi ⇒ $why\n'
+                  '      结果=「${_esc(after)}」');
+            }
+          }
+        }
+      }
+      expect(bad, isEmpty,
+          reason: r'多行粘贴把数学段插坏了（`$$` 配乱 ⇒ Parser Error）：'
+              '\n${bad.take(12).join('\n')}');
+    });
+
+    test(r'D 口径：句子中间粘**纯文字**多行 ⇒ 一个换行都不补（原样进门）', () {
+      const String src = '前文 甲乙丙 后文';
+      final InsertPlan p = planInsert(src, 5, '第一行\n第二行');
+      expect(p.padding.any, isFalse);
+      expect(p.moved, isFalse);
+      expect(_apply(src, p, '第一行\n第二行'), '前文 甲乙第一行\n第二行丙 后文');
+    });
+
+    test(r'规则 ④：句子中间粘 AI 答案（首/尾行是 `$$`）⇒ 两侧各补一个 `\n`', () {
+      const String src = '前文 甲乙丙 后文';
+      const String payload = '\$\$\nx=1\n\$\$';
+      final InsertPlan p = planInsert(src, 5, payload);
+      expect(p.padding.prefixNewline, isTrue);
+      expect(p.padding.suffixNewline, isTrue);
+      final String after = _apply(src, p, payload);
+      expect(after, '前文 甲乙\n\$\$\nx=1\n\$\$\n丙 后文');
+      expect(_firstBrokenSegment(after), isNull);
+    });
+
+    test(r'规则 ④：尾行是普通文字时**只补前**（后侧无害就不动文档）', () {
+      const String src = '前文 甲乙丙 后文';
+      const String payload = '\$\$\nx=1\n\$\$\n答案';
+      final InsertPlan p = planInsert(src, 5, payload);
+      expect(p.padding.prefixNewline, isTrue);
+      expect(p.padding.suffixNewline, isFalse);
+    });
+
+    test(r'规则 ③：粘在**围栏行末尾**（`$$` 之后、换行之前）⇒ 挪到围栏行之后', () {
+      const String src = '前文\n\n\$\$\nx=1\n\$\$\n\n后文';
+      final int closingFenceEnd = src.indexOf(r'$$', 6) + 2; // 闭合 `$$` 之后、`\n` 之前
+      final InsertPlan p = planInsert(src, closingFenceEnd, '第一行\n第二行');
+      expect(p.moved, isTrue);
+      expect(p.offset, closingFenceEnd + 1, reason: '应跳到围栏行的下一行行首');
+      expect(_firstBrokenSegment(_apply(src, p, '第一行\n第二行')), isNull);
+    });
+
+    test(r'规则 ③ 不误伤既有行为：`\n\n` / `  \n` 落在围栏行末尾仍按老规则', () {
+      const String src = '前文\n\n\$\$\nx=1\n\$\$\n\n后文';
+      final int closingFenceEnd = src.indexOf(r'$$', 6) + 2;
+      expect(planInsert(src, closingFenceEnd, '\n\n').offset, closingFenceEnd);
+      expect(planInsert(src, closingFenceEnd, '  \n').offset, closingFenceEnd);
+    });
+  });
+}
+
+/// 第二份扫描的语料（含真实样本）
+const List<String> _pasteCorpus = <String>[
+  kEditSample,
+  r'文字 $x$ 尾巴',
+  '',
+  '前文\n\n\$\$\nx=1\n\$\$\n\n后文',
+];
+
+/// 第二份扫描的载荷 = 8 份"粘贴进来的一段"（都含围栏；最后一档是 CRLF）
+const List<String> _pastePayloads = <String>[
+  '第一行\n\n\$\$\nx=1\n\$\$\n最后一行', // 空行包裹
+  '所以：\n\$\$\ny=2\n\$\$', // ★ 文字紧接着围栏（无空行）
+  '\$\$\nx=1\n\$\$', // 纯块
+  '\$\$x=1\$\$', // 单行闭合
+  '设 \$a\$ 与 \$b\$\n\n\$\$\n\\frac{a}{b}\n\$\$\n\n所以', // 混排行内 + 行间
+  '答案：\$x=1\$\n\$\$\n\\therefore x=1\n\$\$', // 行内紧接行间
+  '**解**：\n\n\$\$\nx=\\frac{-b\\pm\\sqrt{b^2-4ac}}{2a}\n\$\$\n', // AI 输出常见形
+  '第一行\r\n\r\n\$\$\r\nx=1\r\n\$\$\r\n最后一行', // ★ CRLF 载荷
+];
+
+/// 第一段"坏了"的数学段（tex 含 `$` 或解析失败）；全好返回 null
+String? _firstBrokenSegment(String src) {
+  for (final String tex in _chunks(src)) {
+    final String body = tex.substring(2); // 去掉 `B:` / `I:`
+    if (body.contains(r'$')) return 'tex 里出现了 `\$`：${_esc(body)}';
+    try {
+      TexParser(body, const TexParserSettings()).parse();
+    } catch (e) {
+      return '解析失败（${_esc(body)}）：$e';
+    }
+  }
+  return null;
 }
 
 String _esc(String s) => s.replaceAll('\n', r'\n');

@@ -223,13 +223,20 @@ class EditViewState extends State<EditView> {
     //   ② ★ 2026-10-17 加：**插在语法粘合处要挪位**（`\sum` 与它的上下限之间、裸参数里）——
     //      插入物会顶掉 `^`/`_` 的结合，版面当场变（用户实测"点 ∑ 就散架"）。
     //      ⇒ 与光标注入**同一条规则**（`caret_sites.neutralPoint`），保证"画在哪 = 插在哪"。
-    //   ★ 只调整**落点**，不吞内容：非换行的插入照样进公式
+    //   ③④ ★★ 2026-10-17 S4-a 加：**多行载荷的行边界**（围栏行不可落 / 整行语法自成行）——
+    //      用户报的"粘多行文本把 `$$` 打坏 ⇒ Parser Error"就在这两条上（见 `InsertPadding`）。
+    //   ★ 只调整**落点**与**载荷边界的换行**，不吞内容：非换行的插入照样进公式
     // ★★ ⑤ 有选区 ⇒ **一次区间替换**（标准编辑器行为），而且必须是**一步撤销**。
     //   （原来是"先删选区、再插入" = 两次 `_mutate` ⇒ Ctrl+Z 要按两下 —— 记账里那条
     //    "撤销分组复核"就是查这个。）替换语义下也不走 `planInsert` 的粘合处挪位：
     //   用户已经把要替换的范围选中了，按选中的意图办。
+    //   ★ 但**规则 ④（载荷边界）照样适用**：选区的两个端点也可能落在同一行中间。
     if (_buf.hasSelection) {
-      _mutate(() => _buf.replace(_buf.selectionStart, _buf.selectionEnd, text));
+      final InsertPadding pad =
+          padForRange(_buf.buf, _buf.selectionStart, _buf.selectionEnd, text);
+      final String payload = pad.wrap(text);
+      _mutate(() =>
+          _buf.replace(_buf.selectionStart, _buf.selectionEnd, payload));
       return;
     }
     final InsertPlan plan = planInsert(_buf.buf, _buf.caret, text);
@@ -241,7 +248,7 @@ class EditViewState extends State<EditView> {
         _buf.replace(wrap.start, wrap.end, '{$arg}');
       }
       if (_buf.caret != plan.offset) _buf.setCaret(plan.offset);
-      _buf.insertText(text);
+      _buf.insertText(plan.padText(text));
     });
   }
 
