@@ -1,4 +1,4 @@
-﻿// ★★ 命中精度：**拉伸的行盒**不许把上下限的格子吞掉（2026-10-17，用户实测）
+// ★★ 命中精度：**拉伸的行盒**不许把上下限的格子吞掉（2026-10-17，用户实测）
 //
 // 用户原话：「我发现我很难点到 `n` 后面的位置，点这里通常会落在 ∑ 和 aᵢ 之间，
 //            然后点 `i=1` 的 `i` 后面经常会落到 `i` 前面去」
@@ -87,6 +87,28 @@ void main() {
     expect(_tap(r, 41, 28), 15, reason: '`a` 右半');
     expect(_tap(r, 44, 30), 16, reason: '下标 `i` 左半');
     expect(_tap(r, 47, 30), 17, reason: '下标 `i` 右半');
+  });
+
+  testWidgets('★★ 大盒按行分带：∑ **上面那一块**不论点哪儿都落上限（不落 ∑ 侧面）',
+      (WidgetTester tester) async {
+    final _Rig r = await _pump(tester, r'\sum_{i=1}^{n}a_i');
+    for (final double y in <double>[3, 6, 9]) {
+      for (final double x in <double>[2, 8, 14, 20, 24, 28]) {
+        expect(_tap(r, x, y), anyOf(12, 13),
+            reason: '点 ($x, $y) 在上限那一带 ⇒ 必须落上限，不许落 ∑ 侧面');
+      }
+    }
+  });
+
+  testWidgets('★★ 大盒按行分带：∑ **下面那一块**同理（落 `i=1` 那一行）',
+      (WidgetTester tester) async {
+    final _Rig r = await _pump(tester, r'\sum_{i=1}^{n}a_i');
+    for (final double y in <double>[46, 50, 55]) {
+      for (final double x in <double>[2, 6, 12, 18, 24]) {
+        expect(_tap(r, x, y), anyOf(6, 7, 8, 9),
+            reason: '点 ($x, $y) 在下限那一带 ⇒ 必须落下限');
+      }
+    }
   });
 
   testWidgets('★ 拉伸盒的判据：中位数 ×1.6（不写死 em）', (WidgetTester tester) async {

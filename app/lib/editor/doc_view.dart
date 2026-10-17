@@ -1189,6 +1189,27 @@ class _DocViewState extends State<DocView> {
       }
     }
 
+    // ★★ ⑥ 丙 · **文末空行**（2026-10-17 用户实测："点底下空行，光标在文本末尾没消失"）：
+    //   末段之后没有"下一个单元"夹着 ⇒ 上面那个 gap 循环里根本轮不到它。
+    //   做法：在**最后一页**末尾补一个空行槽（高度取普通块间距，不改变分页 ——
+    //   分页是按单元高度算的，这一段只在页面内部）。
+    if (p == layout.pageCount - 1 && prevUnit != null) {
+      final int blankOffset = _blankOffsetAfter(prevUnit);
+      if (blankOffset >= 0) {
+        children.add(_BlankSlot(
+          id: 'blank@$blankOffset',
+          height: _gapBefore(BlockType.paragraph),
+          offset: blankOffset,
+          caretHere: _caret == blankOffset,
+          caretHeight: textCaretHeight(_s.bodyFontSize),
+          caretWidth: 1.5,
+          caretColor: const Color(kCaretColorValue),
+          onTap: (int at) => widget.onTapOffset?.call(at),
+          onBox: (String id, RenderBox box) => _blankBoxes[id] = box,
+        ));
+      }
+    }
+
     return PageSheet(
       settings: _s,
       metrics: _m,

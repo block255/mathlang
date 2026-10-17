@@ -126,24 +126,33 @@ MathHit hitTestMathTex({
     return Rect.fromCenter(center: r.center, width: r.width, height: rowH);
   }
 
+  // ★★ **行优先**（2026-10-17 用户实测"n 后面还是点不到"）：点在某个字形盒的**竖直范围之内**
+  //   （`dy == 0`）⇒ 就落**那一行**里水平最近的那个盒。
+  //   为什么必须加这一趟：`\sum` 的节点盒把上下限**整片盖住**，而"点上限右边"那一点
+  //   虽然竖直上就落在 `n` 这一行里，却也在 `\sum` 节点的范围里 ⇒ 只按"包含"判就会给 `\sum`。
+  //   行优先之后：点 `n` 右边 = `n` 这一行最近的字形 = `n` ⇒ 落 `n` 之后 ✓。
+  //   ★ 竖直落在**两行之间**（`dy > 0`，例如分式分数线那一带）⇒ 不算行内命中，
+  //     仍走下面的"严格包含 / 外扩 / 就近"⇒ 保留 ③-B（点分式右边 = 结构之后）。
+  var hit = -1;
+  var how = '';
+  var onGlyph = false;
+
   // ★ 两趟命中（S3-2 实测修正）：
   //   只做"外扩后第一个包含"的话，**前一个盒会把点抢走** ——
   //   例：盒子 2 = x41..57、盒子 3 = x57..68，点 x=58 明明在盒子 3 内部，
   //   却先被盒子 2 的外扩矩形（39..59）匹配到 → 结果整整差一个原子。
   //   所以：**严格包含优先**，都落空时才退回"外扩 + 就近"。
-  var hit = -1;
+  how = '包含命中';
   for (var i = 0; i < boxes.length; i++) {
     if (hitRect(i).contains(localPos)) {
       hit = i;
       break;
     }
   }
-
-  var how = '包含命中';
   // ★★ `onGlyph` 必须用**布尔标记**，不能比对 `how` 字符串 ——
   //    最近兜底那个 `how` 带着 `(x px)` 后缀，`how != '就近命中'` 恒真
   //    （实测踩到：③-B 接线后行为完全没变，就是这个判据写错）。
-  var onGlyph = hit >= 0;
+  onGlyph = hit >= 0;
   if (hit < 0) {
     for (var i = 0; i < boxes.length; i++) {
       if (hitRect(i).inflate(inflate).contains(localPos)) {
@@ -165,6 +174,33 @@ MathHit hitTestMathTex({
     }
     how = '就近命中(${best.toStringAsFixed(1)}px)';
     onGlyph = false; // 只是"最近"，不是真的点中了
+  }
+
+  // ★★ **大盒按行分带**（2026-10-17 用户拍板："∑ 上面这一块隶属于上部子层级，点击上下部不该落在 ∑ 侧面"）：
+  //   `\sum` 那种**被拉伸的行盒**（高 46，把上下限整片盖住）一旦被"包含"命中，
+  //   就改判成**点所在的那一行**（该行里水平最近的字形）—— 于是：
+  //   点上限那一带 ⇒ 上限（`n` 前后）、点下限那一带 ⇒ 下限（`i=1`），**都不再落到 ∑ 的左右侧**。
+  //   ★ 只对**拉伸盒**生效：尾垫（零高）、字形、分式分子分母等**一律不动**
+  //     （否则"点分式右边 ⇒ 结构之后"（③-B）和"点尾垫 ⇒ 结构末尾"（§11.18）会被破坏）。
+  if (hit >= 0 && rowH > 0 && boxes[hit].rect.height > rowH * 1.6) {
+    var band = -1;
+    var bestDx = double.infinity;
+    for (var i = 0; i < boxes.length; i++) {
+      final Rect r = hitRect(i);
+      if (localPos.dy < r.top || localPos.dy > r.bottom) continue;
+      final double dx = localPos.dx < r.left
+          ? r.left - localPos.dx
+          : (localPos.dx > r.right ? localPos.dx - r.right : 0);
+      if (dx < bestDx) {
+        bestDx = dx;
+        band = i;
+      }
+    }
+    if (band >= 0 && band != hit) {
+      hit = band;
+      how = '行内命中（大盒按行分带）';
+      onGlyph = true;
+    }
   }
 
   final PairGroup? g = hit >= 0 ? pairing.groupOfBox(hit) : null;
