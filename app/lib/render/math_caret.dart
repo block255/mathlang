@@ -30,6 +30,7 @@
 //
 // **纯 Dart + Flutter（无第三方依赖）。**
 
+import 'hit_map.dart';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -54,7 +55,13 @@ class MathWithCaret extends StatefulWidget {
     this.caretEdge = CaretEdge.none,
     this.textFontSize,
     this.onErrorFallback = Math.defaultOnErrorFallback,
+    this.selFrom,
+    this.selTo,
   });
+
+  /// **选区**（⑤ 高亮）：tex 相对区间 `[selFrom, selTo)`；`null` = 这段没被选中
+  final int? selFrom;
+  final int? selTo;
 
   /// **渲染 tex**（已经过注入链：空槽占位 + 锚点）
   final String tex;
@@ -92,6 +99,9 @@ class _MathWithCaretState extends State<MathWithCaret> {
   /// ★ ④-4「甲」瞬时边界刻度（只在"公式之前 / 之后"那两格出现）
   Rect? _tick;
 
+  /// 选区底色块（⑤）：按原子铺，纯绘制
+  List<Rect> _bands = const <Rect>[];
+
   @override
   void initState() {
     super.initState();
@@ -119,6 +129,19 @@ class _MathWithCaretState extends State<MathWithCaret> {
     if (root == null) return;
     final RenderBox? anchor = widget.showCaret ? findCaretAnchor(root) : null;
     final Offset? at = anchor?.localToGlobal(Offset.zero, ancestor: root);
+
+    // ★★ ⑤ 选区底色：按**原子**铺（纯绘制，不改尺寸 ⇒ 不影响排版与分页）
+    final int? sf = widget.selFrom;
+    final int? st = widget.selTo;
+    final List<Rect> bands = (sf == null || st == null || st <= sf)
+        ? const <Rect>[]
+        : selectionBands(
+            root: root,
+            tex: widget.tex,
+            from: sf,
+            to: st,
+            displayStyle: widget.mathStyle == MathStyle.display,
+          );
 
     Rect? bar;
     Rect? tick;
@@ -159,11 +182,15 @@ class _MathWithCaretState extends State<MathWithCaret> {
     // ★ 空槽垫子：**当前槽**靠"锚点落在哪个垫子盒里"认出来（实测：空槽里锚点正好在垫子右缘）
     final List<SlotPad> pads = scanSlotPads(root, caretAt: at);
 
-    if (!_samePads(pads, _pads) || _bar != bar || _tick != tick) {
+    if (!_samePads(pads, _pads) ||
+        _bar != bar ||
+        _tick != tick ||
+        !MathCaretPainter.sameRects(bands, _bands)) {
       setState(() {
         _bar = bar;
         _pads = pads;
         _tick = tick;
+        _bands = bands;
       });
     }
   }
@@ -180,7 +207,10 @@ class _MathWithCaretState extends State<MathWithCaret> {
   Widget build(BuildContext context) {
     final bool caretVisible = widget.showCaret && _bar != null;
     // ★ 只要"有竖条 / 有垫子 / 有刻度"就要挂 painter（垫子与光标在不在无关）
-    final bool any = caretVisible || _pads.isNotEmpty || _tick != null;
+    final bool any = caretVisible ||
+      _pads.isNotEmpty ||
+      _tick != null ||
+      _bands.isNotEmpty; // ★ ⑤ 有选区底块也要挂 painter
     return CustomPaint(
       foregroundPainter: any
           ? MathCaretPainter(
@@ -188,6 +218,7 @@ class _MathWithCaretState extends State<MathWithCaret> {
               color: const Color(kCaretColorValue),
               caretVisible: caretVisible,
               pads: _pads,
+              bands: _bands,
               tick: _tick,
               // 虚线的"一格"跟随本段字号（不写死像素，§6.4）
               dashUnit: widget.fontSize / 16.0,
@@ -210,6 +241,8 @@ class _MathWithCaretState extends State<MathWithCaret> {
 /// （`字号 × 1.25`，以锚点给出的**基线**为基准）—— 那种情形只出现在"空挂件"等少数格里。
 ///
 /// 上下各留 [kCaretInset]（8%）：竖条不贴边，看起来像光标而不是一个色块。
+/// 选区底色（**纯绘制**，不参与布局）：淡蓝、半透明 —— 盖在字形后面
+const int kSelectionColorValue = 0x3D1E88E5;
 const double kCaretInset = 0.08;
 
 /// ★★ **文本层光标高度**（= "文字后面的光标"的标准，也是旧值）：
@@ -595,6 +628,7 @@ class MathCaretPainter extends CustomPainter {
     this.pads = const <SlotPad>[],
     this.tick,
     this.dashUnit = 1.0,
+    this.bands = const <Rect>[],
   });
 
   /// 竖条的矩形（[caretVisible] 为 `false` 时无意义）
@@ -613,8 +647,18 @@ class MathCaretPainter extends CustomPainter {
   /// 虚线的尺度（= 本段字号 / 16 ⇒ 跟随字号，不写死像素）
   final double dashUnit;
 
+  /// **选区高亮的底色块**（⑤）：按原子铺，交给 `hit_map.selectionBands` 算好
+  final List<Rect> bands;
+
   @override
   void paint(Canvas canvas, Size size) {
+    // ★ 选区底色先铺（在垫子与竖条**之下**）
+    if (bands.isNotEmpty) {
+      final Paint sel = Paint()..color = const Color(kSelectionColorValue);
+      for (final Rect r in bands) {
+        canvas.drawRect(r, sel);
+      }
+    }
     for (final SlotPad p in pads) {
       final Rect r = p.rect.deflate(0.5);
       final Paint stroke = Paint()
@@ -647,7 +691,17 @@ class MathCaretPainter extends CustomPainter {
       old.caretVisible != caretVisible ||
       old.tick != tick ||
       old.dashUnit != dashUnit ||
+      !sameRects(old.bands, bands) ||
       !_samePads(old.pads, pads);
+
+  /// 选区底块比较（`_measure` 也要用，所以 public）
+  static bool sameRects(List<Rect> a, List<Rect> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
+  }
 
   static bool _samePads(List<SlotPad> a, List<SlotPad> b) {
     if (a.length != b.length) return false;

@@ -94,8 +94,8 @@ class _BlankSlotState extends State<_BlankSlot> {
   }
 
   @override
-  void didUpdateWidget(_BlankSlot old) {
-    super.didUpdateWidget(old);
+  void didUpdateWidget(_BlankSlot oldWidget) {
+    super.didUpdateWidget(oldWidget);
     _report();
   }
 
@@ -359,10 +359,10 @@ class DocView extends StatefulWidget {
   final String composingText;
 
   @override
-  State<DocView> createState() => _DocViewState();
+  State<DocView> createState() => DocViewState();
 }
 
-class _DocViewState extends State<DocView> {
+class DocViewState extends State<DocView> {
   late DocSettings _s = widget.settings;
   late PageGeometry _m = PageGeometry.from(_s);
 
@@ -394,6 +394,10 @@ class _DocViewState extends State<DocView> {
 
   /// 空行槽的渲染盒（⑥ 丙）：给"光标在空行上"时的输入面定位用
   final Map<String, RenderBox> _blankBoxes = <String, RenderBox>{};
+
+  /// ⑤ 选区（绝对偏移；无选区时 `start == end`）
+  int _selStart = 0;
+  int _selEnd = 0;
 
   // ---------------- 光标像素位置（S3-2：给镜像输入框定位） ----------------
 
@@ -494,16 +498,47 @@ class _DocViewState extends State<DocView> {
   void _handleUnitHit(_Unit u, BuildContext ctx, Offset global) {
     final void Function(int)? cb = widget.onTapOffset;
     if (cb == null) return;
+    final int? off = _offsetAt(u, ctx.findRenderObject(), global);
+    if (off != null) cb(off);
+  }
+
+  /// ★★ ⑤ 拖选要用的**纯查询**：某个全局坐标落在哪个偏移上（不改任何状态）。
+  ///
+  /// 与点击走**同一套**判据（行间块 → 公式命中；文字 → 段落排版器），
+  /// 这样"拖着走"给出的落点与"点一下"完全一致。
+  int? offsetAtGlobal(Offset global) {
+    for (final _Unit u in _units) {
+      final RenderBox? box = _unitBoxes[u.id];
+      if (box == null || !box.hasSize) continue;
+      if (!(Offset.zero & box.size).contains(box.globalToLocal(global))) continue;
+      return _offsetAt(u, box, global);
+    }
+    return null; // 页边/空白空隙 ⇒ 拖选不动（视觉上"拖到这儿就停了"）
+  }
+
+  /// 命中计算本体（[ro] 是单元盒或公式盒）
+  int? _offsetAt(_Unit u, RenderObject? ro, Offset global) {
+    if (ro is! RenderBox || !ro.hasSize) return null;
 
     // ① 行间公式块：整块就是一个数学段
     if (u.type == BlockType.math) {
-      _onMathBlockTap(u, global, _renderParts(u.type, u.source).text);
-      return;
+      final RenderObject? mr =
+          _mathBlockKeys[u.id]?.currentContext?.findRenderObject();
+      if (mr is! RenderBox || !mr.hasSize) return null;
+      final String rawTex = _renderParts(u.type, u.source).text;
+      final int? caretRel = _caret == null ? null : u.relFor(_caret);
+      final int? texRel = _mathTapTexOffset(
+        tex: rawTex,
+        renderTex: _renderTexFor(rawTex, caretRel),
+        root: mr,
+        global: global,
+        displayStyle: true,
+      );
+      if (texRel == null) return null;
+      return u.renderBase + buildCaretSites(rawTex).snap(texRel).offset;
     }
 
     // ② 文字（段落 / 标题 / 引用 / 列表项）：交给段落排版器
-    final RenderObject? ro = ctx.findRenderObject();
-    if (ro is! RenderBox || !ro.hasSize) return;
     final String text = _renderParts(u.type, u.source).text;
     final int? rel = u.relFor(_caret);
     final List<int> map = paragraphIndexMap(
@@ -513,11 +548,11 @@ class _DocViewState extends State<DocView> {
       caretInText: _caretInTextSegment(text, rel),
     );
     final RenderParagraph? para = _contentParagraph(ro, _plainTextOf(text));
-    if (para == null) return;
+    if (para == null) return null;
     final TextPosition tp =
         para.getPositionForOffset(para.globalToLocal(global));
     final int p = tp.offset.clamp(0, map.length - 1);
-    cb(u.renderBase + map[p]);
+    return u.renderBase + map[p];
   }
 
   /// 光标落在本段**文字段**里的相对偏移（落在数学段里则 null —— 那时不产生额外码元）
@@ -594,23 +629,6 @@ class _DocViewState extends State<DocView> {
   }
 
   /// 行间公式块被点中
-  void _onMathBlockTap(_Unit u, Offset global, String rawTex) {
-    final void Function(int)? cb = widget.onTapOffset;
-    if (cb == null) return;
-    final RenderObject? ro = _mathBlockKeys[u.id]?.currentContext?.findRenderObject();
-    if (ro is! RenderBox || !ro.hasSize) return;
-    final int? caretRel = _caret == null ? null : u.relFor(_caret);
-    final String renderTex = _renderTexFor(rawTex, caretRel);
-    final int? texRel = _mathTapTexOffset(
-      tex: rawTex,
-      renderTex: renderTex,
-      root: ro,
-      global: global,
-      displayStyle: true, // ★ 行间块 = display 样式（堆叠上下限）
-    );
-    if (texRel == null) return;
-    cb(u.renderBase + buildCaretSites(rawTex).snap(texRel).offset);
-  }
 
   /// 行内公式被点中（`InlineMathText.onMathTap` 给的是**段内相对**的 tex、
   /// **渲染用的 tex**、以及渲染盒 key）
@@ -723,13 +741,13 @@ class _DocViewState extends State<DocView> {
   }
 
   @override
-  void didUpdateWidget(DocView old) {
-    super.didUpdateWidget(old);
-    if (old.buffer != widget.buffer) {
-      old.buffer.removeListener(_onBufferChanged);
+  void didUpdateWidget(DocView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.buffer != widget.buffer) {
+      oldWidget.buffer.removeListener(_onBufferChanged);
       widget.buffer.addListener(_onBufferChanged);
     }
-    if (old.settings != widget.settings) {
+    if (oldWidget.settings != widget.settings) {
       _s = widget.settings;
       _m = PageGeometry.from(_s);
       // 版面变了：**缓存的旧高度全部作废**，否则高度比较会判定"没变化"而提前返回，
@@ -847,8 +865,26 @@ class _DocViewState extends State<DocView> {
     );
     final _Rendered r = _renderParts(u.type, u.source);
     final String text = r.text;
+    // ★★ ⑤ 选区 → **本单元的局部区间**（渲染坐标）。与本单元无交集 ⇒ null。
+    int? selFrom;
+    int? selTo;
+    if (_selEnd > _selStart) {
+      final int a = (_selStart - u.renderBase).clamp(0, u.renderLength);
+      final int b = (_selEnd - u.renderBase).clamp(0, u.renderLength);
+      if (b > a) {
+        selFrom = a;
+        selTo = b;
+      } else if (_selStart <= u.renderBase && _selEnd >= u.renderBase + u.renderLength) {
+        // 整单元被选中（含两端）
+        selFrom = 0;
+        selTo = u.renderLength;
+      }
+    }
     // 光标在本单元内时换算成**绝对偏移**（InlineMathText 用的是绝对偏移）
-    final int? caretAbs = caretRel == null ? null : u.renderBase + caretRel;
+    // ★ ⑤ 有选区时**不画光标**（标准编辑器行为：选区就是"当前操作对象"，光标让位）
+    final bool selecting = _selEnd > _selStart;
+    final int? caretAbs =
+        (caretRel == null || selecting) ? null : u.renderBase + caretRel;
     // ★ 组合中间态：只接给含光标的那一个单元，且行间公式块不接（见 _composingFor）
     final String composing = _composingFor(u, caretRel);
     // 只有渲染树需要接点击（测量树是离屏的，接了也没用，还会多两个对象）
@@ -872,6 +908,8 @@ class _DocViewState extends State<DocView> {
           source: text,
           baseOffset: u.renderBase,
           caretOffset: caretAbs,
+          selStart: selFrom,
+          selEnd: selTo,
           composingText: composing,
           mathFontSize: size,
           onMathTap: onMathTap,
@@ -899,6 +937,8 @@ class _DocViewState extends State<DocView> {
                 source: text,
                 baseOffset: u.renderBase,
                 caretOffset: caretAbs,
+                selStart: selFrom,
+                selEnd: selTo,
                 composingText: composing,
                 mathFontSize: body,
                 onMathTap: onMathTap,
@@ -920,6 +960,8 @@ class _DocViewState extends State<DocView> {
             source: text,
             baseOffset: u.renderBase,
             caretOffset: caretAbs,
+            selStart: selFrom,
+            selEnd: selTo,
             composingText: composing,
             mathFontSize: body,
             onMathTap: onMathTap,
@@ -958,6 +1000,9 @@ class _DocViewState extends State<DocView> {
         return Center(
           child: MathWithCaret(
             tex: tex,
+            // ★ ⑤ 选区：行间公式整块是一个对象（用户拍板）—— 被选中就铺整块
+            selFrom: selFrom,
+            selTo: selTo,
             // 块前那一格（`renderBase - 1`）也要画 —— 它已被本单元认领（acceptFrom）
             showCaret: caretAbs != null,
             caretEdge: beforeBlock
@@ -1000,6 +1045,8 @@ class _DocViewState extends State<DocView> {
           source: text,
           baseOffset: u.renderBase,
           caretOffset: caretAbs,
+          selStart: selFrom,
+          selEnd: selTo,
           composingText: composing,
           mathFontSize: body,
           onMathTap: onMathTap,
@@ -1279,6 +1326,9 @@ class _DocViewState extends State<DocView> {
     _blockCount = idx.blocks.length;
     _unitById = <String, _Unit>{for (final _Unit u in _units) u.id: u};
     _caret = widget.buffer.caret;
+    // ★★ ⑤ 选区（绝对偏移）—— 高亮**纯绘制**，不影响测量与分页
+    _selStart = widget.buffer.selectionStart;
+    _selEnd = widget.buffer.selectionEnd;
 
     // ① 离屏测量树：与真实渲染**同样的宽度、同样的 widget**，所以高度完全一致。
     //    ★ 光标也要一起传 —— 否则两棵树对同一个单元建出的 widget 不同，"渲染即测量"就不成立了。

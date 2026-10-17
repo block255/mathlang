@@ -232,3 +232,35 @@ MathHit hitTestMathTex({
     pairing: pairing,
   );
 }
+
+/// **选区高亮**：把源区间 `[from, to)` 映射成**按原子铺底的矩形**（§⑤ 高亮）。
+///
+/// 为什么按原子铺、而不是给整段公式套一个框：
+///   "同权"的意思是**行内公式就是一串字符**，所以拖选时高亮应当跟着**被选中的那几个字符**走
+///   （用户原话：「行内的话多项式根本就不是一个整体公式，完全可以丝滑地当作普通文本地拖选处理」）。
+///   相邻原子的盒是紧挨着的 ⇒ 看起来就是一条连续的底；下标/上限那个原子会稍微凸出来 ——
+///   那正是"公式里的字符"该有的样子。
+///
+/// ★ 纯几何：不改任何尺寸 ⇒ 不影响排版与分页。
+List<Rect> selectionBands({
+  required RenderObject root,
+  required String tex,
+  required int from,
+  required int to,
+  List<VisibleAtom>? atoms,
+  bool displayStyle = false,
+}) {
+  if (to <= from) return const <Rect>[];
+  final List<LeafBox> boxes = scanLeafBoxes(root).eligible;
+  final LeafPairing pairing = buildLeafPairing(
+    tex: tex,
+    boxes: boxes,
+    atoms: atoms ?? renderOrderAtoms(tex, displayStyle: displayStyle),
+  );
+  final List<Rect> out = <Rect>[];
+  for (final PairGroup g in pairing.groups) {
+    if (g.srcEnd <= from || g.srcStart >= to) continue;
+    out.add(g.hull(boxes));
+  }
+  return out;
+}

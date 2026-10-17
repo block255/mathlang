@@ -49,7 +49,15 @@ class InlineMathText extends StatefulWidget {
     this.onMathTap,
     this.caretWidth = 1.5,
     this.caretColor,
+    this.selStart,
+    this.selEnd,
   });
+
+  /// **选区**（⑤ 高亮）：`source` 内的区间 `[selStart, selEnd)`；`null` = 这段没被选中。
+  ///
+  /// ★ 用 `source` 的下标（不是绝对偏移）—— 调用方已经减过 `baseOffset`。
+  final int? selStart;
+  final int? selEnd;
 
   /// L0 里的这一段（一行或一段；`$...$` 由它自己投影）
   final String source;
@@ -143,18 +151,57 @@ class _InlineMathTextState extends State<InlineMathText> {
     CaretPlacement? pl,
   ) {
     if (!caretOwnedBy(pl, i, isMath: false)) {
-      return <InlineSpan>[TextSpan(text: s.text)];
+      return _runs(s.text, s.start);
     }
     final int r = pl!.localRel.clamp(0, s.text.length);
     return <InlineSpan>[
-      TextSpan(text: s.text.substring(0, r)),
+      ..._runs(s.text.substring(0, r), s.start),
       _caretBar(),
       // ★ 插入点在光标条之后：光标不动、拼音向右展开，后面的字被真的推开
       if (widget.composingText.isNotEmpty) _composingSpan(),
-      TextSpan(text: s.text.substring(r)),
+      ..._runs(s.text.substring(r), s.start + r),
     ];
   }
 
+  /// 把一段**纯文字**按选区切成「有底 / 无底」若干 `TextSpan`（⑤ 高亮）。
+  ///
+  /// [srcStart] 是这段文字第一个字符在**本 widget 的 `source`** 里的下标
+  /// （文字段的渲染文本与源码是按 1:1 对应的，公式段才会被剥掉 `$`）。
+  List<InlineSpan> _runs(String txt, int srcStart) {
+    if (txt.isEmpty) return const <InlineSpan>[];
+    final int? a = widget.selStart;
+    final int? b = widget.selEnd;
+    if (a == null || b == null || b <= a) {
+      return <InlineSpan>[TextSpan(text: txt)];
+    }
+    final int from = (a - srcStart).clamp(0, txt.length);
+    final int to = (b - srcStart).clamp(0, txt.length);
+    if (to <= from) return <InlineSpan>[TextSpan(text: txt)];
+    final TextStyle sel = TextStyle(backgroundColor: const Color(kSelectionColorValue));
+    return <InlineSpan>[
+      if (from > 0) TextSpan(text: txt.substring(0, from)),
+      TextSpan(text: txt.substring(from, to), style: sel),
+      if (to < txt.length) TextSpan(text: txt.substring(to)),
+    ];
+  }
+
+  /// 把本 widget 的 `source` 选区换算成**这个公式段**的 tex 相对区间。
+  ///
+  /// `$tex$` 的内容从 `s.start + 1` 开始；选区碰到 `$` 就算"到边"。
+  /// 与本段无交集 ⇒ `null`。
+  ({int from, int to})? _texSelection(ProjectionSegment s, int texLen) {
+    final int? a = widget.selStart;
+    final int? b = widget.selEnd;
+    if (a == null || b == null || b <= a) return null;
+    // ★ `ProjectionSegment.start` 是**tex 的第一个字符**（不含两端 `$`）——
+    //   依据：点击行内公式时 `cb(renderBase + seg.start + texRel)`（见 doc_view `_onMathTap`）。
+    final int segEnd = s.start + texLen + 1; // 含收尾 `$`
+    if (b <= s.start || a >= segEnd) return null;
+    final int from = (a - s.start).clamp(0, texLen);
+    final int to = (b - s.start).clamp(0, texLen);
+    if (to <= from) return null;
+    return (from: from, to: to);
+  }
   /// 组合中间态（未提交）的观感：正常字色 + **蓝色下划线** —— 与已提交的正文区分开
   InlineSpan _composingSpan() => TextSpan(
         text: widget.composingText,
@@ -182,6 +229,8 @@ class _InlineMathTextState extends State<InlineMathText> {
     final key = _keys.putIfAbsent(absStart, () => GlobalKey());
     final bool baseline = widget.align == MathAlignMode.baseline;
     final onTap = widget.onMathTap;
+    // ★★ ⑤ 选区：`source` 里公式段是 `$tex$` ⇒ 内容从 `s.start + 1` 开始
+    final ({int from, int to})? sel = _texSelection(s, s.tex.length);
     // ★★ 层级（§11.27）：光标落在**两端多认领的那两格**上时，这一格**视觉上属于文本层**
     //   ⇒ 交给 `MathWithCaret` 按文本层标准画（与"文字后面的光标"地位等同）。
     final CaretEdge edge = caretHere ? (pl?.edge ?? CaretEdge.none) : CaretEdge.none;
@@ -192,12 +241,12 @@ class _InlineMathTextState extends State<InlineMathText> {
           : PlaceholderAlignment.middle,
       baseline: baseline ? TextBaseline.alphabetic : null,
       child: onTap == null
-          ? _mathWidget(key, tex, caretHere: caretHere, edge: edge)
+          ? _mathWidget(key, tex, caretHere: caretHere, edge: edge, sel: sel)
           : GestureDetector(
               onTapDown: (d) => onTap(s, tex, d.globalPosition, key),
               child: MouseRegion(
                 cursor: SystemMouseCursors.text,
-                child: _mathWidget(key, tex, caretHere: caretHere, edge: edge),
+                child: _mathWidget(key, tex, caretHere: caretHere, edge: edge, sel: sel),
               ),
             ),
     );
@@ -210,9 +259,13 @@ class _InlineMathTextState extends State<InlineMathText> {
   /// ★★ 2026-10-15 晚：光标改成 **零尺寸锚点 + 自绘竖条**（`MathWithCaret`）——
   ///   以前注入的引擎 `\cursor{}` 会**参与排版**（把公式盒子撑高/撑宽 ⇒ accent "跳"）。
   Widget _mathWidget(GlobalKey key, String tex,
-          {bool caretHere = false, CaretEdge edge = CaretEdge.none}) =>
+          {bool caretHere = false,
+          CaretEdge edge = CaretEdge.none,
+          ({int from, int to})? sel}) =>
       MathWithCaret(
         tex: tex,
+        selFrom: sel?.from,
+        selTo: sel?.to,
         showCaret: caretHere,
         caretEdge: edge,
         // ★ 文本层字号（"公式前后那两格"按它画，与文字后面的光标地位等同）

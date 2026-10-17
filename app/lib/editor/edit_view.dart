@@ -22,6 +22,7 @@ import '../render/caret_sites.dart' show kCaretColorValue;
 import '../render/insert_guard.dart';
 import '../render/math_nav.dart';
 import '../render/normalize.dart';
+import '../render/selection_range.dart';
 import '../render/smart_delete.dart';
 import 'doc_view.dart';
 import 'platform_text_diff.dart';
@@ -117,6 +118,20 @@ class EditViewState extends State<EditView> {
   /// 光标所在行的盒子（**DocView 局部坐标**）—— 给输入面定位 + 画组合中间态
   Rect? _caretRect;
 
+  // ---------------- ⑤ 拖选 / 双击 / 三击 ----------------
+  /// 拖选的**锚点**（按下时的偏移）；`null` = 这次按下还没有落点
+  int? _dragAnchor;
+  bool _dragging = false;
+  Offset? _pressAt;
+
+  /// 连击计数（同一处 400 ms 内）
+  int _clickCount = 0;
+  DateTime? _lastClickAt;
+  Offset? _lastClickPos;
+
+  /// 给拖选用的 DocView 句柄（对指针下的位置做**纯查询**）
+  final GlobalKey<State<StatefulWidget>> _docKey = GlobalKey<State<StatefulWidget>>();
+
   int _edits = 0;
   EditViewStats? _lastStats;
 
@@ -189,6 +204,10 @@ class EditViewState extends State<EditView> {
     //      插入物会顶掉 `^`/`_` 的结合，版面当场变（用户实测"点 ∑ 就散架"）。
     //      ⇒ 与光标注入**同一条规则**（`caret_sites.neutralPoint`），保证"画在哪 = 插在哪"。
     //   ★ 只调整**落点**，不吞内容：非换行的插入照样进公式
+    // ★ ⑤ 有选区 ⇒ **先替换掉选区**（标准编辑器行为），再做插入守门
+    if (_buf.hasSelection) {
+      _mutate(() => _buf.replace(_buf.selectionStart, _buf.selectionEnd, ''));
+    }
     final InsertPlan plan = planInsert(_buf.buf, _buf.caret, text);
     _mutate(() {
       final ({int start, int end})? wrap = plan.wrapBareArg;
@@ -306,16 +325,42 @@ class EditViewState extends State<EditView> {
         _mutate(() => _buf.redo());
         return KeyEventResult.handled;
       }
-      return KeyEventResult.ignored; // 其余 Ctrl 组合键留给后面（全选等）
+      // ★★ ⑤ 剪贴板：**源切片就是剪贴板**（同权红利 —— 复制出去的是 `$x^2+1$` 这样的源码）
+      if (k == LogicalKeyboardKey.keyA) {
+        _buf.setSelection(0, _buf.length);
+        return KeyEventResult.handled;
+      }
+      if (k == LogicalKeyboardKey.keyC) {
+        final String sel = _selectedText;
+        if (sel.isNotEmpty) {
+          Clipboard.setData(ClipboardData(text: sel));
+        }
+        return KeyEventResult.handled;
+      }
+      if (k == LogicalKeyboardKey.keyX) {
+        final String sel = _selectedText;
+        if (sel.isNotEmpty) {
+          Clipboard.setData(ClipboardData(text: sel));
+          _mutate(() => _buf.replace(_buf.selectionStart, _buf.selectionEnd, ''));
+        }
+        return KeyEventResult.handled;
+      }
+      if (k == LogicalKeyboardKey.keyV) {
+        _pasteFromClipboard();
+        return KeyEventResult.handled;
+      }
+      return KeyEventResult.ignored; // 其余 Ctrl 组合键留给别处
     }
     if (kb.isAltPressed) return KeyEventResult.ignored;
 
-    if (k == LogicalKeyboardKey.backspace) {
-      _applyEdit(smartEditAt(_buf.buf, _buf.caret, forward: false));
-      return KeyEventResult.handled;
-    }
-    if (k == LogicalKeyboardKey.delete) {
-      _applyEdit(smartEditAt(_buf.buf, _buf.caret, forward: true));
+    if (k == LogicalKeyboardKey.backspace || k == LogicalKeyboardKey.delete) {
+      // ★ ⑤ 有选区 ⇒ 删整个区间（一步撤销），不走结构删除
+      if (_buf.hasSelection) {
+        _mutate(() => _buf.replace(_buf.selectionStart, _buf.selectionEnd, ''));
+        return KeyEventResult.handled;
+      }
+      _applyEdit(smartEditAt(_buf.buf, _buf.caret,
+          forward: k == LogicalKeyboardKey.delete));
       return KeyEventResult.handled;
     }
     if (k == LogicalKeyboardKey.arrowLeft) {
@@ -463,6 +508,79 @@ class EditViewState extends State<EditView> {
     _pushCaretToInput();
   }
 
+  // ---------------- ⑤ 拖选 / 双击 / 三击 ----------------
+
+  /// 指针**按下**落在某个偏移上（DocView 命中后回吐）—— 决定这次是"点击"还是"连击"
+  void _onPressHit(int offset) {
+    final Offset? pos = _pressAt;
+    final DateTime now = DateTime.now();
+    final bool sameSpot =
+        _lastClickPos != null && pos != null && (pos - _lastClickPos!).distance < 6;
+    final bool quick = _lastClickAt != null &&
+        now.difference(_lastClickAt!) < const Duration(milliseconds: 400);
+    if (sameSpot && quick) {
+      _clickCount = _clickCount >= 3 ? 1 : _clickCount + 1;
+    } else {
+      _clickCount = 1;
+    }
+    _lastClickAt = now;
+    _lastClickPos = pos;
+
+    if (HardwareKeyboard.instance.isShiftPressed) {
+      // Shift+点击 = **扩展**（锚点不动）
+      _buf.setSelection(_buf.anchor, offset);
+      _dragAnchor = null;
+      return;
+    }
+    if (_clickCount == 2) {
+      final ({int start, int end}) r = wordRangeAt(_buf.buf, offset);
+      _buf.setSelection(r.start, r.end);
+      _dragAnchor = null;
+      return;
+    }
+    if (_clickCount >= 3) {
+      final ({int start, int end}) r = unitRangeAt(_buf.buf, offset);
+      _buf.setSelection(r.start, r.end);
+      _dragAnchor = null;
+      return;
+    }
+    _buf.setCaret(offset);
+    _dragAnchor = _buf.caret; // 拖选从这里开始拉
+  }
+
+  /// 指针移动：超过 3 px 才算拖（否则还是点击），落点与点击**同一套判据**
+  void _onDragMove(Offset pos) {
+    final int? anchor = _dragAnchor;
+    if (anchor == null) return;
+    final Offset? start = _pressAt;
+    if (start == null) return;
+    if (!_dragging && (pos - start).distance < 3) return;
+    _dragging = true;
+    final State<StatefulWidget>? st = _docKey.currentState;
+    if (st is! DocViewState) return;
+    final int? off = st.offsetAtGlobal(pos);
+    if (off == null) return; // 页边空白 ⇒ 停住
+    _buf.setSelection(anchor, off);
+  }
+
+  void _endDrag() {
+    _pressAt = null;
+    _dragging = false;
+    _dragAnchor = null;
+  }
+  /// 当前选中的源码（没有选区 ⇒ 空串）
+  String get _selectedText => _buf.hasSelection
+      ? _buf.buf.substring(_buf.selectionStart, _buf.selectionEnd)
+      : '';
+
+  /// 粘贴：读剪贴板 → 走**同一条**提交链（`_commitText`，含选区替换与结构守门）
+  Future<void> _pasteFromClipboard() async {
+    final ClipboardData? d = await Clipboard.getData(Clipboard.kTextPlain);
+    final String text = d?.text ?? '';
+    if (text.isEmpty) return;
+    _commitText(text);
+  }
+
   void _pushCaretToInput() {
     final Rect? r = _caretRect;
     if (r == null) return;
@@ -486,13 +604,21 @@ class EditViewState extends State<EditView> {
           //    ★ 点击由 DocView 命中（文字走段落排版器、公式走 hit_map）后回吐绝对偏移
           Listener(
             behavior: HitTestBehavior.opaque,
-            onPointerDown: (_) => focusInput(),
+            onPointerDown: (PointerDownEvent e) {
+              focusInput();
+              _pressAt = e.position;
+              _dragging = false;
+            },
+            onPointerMove: (PointerMoveEvent e) => _onDragMove(e.position),
+            onPointerUp: (_) => _endDrag(),
+            onPointerCancel: (_) => _endDrag(),
             child: DocView(
+              key: _docKey,
               buffer: widget.buffer,
               settings: widget.settings,
               onTapOffset: (int offset) {
                 focusInput(); // 必须在用户手势里拿焦点，浏览器才肯把 IME 接上
-                _buf.setCaret(offset);
+                _onPressHit(offset);
               },
               onCaretRect: _onCaretRect,
               // ★ 组合串接进排版 → 后面的字被真的推开（只在文字类单元里；公式块见 _caretInMathBlock）
