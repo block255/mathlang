@@ -268,6 +268,36 @@ void main() {
       expect(w, greaterThanOrEqualTo(kHanziWidth),
           reason: '★ §6.1：空槽是**触摸目标**，宽度按正文汉字定标（真实字体下也要够）');
     });
+
+    testWidgets('★ ⑩ **空槽对空槽**：同一结构里两个空框之间必须留余量（不许重叠/贴死）',
+        (WidgetTester tester) async {
+      // 改前实测：`\int_{}^{}` 的上下限两框重叠 1px；
+      // `\frac{\frac{}{}}{b}` 内层分子/分母两框只差 1px ⇒ **把中间的分数线盖住**。
+      for (final (String tex, int rel) in <(String, int)>[
+        (r'\int_{}^{}', 5),
+        (r'\frac{\frac{}{}}{b}', -1),
+      ]) {
+        await _pump(tester, renderMathTex(tex, caretRel: rel),
+            size: 20, style: MathStyle.display);
+        final List<Rect> pads =
+            scanSlotPads(_root(tester)).map((SlotPad p) => p.rect).toList();
+        debugPrint('「$tex」pads=$pads');
+        expect(pads.length, 2, reason: '两个空槽都要画');
+        for (var i = 0; i < pads.length; i++) {
+          for (var k = i + 1; k < pads.length; k++) {
+            final Rect a = pads[i], b = pads[k];
+            final bool overlapX = a.left < b.right && b.left < a.right;
+            if (!overlapX) continue; // 水平错开 ⇒ 各管各的
+            final double gap = a.center.dy < b.center.dy
+                ? b.top - a.bottom
+                : a.top - b.bottom;
+            expect(gap, greaterThanOrEqualTo(1.0),
+                reason: '★ 同一结构里两个空框之间要留出装饰线的位置：'
+                    '（$a 与 $b，竖直间隔 ${gap.toStringAsFixed(2)}）');
+          }
+        }
+      }
+    });
   });
 }
 

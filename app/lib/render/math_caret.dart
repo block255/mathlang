@@ -463,15 +463,20 @@ List<SlotPad> scanSlotPads(RenderObject root, {Offset? caretAt}) {
   }
 
   // ── 再逐个夹进"槽带" ──────────────────────────────────────────
-  final Set<Rect> padRects = <Rect>{for (final p in pads) p.rect};
+  final List<Rect> allPadRects = <Rect>[for (final p in pads) p.rect];
   final List<SlotPad> out = <SlotPad>[];
-  for (final ({Rect rect, RenderObject glyph}) p in pads) {
+  for (var i = 0; i < pads.length; i++) {
+    final ({Rect rect, RenderObject glyph}) p = pads[i];
     final Rect r = _clipToSlotBand(
       root: root,
       glyph: p.glyph,
       box: p.rect,
       leaves: leaves,
-      padRects: padRects,
+      padRects: allPadRects.toSet(),
+      otherPads: <Rect>[
+        for (var k = 0; k < allPadRects.length; k++)
+          if (k != i) allPadRects[k],
+      ],
     );
     out.add(SlotPad(r, current: caretAt != null && r.inflate(1.0).contains(caretAt)));
   }
@@ -494,6 +499,7 @@ Rect _clipToSlotBand({
   required Rect box,
   required List<({Rect rect, String type, String? glyph, RenderObject obj})> leaves,
   required Set<Rect> padRects,
+  required List<Rect> otherPads,
 }) {
   RenderObject? n = glyph.parent;
   while (n != null && !_isStructureNode(n.runtimeType.toString())) {
@@ -522,9 +528,9 @@ Rect _clipToSlotBand({
   }
 
   collect(n);
+  final double margin = box.height * 0.12;
   if (others != null) {
     final Rect u = others!;
-    final double margin = box.height * 0.12;
     if (box.center.dy <= u.center.dy) {
       // 垫子在上方 ⇒ 下沿不许越到"下面的内容"上边
       final double bottom = math.min(band.bottom, u.top - margin);
@@ -533,6 +539,24 @@ Rect _clipToSlotBand({
       }
     } else {
       final double top = math.max(band.top, u.bottom + margin);
+      if (top < band.bottom - 1) {
+        band = Rect.fromLTRB(band.left, top, band.right, band.bottom);
+      }
+    }
+  }
+
+  // ③ ★★ **空槽对空槽**：同一结构里两个槽都空时，上面的判据没有任何"内容"可依
+  //   —— 实测（真实字体）`\int_{}^{}` 的两个上限框重叠 1px、`\frac{\frac{}{}}{b}` 里
+  //   内层的两个框把**中间的分数线盖住**。⇒ 与**另一个垫子**之间也留同样的余量。
+  for (final Rect q in otherPads) {
+    if (q.left >= band.right || q.right <= band.left) continue; // 水平不相交 ⇒ 各管各的
+    if (q.center.dy > box.center.dy) {
+      final double bottom = math.min(band.bottom, q.top - margin);
+      if (bottom > band.top + 1) {
+        band = Rect.fromLTRB(band.left, band.top, band.right, bottom);
+      }
+    } else {
+      final double top = math.max(band.top, q.bottom + margin);
       if (top < band.bottom - 1) {
         band = Rect.fromLTRB(band.left, top, band.right, band.bottom);
       }
