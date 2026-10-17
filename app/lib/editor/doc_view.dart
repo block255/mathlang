@@ -575,24 +575,25 @@ class DocViewState extends State<DocView> {
     // ② 文字（段落 / 标题 / 引用 / 列表项）：交给段落排版器
     final String text = _renderParts(u.type, u.source).text;
     final int? rel = u.relFor(_caret);
-    final int? caretInText = _caretInTextSegment(text, rel);
+    // ★ 只有**真的画了光标条**时，段落才多那一格（与渲染侧共用同一判据）
+    final int? caretInText =
+        _caretAbsFor(u, rel) == null ? null : _caretInTextSegment(text, rel);
     // ★★ 2026-10-17 用户实测「单行拖选少最后一个字符」的**根因**就在这里：
     //   段落里那根**零宽光标条**占了**一个格子**（`caretInText` 让映射表多一格），
     //   而 `getPositionForOffset` 在"拖到行尾右侧"时会把落点吸到**光标条之前**
     //   ⇒ 段落坐标比真实行末少 1；再套上多了一格的映射表，正好又少 1 ⇒ 差 1 格。
     //   修法：**映射用"纯表"**（不含光标条），再把段落坐标里"光标条那一格"扣掉。
-    final List<int> pureMap = paragraphIndexMap(text);
-    final int? caretCell =
-        caretInText == null ? null : paragraphIndexMap(text, caretInText: caretInText).indexOf(caretInText);
+    // 映射表与段落**必须**同时"有/没有"光标条那一格 —— 这就是上面那条判据的唯一意义
+    final List<int> pureMap =
+        paragraphIndexMap(text, caretInText: caretInText);
     final RenderParagraph? para = _contentParagraph(ro, _plainTextOf(text));
     if (para == null) return null;
     final TextPosition tp =
         para.getPositionForOffset(para.globalToLocal(global));
-    var p = tp.offset;
-    // ★ 段落里那根光标条是**零宽**的，却占了段落坐标里的一个位置
-    //   ⇒ 落点跑到它之后时要扣 1（否则"拖到行尾"永远差最后一个字）
-    if (caretCell != null && caretCell >= 0 && p > caretCell) p -= 1;
-    p = p.clamp(0, pureMap.length - 1);
+    // ★ `pureMap` 与"段落是否多一格光标条"现在由**同一个判据**（`_caretAbsFor`）决定：
+    //   画了光标条 ⇒ `caretInText` 非空 ⇒ 映射表多一格、段落也多一格 ⇒ 两侧一致；
+    //   没画（有选区 / 失焦 / 闪烁灭）⇒ 两侧都**没有**那一格 ⇒ 不会差 1。
+    final int p = tp.offset.clamp(0, pureMap.length - 1);
     return u.renderBase + pureMap[p];
   }
 
@@ -741,6 +742,19 @@ class DocViewState extends State<DocView> {
   /// 若不加进键，光标从 A 移到 B 时，A 会从池里拿回**带光标的旧实例** → 屏幕上留一个幽灵光标。
   /// 加上之后：一次击键最多重建 2 个单元，空转时池照样全命中（S2 的 2.8 ms 空帧不退化）。
   /// 本单元的**局部选区**（渲染坐标）；无选区 / 与本单元无交集 ⇒ null。
+  /// 这个单元**这一帧到底画不画光标条**（唯一判据）。
+  ///
+  /// ★★ 2026-10-17 真凶：`_offsetAt` 原来**只要光标落在本段文字里**就认为段落多了一格
+  ///   光标条（`caretInText`），但渲染侧在"有选区 / 失焦 / 闪烁灭"时**根本不画**光标条。
+  ///   两边不一致 ⇒ 映射整体差 1 ⇒ **行内拖选少最后一个字**，而且随闪烁相位"时好时坏"。
+  ///   ⇒ 把判据抽成这一个函数，渲染与命中**共用**。
+  int? _caretAbsFor(_Unit u, int? rel) {
+    if (rel == null) return null;
+    if (_selEnd > _selStart) return null; // 有选区 ⇒ 不画光标（也占位）
+    if (widget.hideCaretAndSelection) return null; // 失焦
+    if (!widget.caretVisible) return null; // 闪烁"灭"的相位
+    return u.renderBase + rel;
+  }
   ({int from, int to})? _localSelFor(_Unit u) {
     if (widget.hideCaretAndSelection || _selEnd <= _selStart) return null;
     final int rawA = _selStart - u.renderBase;
@@ -933,11 +947,7 @@ class DocViewState extends State<DocView> {
     final int? selTo = sel?.to;
     // 光标在本单元内时换算成**绝对偏移**（InlineMathText 用的是绝对偏移）
     // ★ ⑤ 有选区时**不画光标**（标准编辑器行为：选区就是"当前操作对象"，光标让位）
-    final bool selecting = !widget.hideCaretAndSelection && _selEnd > _selStart;
-    final int? caretAbs =
-        (caretRel == null || selecting || widget.hideCaretAndSelection || !widget.caretVisible)
-            ? null
-            : u.renderBase + caretRel;
+    final int? caretAbs = _caretAbsFor(u, caretRel);
     // ★ 组合中间态：只接给含光标的那一个单元，且行间公式块不接（见 _composingFor）
     final String composing = _composingFor(u, caretRel);
     // 只有渲染树需要接点击（测量树是离屏的，接了也没用，还会多两个对象）
