@@ -183,6 +183,7 @@ class TextInputSurfaceController extends ChangeNotifier with TextInputClient {
 
   @override
   void updateEditingValue(TextEditingValue value) {
+
     // ① 提交规则链（沿用 EditableText 的语义：`formatEditUpdate(旧值, 新值)`）
     TextEditingValue v = value;
     for (final TextInputFormatter f in inputFormatters) {
