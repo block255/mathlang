@@ -45,6 +45,98 @@ import '../render/structure_geometry.dart';
 import 'page_sheet.dart';
 import 'unit_pool.dart';
 
+/// **空行槽**（⑥ 丙，2026-10-17）：块与块之间的那段空白，也是**一行空行**。
+///
+/// 三件事，一件都不能少：
+/// ① **版面中性**：高度就是原来那段 `gap`（原来是 `SizedBox(height: gap)`）—— 一个像素都不变；
+/// ② **点击能落**：`Listener(behavior: opaque)` 覆盖整段空隙 ⇒ 点空白 = 落在那行空行的位点上；
+/// ③ **光标能画**：光标在这行空行上时，自己画那根竖条（文本层标准 `字号×1.25`），
+///    用 `OverflowBox` **溢出**画（空隙只有 0.7 字号高，竖条比它高）—— 不撑版面。
+class _BlankSlot extends StatefulWidget {
+  const _BlankSlot({
+    required this.id,
+    required this.height,
+    required this.offset,
+    required this.caretHere,
+    required this.caretHeight,
+    required this.caretWidth,
+    required this.caretColor,
+    required this.onTap,
+    required this.onBox,
+  });
+
+  final String id;
+  final double height;
+
+  /// 这行空行的位点（L0 偏移）
+  final int offset;
+
+  final bool caretHere;
+  final double caretHeight;
+  final double caretWidth;
+  final Color caretColor;
+  final void Function(int at) onTap;
+  final void Function(String id, RenderBox box) onBox;
+
+  @override
+  State<_BlankSlot> createState() => _BlankSlotState();
+}
+
+class _BlankSlotState extends State<_BlankSlot> {
+  @override
+  void initState() {
+    super.initState();
+    _report();
+  }
+
+  @override
+  void didUpdateWidget(_BlankSlot old) {
+    super.didUpdateWidget(old);
+    _report();
+  }
+
+  void _report() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final RenderObject? ro = context.findRenderObject();
+      if (ro is RenderBox && ro.hasSize) widget.onBox(widget.id, ro);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      // ★ `opaque`：这个盒子**没有孩子**（只有空行），必须靠 behavior 自己接住点击
+      behavior: HitTestBehavior.opaque,
+      onTap: () => widget.onTap(widget.offset),
+      child: MouseRegion(
+        cursor: SystemMouseCursors.text,
+        child: SizedBox(
+          height: widget.height,
+          width: double.infinity,
+          child: widget.caretHere
+              ? Align(
+                  alignment: Alignment.centerLeft,
+                  child: OverflowBox(
+                    alignment: Alignment.centerLeft,
+                    minWidth: 0,
+                    maxWidth: widget.caretWidth * 4,
+                    minHeight: 0,
+                    maxHeight: widget.caretHeight,
+                    child: Container(
+                      width: widget.caretWidth,
+                      height: widget.caretHeight,
+                      color: widget.caretColor,
+                    ),
+                  ),
+                )
+              : null,
+        ),
+      ),
+    );
+  }
+}
+
 /// 渲染树里的「命中盒」：把点击的**全局坐标**交回给调用方。
 ///
 /// ★ 用自己的 `BuildContext` 取渲染对象 → **不需要 GlobalKey**
@@ -292,6 +384,9 @@ class _DocViewState extends State<DocView> {
   /// 渲染树里每个单元的渲染盒（由 `_UnitHitBox` 帧末上报）—— 光标定位要用
   final Map<String, RenderBox> _unitBoxes = <String, RenderBox>{};
 
+  /// 空行槽的渲染盒（⑥ 丙）：给"光标在空行上"时的输入面定位用
+  final Map<String, RenderBox> _blankBoxes = <String, RenderBox>{};
+
   // ---------------- 光标像素位置（S3-2：给镜像输入框定位） ----------------
 
   /// 帧末算一次「光标处的盒子」（DocView 局部坐标），报给 [DocView.onCaretRect]。
@@ -318,6 +413,13 @@ class _DocViewState extends State<DocView> {
     final RenderObject? root = context.findRenderObject();
     final int? caret = _caret;
     if (root is! RenderBox || caret == null) return null;
+
+    // ★★ ⑥ 丙：光标在**空行**上 ⇒ 用空行槽自己的盒子（它才是那一行的载体）
+    final RenderBox? blank = _blankBoxes['blank@$caret'];
+    if (blank != null && blank.hasSize) {
+      final Offset g = blank.localToGlobal(Offset.zero, ancestor: root);
+      return Rect.fromLTWH(g.dx, g.dy, _kCaretBoxWidth, textCaretHeight(_s.bodyFontSize));
+    }
 
     // 光标所在单元；落在"文末空行"这类不属于任何单元的位置时 → 退到最后一个单元的行尾
     // （否则镜像框会跑回页面左上角，中文候选框就飘了）
@@ -1037,11 +1139,36 @@ class _DocViewState extends State<DocView> {
     final children = <Widget>[];
     final warnings = <String>[];
     var bottom = 0.0;
+    _Unit? prevUnit;
 
     for (final PageSlot s in slots) {
       final double gap = s.y - bottom;
-      if (gap > 0.5) children.add(SizedBox(height: gap));
       final _Unit? u = _unitById[s.item.id];
+      // ★★ ⑥「空行是一等公民」· 丙（2026-10-17 用户拍板）：
+      //   块与块之间那段空白（`SizedBox(height: gap)`）**原来谁都不管** ——
+      //   空行被块模型当成"一个边界"（R1，不产生块）⇒ 没有单元 ⇒ **没有渲染物**
+      //   ⇒ 光标没人画、点击落到虚空。⇒ 把这段空隙做成**空行槽**：
+      //     · 版面**一个像素都不变**（还是那个 `gap` 的高度）；
+      //     · 点它能落到**空行的位点**（`caret = 空行起点`）；
+      //     · 光标在空行上时，它自己画那根竖条（文本层标准，可溢出空隙、不撑版面）。
+      if (gap > 0.5) {
+        final int blankOffset = prevUnit == null ? -1 : _blankOffsetAfter(prevUnit);
+        if (blankOffset >= 0) {
+          children.add(_BlankSlot(
+            id: 'blank@$blankOffset',
+            height: gap,
+            offset: blankOffset,
+            caretHere: _caret == blankOffset,
+            caretHeight: textCaretHeight(_s.bodyFontSize),
+            caretWidth: 1.5,
+            caretColor: const Color(kCaretColorValue),
+            onTap: (int at) => widget.onTapOffset?.call(at),
+            onBox: (String id, RenderBox box) => _blankBoxes[id] = box,
+          ));
+        } else {
+          children.add(SizedBox(height: gap));
+        }
+      }
       if (u == null) continue;
       // 外面套一层命中盒（子节点仍是池里缓存的同一实例 → 不破坏"整棵子树跳过"）
       children.add(_UnitHitBox(
@@ -1053,6 +1180,7 @@ class _DocViewState extends State<DocView> {
           () => _buildUnitWidget(u, u.relFor(_caret), interactive: true),
         ),
       ));
+      prevUnit = u;
       bottom = s.y + s.item.height;
       if (s.item.height > _m.bodyHeight) {
         warnings.add('${s.item.label ?? u.type.name} 高于一页'
@@ -1069,6 +1197,19 @@ class _DocViewState extends State<DocView> {
       warnings: warnings,
       children: children,
     );
+  }
+
+  /// 上一个单元之后如果跟着**空行**，返回那个空行的起点；否则 -1。
+  ///
+  /// 判据：上一个单元的最后一行之后是 `\n`，而**下一行是空的**（或以文末结束）。
+  int _blankOffsetAfter(_Unit prev) {
+    final String buf = widget.buffer.buf;
+    var o = prev.acceptTo.clamp(0, buf.length);
+    if (o >= buf.length || buf[o] != '\n') return -1;
+    o++; // 跳过上一行的换行 ⇒ 空行的行首
+    if (o > buf.length) return -1;
+    final bool blank = o >= buf.length || buf[o] == '\n';
+    return blank ? o : -1;
   }
 
   @override
