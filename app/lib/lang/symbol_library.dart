@@ -27,6 +27,7 @@ class SymbolItem {
     this.aliases = const <String>[],
     this.pinyin = '',
     this.keywords = const <String>[],
+    this.alsoIn = const <String>[],
   });
 
   final String id;
@@ -43,7 +44,19 @@ class SymbolItem {
   final String pinyin;
   final List<String> keywords;
 
+  /// ★ 第二归属（2026-10-17 用户定：**可以一项多类，但要少**）
+  ///
+  /// 格式 `一级/子类`（如 `符号/运算`）；主归属仍是 [group] / [subgroup]。
+  /// 只在"两种找法都自然"的少数项上用（白名单见《符号表-分类与关键词.md》）。
+  final List<String> alsoIn;
+
   bool get isTemplate => kind == SymbolKind.template;
+
+  /// 全部分类（主 + 第二归属），形如 `符号/逻辑集合`
+  List<String> get categories => <String>[
+        if (subgroup.isEmpty) group else '$group/$subgroup',
+        ...alsoIn,
+      ];
 
   @override
   String toString() => 'SymbolItem($id, $tex, $label)';
@@ -99,6 +112,10 @@ class SymbolLibrary {
               in (m['keywords'] as List<dynamic>?) ?? <dynamic>[])
             k as String,
         ],
+        alsoIn: <String>[
+          for (final dynamic a in (m['alsoIn'] as List<dynamic>?) ?? <dynamic>[])
+            a as String,
+        ],
       ));
     }
     return SymbolLibrary(out);
@@ -110,8 +127,35 @@ class SymbolLibrary {
     return fromJson(src);
   }
 
-  List<SymbolItem> inGroup(String group) =>
-      <SymbolItem>[for (final SymbolItem i in items) if (i.group == group) i];
+  /// 一个一级分类下的项（**含 alsoIn 第二归属**）
+  List<SymbolItem> inGroup(String group) => <SymbolItem>[
+        for (final SymbolItem i in items)
+          if (i.categories.any((String c) => c == group || c.startsWith('$group/')))
+            i,
+      ];
+
+  /// 按「一级 [+ 子类]」筛选；两个参数都可为 `null`（= 全部）。
+  /// ★ 命中**任一**归属即算（主归属或 alsoIn）。
+  List<SymbolItem> inCategory({String? group, String? subgroup}) {
+    final String? want = group == null
+        ? null
+        : (subgroup == null ? group : '$group/$subgroup');
+    if (want == null) return items;
+    return <SymbolItem>[
+      for (final SymbolItem i in items)
+        if (i.categories.any((String c) =>
+            subgroup == null
+                ? (c == group || c.startsWith('$group/'))
+                : (c == want || i.alsoIn.contains(want))))
+          i,
+    ];
+  }
+
+  /// 某分类下出现过的子类（去重保序）；没有子类返回空表
+  List<String> subgroupsOf(String group) => <String>[
+        for (final SymbolItem i in items)
+          if (i.group == group && i.subgroup.isNotEmpty) i.subgroup,
+      ];
 
   SymbolItem? byId(String id) {
     for (final SymbolItem i in items) {

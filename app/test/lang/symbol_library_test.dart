@@ -2,8 +2,12 @@
 //
 // 规格：《符号面板与符号表.md》§三（搜索四路：中文名 / 别名 / 拼音 / LaTeX）＋《界面与布局.md》§4。
 
+import 'dart:io';
+
+import 'package:flutter_math_fork/tex.dart' show TexParser, TexParserSettings;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mathlang/lang/symbol_library.dart';
+import 'package:mathlang/render/slot_marks.dart';
 
 const String _fixture = '''
 {
@@ -19,6 +23,8 @@ const String _fixture = '''
 ''';
 
 void main() {
+  realLibraryTests();
+
   final SymbolLibrary lib = SymbolLibrary.fromJson(_fixture);
 
   group('解析', () {
@@ -66,6 +72,106 @@ void main() {
 
     test('空查询 ⇒ 空结果（面板此时显示分类/全部）', () {
       expect(lib.search('   '), isEmpty);
+    });
+  });
+}
+
+// ---------------------------------------------------------------------------
+// ★★ 真实符号库（assets/symbols.json）的分类口径守卫
+//
+// 这些断言是 2026-10-17 一整轮讨论的**落账**（《界面与布局》§4.3 +《符号表-分类与关键词.md》）：
+// 一级只有 结构/符号；子类只有"符号"有 7 个；kind 与分类解耦；keywords 只进搜索；
+// alsoIn 只在白名单上；**每条 tex 都必须能被 KaTeX 解析**（防手滑写错命令）。
+// ---------------------------------------------------------------------------
+void realLibraryTests() {
+  late final SymbolLibrary lib;
+  setUpAll(() {
+    // 直接读文件（测试工作目录 = app/），不走资产管道，避免依赖 pubspec 的打包行为
+    final String src = File('assets/symbols.json').readAsStringSync();
+    lib = SymbolLibrary.fromJson(src);
+  });
+
+  group('真实符号库：分类口径', () {
+    test('一级分类只有 结构 / 符号', () {
+      expect(lib.groups.toSet(), <String>{'结构', '符号'});
+    });
+
+    test('只有「符号」有子类，且正好是 7 个', () {
+      expect(lib.subgroupsOf('结构'), isEmpty, reason: '结构 = 排版积木，不该有子类');
+      expect(lib.subgroupsOf('符号').toSet(), <String>{
+        '希腊', '关系', '运算', '逻辑集合', '箭头', '特殊', '线性代数',
+      });
+    });
+
+    test('id 唯一、tex 非空', () {
+      final Set<String> ids = <String>{};
+      for (final SymbolItem i in lib.items) {
+        expect(ids.add(i.id), isTrue, reason: '重复 id: ${i.id}');
+        expect(i.tex.trim(), isNotEmpty, reason: i.id);
+      }
+    });
+
+    test('★ kind 与分类解耦：符号类里也有模板（求和/积分/批量集合）', () {
+      final List<SymbolItem> ops = lib.inCategory(group: '符号', subgroup: '运算');
+      expect(ops.any((SymbolItem i) => i.id == 'sum' && i.isTemplate), isTrue);
+      expect(ops.any((SymbolItem i) => i.id == 'int' && i.isTemplate), isTrue);
+      final List<SymbolItem> sets =
+          lib.inCategory(group: '符号', subgroup: '逻辑集合');
+      expect(sets.any((SymbolItem i) => i.id == 'bigcup' && i.isTemplate), isTrue);
+    });
+
+    test('★ alsoIn 白名单：只有 6 个 n 元集合算子 + 所以/因为', () {
+      final Set<String> withAlso = <String>{
+        for (final SymbolItem i in lib.items)
+          if (i.alsoIn.isNotEmpty) i.id,
+      };
+      expect(withAlso, <String>{
+        'bigcup', 'bigcap', 'biguplus', 'bigsqcup', 'bigvee', 'bigwedge',
+        'therefore', 'because',
+      });
+    });
+
+    test('★ 一项多类：批量集合算子既能从「逻辑集合」找到，也能从「运算」找到', () {
+      final Set<String> byOps = <String>{
+        for (final SymbolItem i in lib.inCategory(group: '符号', subgroup: '运算'))
+          i.id,
+      };
+      expect(byOps.containsAll(<String>['bigcup', 'bigcap']), isTrue);
+      final Set<String> bySets = <String>{
+        for (final SymbolItem i
+            in lib.inCategory(group: '符号', subgroup: '逻辑集合'))
+          i.id,
+      };
+      expect(bySets.containsAll(<String>['bigcup', 'bigcap']), isTrue);
+    });
+
+    test('★ 关键词不撒滥：搜「线性代数」只出线性代数那几项', () {
+      final List<String> ids = <String>[
+        for (final SymbolHit h in lib.search('线性代数')) h.item.id,
+      ];
+      expect(ids.toSet(), <String>{
+        'mat2', 'det2', 'det', 'tr', 'transpose', 'otimes', 'odot',
+      }, reason: '实际命中：$ids');
+    });
+
+    test('★ 搜「批量」出 6 个 n 元集合算子', () {
+      final Set<String> ids = <String>{
+        for (final SymbolHit h in lib.search('批量')) h.item.id,
+      };
+      expect(ids, <String>{
+        'bigcup', 'bigcap', 'biguplus', 'bigsqcup', 'bigvee', 'bigwedge',
+      });
+    });
+
+    test('★ 每条 tex 都能被 KaTeX 解析（空槽用注入后的形态解析）', () {
+      for (final SymbolItem i in lib.items) {
+        final String tex = renderMathTex(i.tex, caretRel: -1);
+        expect(
+          () => TexParser(tex, const TexParserSettings()).parse(),
+          returnsNormally,
+          reason: '「${i.id}」解析失败：$tex',
+        );
+      }
     });
   });
 }
