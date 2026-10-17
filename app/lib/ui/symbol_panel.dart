@@ -10,6 +10,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_math_fork/flutter_math.dart';
 
 import '../lang/symbol_library.dart';
+import '../render/slot_marks.dart';
 import 'app_settings.dart';
 
 class SymbolPanel extends StatefulWidget {
@@ -167,13 +168,17 @@ class _SymbolPanelState extends State<SymbolPanel> {
   }
 
   Widget _preview(SymbolItem item) {
+    // ★ 预览走**同一条注入链**（`renderMathTex`）：空槽会被注上占位垫 ⇒
+    //   `^{}` / `_{}` / `\frac{}{}` 这些模板在格子里**看得见空槽**（否则是一片空白）。
+    final String tex = renderMathTex(item.tex, caretRel: -1);
     return FittedBox(
       fit: BoxFit.scaleDown,
       child: Math.tex(
-        item.tex,
+        tex,
         mathStyle: MathStyle.text,
         textStyle: const TextStyle(fontSize: 14, color: Color(0xFF1A202C)),
-        onErrorFallback: (Object e) => Text(item.tex, style: const TextStyle(fontSize: 10)),
+        onErrorFallback: (Object e) =>
+            Text(item.label, style: const TextStyle(fontSize: 10)),
       ),
     );
   }
