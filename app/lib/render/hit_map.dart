@@ -178,27 +178,34 @@ MathHit hitTestMathTex({
 
   // ★★ **大盒按行分带**（2026-10-17 用户拍板："∑ 上面这一块隶属于上部子层级，点击上下部不该落在 ∑ 侧面"）：
   //   `\sum` 那种**被拉伸的行盒**（高 46，把上下限整片盖住）一旦被"包含"命中，
-  //   就改判成**点所在的那一行**（该行里水平最近的字形）—— 于是：
-  //   点上限那一带 ⇒ 上限（`n` 前后）、点下限那一带 ⇒ 下限（`i=1`），**都不再落到 ∑ 的左右侧**。
-  //   ★ 只对**拉伸盒**生效：尾垫（零高）、字形、分式分子分母等**一律不动**
+  //   就改判成**最近的那一行**（先比竖直距离、再比水平距离）里的字形 —— 于是：
+  //   点上限那一带（含 `n` 与主行之间的那条缝）⇒ 上限；点下限那一带 ⇒ 下限；**都不再落到 ∑ 的左右侧**。
+  //   ★ 为什么是"最近的**行**"而不是"点必须落在那一行的可见带里"：
+  //     上限字形的可见带只有 14 高，而 ∑ 的带从 19.9 才开始 —— 中间那条**缝**（11.4..19.9）
+  //     原来谁都不命中，于是落回 ∑（用户实测："偏下一点就落到 ∑ 和 a_i 之间"）。
+  //   ★ 只对**拉伸盒**生效：尾垫（零高）、字形、分式分子分母**一律不动**
   //     （否则"点分式右边 ⇒ 结构之后"（③-B）和"点尾垫 ⇒ 结构末尾"（§11.18）会被破坏）。
   if (hit >= 0 && rowH > 0 && boxes[hit].rect.height > rowH * 1.6) {
     var band = -1;
+    var bestDy = double.infinity;
     var bestDx = double.infinity;
     for (var i = 0; i < boxes.length; i++) {
       final Rect r = hitRect(i);
-      if (localPos.dy < r.top || localPos.dy > r.bottom) continue;
+      final double dy = localPos.dy < r.top
+          ? r.top - localPos.dy
+          : (localPos.dy > r.bottom ? localPos.dy - r.bottom : 0);
       final double dx = localPos.dx < r.left
           ? r.left - localPos.dx
           : (localPos.dx > r.right ? localPos.dx - r.right : 0);
-      if (dx < bestDx) {
+      if (dy < bestDy - 0.01 || (dy < bestDy + 0.01 && dx < bestDx)) {
+        bestDy = dy;
         bestDx = dx;
         band = i;
       }
     }
     if (band >= 0 && band != hit) {
       hit = band;
-      how = '行内命中（大盒按行分带）';
+      how = '行内命中（大盒按最近的行分带）';
       onGlyph = true;
     }
   }
