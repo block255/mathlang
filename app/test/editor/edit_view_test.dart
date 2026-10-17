@@ -980,5 +980,31 @@ $$
       expect(buf.buf.contains(r'$'), isFalse, reason: buf.buf);
       expect(last?.autoWrapped ?? 0, 0);
     });
+
+    testWidgets(r'★ B′：**整行推导**粘成行间块 `$$…$$`（上下限才会堆叠），仍是一次编辑',
+        (WidgetTester tester) async {
+      const String raw = '推导如下：\n'
+          r'a_m - a_n = \sum_{k=n+1}^m (a_k - a_{k-1})';
+      final DocBuffer buf = DocBuffer('前言\n');
+      EditViewStats? last;
+      final EditViewState st = await _mount(tester, buf, onStats: (EditViewStats s) => last = s);
+      buf.setCaret(buf.length);
+      await tester.pump();
+
+      st.pasteText(raw);
+      await tester.pump();
+
+      expect(buf.buf.contains('\$\$'), isTrue,
+          reason: r'整行一个式子 ⇒ 行间块（否则 `\sum` 的上下限会画到右边）。实际：' '\n${buf.buf}');
+      expect(buf.buf.contains(r'\sum_{k=n+1}^m'), isTrue);
+      expect(last?.edits, 1, reason: '★ 仍然是一次编辑（一步撤销）');
+      final BlockIndex idx = BlockIndex.parse(buf.buf);
+      expect(idx.blocks.where((Block b) => b.type == BlockType.math).length, 1,
+          reason: '那一行必须成**一个独立的数学块**，不是行内公式碎片');
+      expect(find.textContaining('❌'), findsNothing);
+      // ★ 再等一帧：行间块的单元是**分页之后**才建的（与行内不同）
+      await tester.pump();
+      expect(find.byType(Math), findsWidgets, reason: '行间块也要真的渲染出来');
+    });
   });
 }

@@ -5,6 +5,9 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mathlang/lang/smart_wrap.dart';
 
+/// 行间块的期望文本（`$$` 在 Dart 普通串里要转义，raw 串里又不能写 `\n` ⇒ 拼一下）
+String _display(String body) => '\$\$\n$body\n\$\$';
+
 void main() {
   group('证据驱动：该包的包', () {
     test(r'上下标：`a_n` / `A_n` / `x^2` / `(-1)^n`', () {
@@ -50,6 +53,43 @@ void main() {
 
     test('URL 不包', () {
       expect(planSmartWrap('见 https://example.com/a_b').isEmpty, isTrue);
+    });
+  });
+
+  group('★★ B\'：整行一个式子 ⇒ 行间块 `\$\$…\$\$`（用户 2026-10-17 拍板）', () {
+    // 为什么要有这一条：n 元算子的上下限**只在 display 样式下堆叠** ——
+    //   `\sum_{k=1}^n` 包成行内会画成右边的小上下标（用户实测："求和画到右边去了"）。
+    //   而"整行只有一个式子"在作业答案里几乎总是**推导**，天生该居中成块。
+    test('整行是推导（含 `=`）⇒ 行间', () {
+      const String src = r'a_n = (-1)^n';
+      final SmartWrapPlan p = planSmartWrap(src);
+      expect(p.runs.length, 1);
+      expect(p.runs.first.display, isTrue);
+      expect(applySmartWrap(src, p), _display('a_n = (-1)^n'));
+    });
+
+    test(r'整行含 `\sum` ⇒ 行间（上下限才会堆叠）', () {
+      const String src = r'\sum_{k=1}^n a_k';
+      final SmartWrapPlan p = planSmartWrap(src);
+      expect(p.runs.first.display, isTrue);
+      expect(applySmartWrap(src, p), _display(r'\sum_{k=1}^n a_k'));
+    });
+
+    test('夹在文字里的同一段式子 ⇒ **仍是行内**（同权：数学是这一行的对象）', () {
+      const String src = r'比如 a_n = (-1)^n 有界';
+      final SmartWrapPlan p = planSmartWrap(src);
+      expect(p.runs.first.display, isFalse);
+      expect(applySmartWrap(src, p), r'比如 $a_n = (-1)^n$ 有界');
+    });
+
+    test('整行只有一个裸符号（没有显示证据）⇒ 行内', () {
+      const String src = r'a_n';
+      expect(applySmartWrap(src, planSmartWrap(src)), r'$a_n$');
+    });
+
+    test('缩进的整行式子也算"整行"（缩进留在块外面）', () {
+      const String src = '  x = 1  ';
+      expect(applySmartWrap(src, planSmartWrap(src)), '  ${_display('x = 1')}  ');
     });
   });
 

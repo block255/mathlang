@@ -56,12 +56,47 @@ const Set<String> kAlwaysStackedOps = <String>{
   'det', 'gcd', 'inf', 'lim', 'max', 'min', 'Pr', 'sup',
 };
 
-/// **只在 display 样式**堆叠的 n 元算子（引擎 `_bigOpHandler` 的名单，14 个）。
+/// **只在 display 样式**堆叠的 n 元算子（引擎 `_bigOpHandler` 的名单）。
+///
+/// ★★ 2026-10-17 实测纠正：**`\smallint` 在 display 下也不堆叠**（3 盒 / 3 原子，
+///   按堆叠顺序对账当场失败）⇒ 已从名单里去掉。
+///   同批实测：`\int_a^b` 在 display **不堆叠**（只是换更大的 ∫ 字形，高 28→50.2、
+///   上下限仍在右边）—— 它在词法里是 `\int`（不在这张表里），本来就没被判成堆叠，正确。
+///   `intop` 保留（没人会手打它；留着不影响任何常见写法）。
 const Set<String> kDisplayStackedOps = <String>{
   'sum', 'prod', 'coprod', 'bigvee', 'bigwedge', 'biguplus', 'bigcap',
-  'bigcup', 'intop', 'smallint', 'bigotimes', 'bigoplus', 'bigodot',
-  'bigsqcup',
+  'bigcup', 'intop', 'bigotimes', 'bigoplus', 'bigodot', 'bigsqcup',
 };
+
+/// 上下限被画在**内容之前**的结构（实测：`\overbrace{a+b}^{n}` 的盒子序是 `[n, a, +, b]`）。
+const Set<String> kScriptFirstOps = <String>{'overbrace'};
+
+/// 字形**家族**：源码里的同一个字，引擎在不同上下文会画成不同的码点，
+/// 对账时必须算"同一个字"。
+///
+/// ★★ 2026-10-17 实测（用户报"点击判定不太对"的真因之一）：
+///   普通 `|` 画的是 `∣`(U+2223)，而 **`\left|…\right|` 画的是 ASCII `|`(U+007C)**
+///   ⇒ 旧的对账表只认 `∣` ⇒ `\left| x \right|` 整份配对失败 ⇒ 点击退回结构层（粗）。
+const List<Set<String>> _kGlyphFamilies = <Set<String>>[
+  {'∣', '|'},
+  {'‖', '∥'},
+  {'−', '-'},
+  {'∗', '*'},
+  {'′', "'"},
+];
+
+/// 两个字形是不是**同一个字**（含家族归并）
+bool sameGlyph(String? expect, String? actual) {
+  if (expect == null || actual == null) return false;
+  if (expect == actual) return true;
+  for (final Set<String> fam in _kGlyphFamilies) {
+    if (fam.contains(expect) && fam.contains(actual)) return true;
+  }
+  return false;
+}
+
+/// 竖线族（会被**拉伸**成多段盒的那一族）
+bool isBarGlyph(String? t) => t == '∣' || t == '|' || t == '‖' || t == '∥';
 
 /// 数学模式下"源码字符 → 画出来的字"的替换表（2026-10-17 逐字探针实测）。
 ///
@@ -177,7 +212,8 @@ class _Walker {
       final List<int> subIdx = sub == null ? const <int>[] : _ofItem(r, sub);
       final List<int> supIdx = sup == null ? const <int>[] : _ofItem(r, sup);
       // ★ 规则 3：堆叠的上下限 ⇒ [sup, base, sub]；否则规则 2 ⇒ [base, sub, sup]
-      if (_stacked(base) && supIdx.isNotEmpty) {
+      // ★ 规则 3b（2026-10-17）：`\overbrace` 的标注画在**内容之前** ⇒ 同样 [sup, base, sub]
+      if ((_stacked(base) || _scriptFirst(base)) && supIdx.isNotEmpty) {
         out
           ..addAll(supIdx)
           ..addAll(baseIdx)
@@ -199,6 +235,10 @@ class _Walker {
     if (kAlwaysStackedOps.contains(cmd)) return true;
     return display && kDisplayStackedOps.contains(cmd);
   }
+
+  /// 上下限画在内容**之前**（`\overbrace` 一族）
+  bool _scriptFirst(TexItem base) =>
+      base.command != null && kScriptFirstOps.contains(base.command);
 
   /// 一个内容项占的原子（结构项要**递归**进它的槽区域 —— 槽里可能还有上下标/堆叠算子）。
   List<int> _ofItem(TexRegion parent, TexItem it) {
@@ -418,13 +458,36 @@ LeafPairing buildLeafPairing({
       fail('原子 ${a.kind}[${a.start},${a.end}) 没有盒了（共 ${boxes.length} 盒）');
       break;
     }
-    if (expect != null && one.texts.first != expect) {
+    if (expect != null && !sameGlyph(expect, one.texts.first)) {
       fail('原子 ${a.kind}[${a.start},${a.end}) 期望画 "$expect"，'
           '实际盒是 "${one.texts.first}"（第 $bi 个）');
       break;
     }
     groups.add(PairGroup(a.start, a.end, bi, one.to, a));
+    final LeafBox firstBox = boxes[one.to - 1];
     bi = one.to;
+    // ★★ ②b（2026-10-17）**拉伸的竖线 = 一个原子吃 N 盒**：
+    //   引擎把一根竖直定界符画成**同列的多段**盒（实测 display 下 `\left|…\right|`
+    //   围绕堆叠的 `\sum` 时每根竖线 **5 段** ⇒ 整份配对失败 ⇒ 点击退回结构层）。
+    //   判据只有两条：**竖线族** ＋ **与第一段同一列**（横向有重叠）。
+    //   ★ 不会误并两根本不相干的竖线：`|x|` 的两根 x 区间不重叠。
+    if (expect != null && isBarGlyph(expect)) {
+      final int from = bi;
+      while (bi < boxes.length) {
+        final LeafBox nb = boxes[bi];
+        if (nb.kind != LeafBoxKind.glyph) break;
+        if (!sameGlyph(expect, nb.text)) break;
+        final bool sameCol = nb.rect.left < firstBox.rect.right - 0.5 &&
+            nb.rect.right > firstBox.rect.left + 0.5;
+        if (!sameCol) break;
+        bi++;
+      }
+      if (bi > from) {
+        final PairGroup merged = groups.removeLast();
+        groups.add(PairGroup(
+            merged.srcStart, merged.srcEnd, merged.boxFrom, bi, merged.atom));
+      }
+    }
   }
 
   if (reason == null) {

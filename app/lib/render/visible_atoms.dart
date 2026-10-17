@@ -37,7 +37,8 @@ class VisibleAtom {
 /// ⇒ **这些结构里点击也一直没反应**（与 accent 装饰盒是同一个 bug 家族，见 §11.21.2）。
 /// 实测：`\widehat{AB}` 2 盒 vs **3** 原子、`\overbrace{AB}` 2 盒 vs **3** 原子 ✓（修好后 2 = 2）。
 const Set<String> kStructureCommands = <String>{
-  'frac', 'dfrac', 'tfrac', 'sqrt', 'left', 'right', 'begin', 'end', 'binom',
+  'frac', 'dfrac', 'tfrac', 'cfrac', 'sqrt', 'left', 'right', 'begin', 'end', 'binom',
+  'overset', 'stackrel',
   'overline', 'underline', 'vec', 'hat', 'bar', 'tilde', 'dot', 'ddot',
   'widehat', 'widetilde', 'overbrace', 'underbrace',
   'overbracket', 'underbracket',

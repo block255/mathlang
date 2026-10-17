@@ -168,6 +168,30 @@ void main() {
       r'\sum_{}^{}',
       r'x_1x_2=\frac{c}{a}',
       r'\alpha+\beta',
+      // ★★ 真实语料（`test_data\作业辅导1.md` 经**智能包裹**后的 38 处里的代表形）：
+      //   2026-10-17 用户粘完这份语料后反馈"求和符号上下限画到右边、点击判定好像不太对"
+      //   ⇒ 把这些**真式子**加进金表（两种样式都跑），别再用"造出来的"语料守真实场景。
+      r'A_n',
+      r'a_n = (-1)^n',
+      r'\{a_n\}',
+      r'\varepsilon > 0',
+      r'|a_m - a_n| < \varepsilon',
+      r'a_m - a_n = (a_m - a_{m-1}) + (a_{m-1} - a_{m-2}) + \dots + (a_{n+1} - a_n)',
+      r'A_n = \sum_{k=2}^n |a_k - a_{k-1}|',
+      r'|a_m - a_n| \le A_m - A_n',
+      r'A_m > A_n',
+      r'|A_m - A_n| = A_m - A_n',
+      r'|a_m - a_n| = \left| \sum_{k=n+1}^m (a_k - a_{k-1}) \right| \le \sum_{k=n+1}^m |a_k - a_{k-1}|',
+      // ★★ 2026-10-17 第二批（"配对失败家族"）：下面这些原先**整份配对失败**
+      //   ⇒ 点击退回结构层（粗）。全部按实测修好后进金表（两种样式都跑）。
+      r'\left| x \right|', // 字形族：`\left|` 画 ASCII `|`、普通 `|` 画 `∣`
+      r'\left| \sum_{k=1}^n a_k \right|', // ★ 拉伸竖线 = 一个原子吃 **5 段盒**
+      r'\left\{ \sum_{k=1}^n a_k \right\}',
+      r'\cfrac{a}{b}', // `\cfrac` 无墨迹（原先被当成 1 个幻影原子）
+      r'\overset{a}{=}', // 结构自带墨迹（原先 `\overset` 自己算 1 个原子）
+      r'\stackrel{?}{=}',
+      r'\overbrace{a+b}^{n}', // 标注画在**内容之前**（规则 3b）
+      r'\smallint_a^b', // ★ 实测纠正：display 下**不**堆叠（原名单误判）
     ];
     for (final bool display in <bool>[true, false]) {
       for (final String tex in texs) {
@@ -242,10 +266,17 @@ void main() {
     expect(cases.plan.complete, isFalse,
         reason: '若这条变绿 ⇒ 分段函数已经支持，请把它挪进上面的金表并删掉这条记账');
 
-    // overbrace：引擎把上标画在**内容之前**（探针实测 [n, A, B]），还没进渲染顺序表
+    // `\binom{n}{k}`：引擎画 `( n k )` **四盒**，而源码里没有 `(`/`)` 这两个字
+    // ⇒ 原子只有 2 个 ⇒ 需要"给结构自带的括号补合成原子"（还没做）
+    final _Probe binom = await _pump(tester, r'\binom{n}{k}');
+    expect(binom.plan.complete, isFalse,
+        reason: '若这条变绿 ⇒ binom 的括号已经补上合成原子，请挪进金表');
+
+    // ⚠️ 已修（2026-10-17）：`\overbrace` 的标注画在内容之前 ⇒ 现在进金表了
+    //   （若这里还留旧断言，说明有人在"顺手统一"时把它改回去了）。
     final _Probe brace = await _pump(tester, r'\overbrace{AB}^{n}');
-    expect(brace.plan.complete, isFalse,
-        reason: '若这条变绿 ⇒ overbrace 的顺序规则已经补上，请挪进金表');
+    expect(brace.plan.complete, isTrue,
+        reason: r'`\overbrace` 的脚本先画（规则 3b）—— 这条现在是金表的一部分');
   });
 
   testWidgets('★ 不完整时 `hitTestMathTex` 必须给 null（调用方才知道要退回结构层）',

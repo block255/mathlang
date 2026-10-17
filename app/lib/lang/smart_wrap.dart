@@ -13,15 +13,24 @@
 //
 // **纯 Dart**（没有 Flutter 依赖），方便单测。
 
-/// 一处建议包裹：把 `source[start, end)` 包成 `$…$`
+/// 一处建议包裹：把 `source[start, end)` 包成 `$…$`（或 `$$…$$`）
 class WrapRun {
-  const WrapRun(this.start, this.end);
+  const WrapRun(this.start, this.end, {this.display = false});
 
   final int start;
   final int end;
 
+  /// ★★ 2026-10-17 用户拍板（B'）：这一处要包成**行间块** `$$…$$`。
+  ///
+  /// 判据 = **整行只有这一个式子**（整行除首尾空白外都被它覆盖）**且**含"显示倾向"的证据
+  /// （大算符 `\sum`/`\int`… 、分式、关系符 `=`/`≤`…）。
+  /// 为什么必须这样：n 元算子的上下限**只在 display 样式下堆叠**（`\sum_{k=1}^n` 在行内
+  /// 会画成右边的小上下标）—— 作业答案里"独立成行的推导"天生该是行间块；
+  /// 而"行内夹在文字里的 `a_n`"必须保持行内（同权原则：数学是这一行的对象）。
+  final bool display;
+
   @override
-  String toString() => 'Wrap[$start,$end)';
+  String toString() => 'Wrap[$start,$end)${display ? ' 行间' : ''}';
 }
 
 /// 扫描结果：[runs] 是要包裹的区间（互不重叠、按位置升序）
@@ -36,7 +45,7 @@ class SmartWrapPlan {
   String toString() => 'SmartWrap(${runs.length} 处：$runs)';
 }
 
-/// 包一次：把每个区间写成 `$…$`
+/// 包一次：把每个区间写成 `$…$`（行间块写成 `$$\n…\n$$`）
 String applySmartWrap(String source, SmartWrapPlan plan) {
   final StringBuffer sb = StringBuffer();
   var i = 0;
@@ -44,8 +53,18 @@ String applySmartWrap(String source, SmartWrapPlan plan) {
     if (r.start < i) continue; // 防御：重叠就跳过
     sb.write(source.substring(i, r.start));
     sb.write(r'$');
-    sb.write(source.substring(r.start, r.end));
-    sb.write(r'$');
+    if (r.display) {
+      // ★ 行间块：`$$` 独占一行（块模型的围栏判据要求整行 `$$`）
+      sb.write(r'$');
+      sb.write('\n');
+      sb.write(source.substring(r.start, r.end).trim());
+      sb.write('\n');
+      sb.write(r'$');
+      sb.write(r'$');
+    } else {
+      sb.write(source.substring(r.start, r.end));
+      sb.write(r'$');
+    }
     i = r.end;
   }
   sb.write(source.substring(i));
@@ -196,5 +215,41 @@ SmartWrapPlan planSmartWrap(String source) {
       merged.add(r);
     }
   }
-  return SmartWrapPlan(List<WrapRun>.unmodifiable(merged));
+
+  // ④ ★★ 行间块升级（B'）：**整行只有这一个式子**且含"显示倾向"的证据 ⇒ `$$…$$`
+  final List<WrapRun> settled = <WrapRun>[];
+  for (final WrapRun r in merged) {
+    final int lineStart =
+        r.start == 0 ? 0 : source.lastIndexOf('\n', r.start - 1) + 1;
+    int lineEnd = source.indexOf('\n', r.end);
+    if (lineEnd < 0) lineEnd = source.length;
+    final bool wholeLine = source.substring(lineStart, r.start).trim().isEmpty &&
+        source.substring(r.end, lineEnd).trim().isEmpty;
+    settled.add(WrapRun(
+      r.start,
+      r.end,
+      display: wholeLine && _wantsDisplayBlock(source.substring(r.start, r.end)),
+    ));
+  }
+  return SmartWrapPlan(List<WrapRun>.unmodifiable(settled));
+}
+
+/// 这些命令/符号一出现，就说明"这一行是**推导**，不是行内的小记号" ⇒ 该用行间块。
+///
+/// ★ 判据只在"整行只有一个式子"时才被问到（[planSmartWrap] 第 ④ 步），
+///   所以不需要更聪明的启发：行内夹在文字里的 `a_n` 永远是行内。
+const Set<String> _kDisplayCommands = <String>{
+  'sum', 'prod', 'coprod', 'int', 'iint', 'iiint', 'oint',
+  'bigcup', 'bigcap', 'biguplus', 'bigvee', 'bigwedge', 'bigotimes', 'bigoplus',
+  'frac', 'dfrac', 'lim', 'limsup', 'liminf', 'left',
+};
+
+bool _wantsDisplayBlock(String seg) {
+  for (final Match m in RegExp(r'\\([A-Za-z]+)').allMatches(seg)) {
+    if (_kDisplayCommands.contains(m.group(1))) return true;
+  }
+  for (final String op in <String>['=', '<', '>', '≤', '≥', '≈', '→', '⇒']) {
+    if (seg.contains(op)) return true;
+  }
+  return false;
 }
