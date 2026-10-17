@@ -21,9 +21,11 @@ $$
 x = \frac{-b \pm \sqrt{b^2-4ac}}{2a}
 $$
 
-- 判别式 $\Delta = b^2-4ac$
-- 两根之和 $x_1+x_2 = -\frac{b}{a}$
-- 两根之积 $x_1 x_2 = \frac{c}{a}$
+判别式 $\Delta = b^2-4ac$。
+
+两根之和 $x_1+x_2 = -\frac{b}{a}$。
+
+两根之积 $x_1 x_2 = \frac{c}{a}$。
 ''';
 
 class S3EditPage extends StatefulWidget {
