@@ -198,6 +198,26 @@ void main() {
     expect(buf.selectionEnd, buf.length,
         reason: '拖出行尾也要落到**行末**（改前会停在最后一个字之前）');
   });
+  testWidgets('★★ 光标已经在这一行里（段落有零宽光标条）时，拖到行尾也要含最后一个字',
+      (WidgetTester tester) async {
+    // ★ 之前所有用例的光标都在别处 ⇒ 这一段没有光标条 ⇒ 复现不出来。
+    //   真实场景里用户刚点过这一行，光标条就在行内（零宽，但占一个段落格子）。
+    final DocBuffer buf = await _pump(tester, '甲乙丙丁戊己庚');
+    buf.setCaret(6); // 光标停在行内靠后（让段落里出现光标条）
+    await tester.pumpAndSettle();
+    // ★ 光标条会把段落文本切开（占位符 U+FFFC）⇒ 用**前缀**找这个 Text，别用整串
+    final Rect r = tester.getRect(find.textContaining('甲乙丙').first);
+    final TestGesture g = await tester.startGesture(r.centerLeft + const Offset(2, 0));
+    await g.moveBy(const Offset(4, 0));
+    await tester.pump();
+    await g.moveTo(r.centerRight + const Offset(80, 0));
+    await tester.pump();
+    await g.up();
+    await tester.pumpAndSettle();
+    expect(buf.hasSelection, isTrue);
+    expect(buf.selectionEnd, buf.length,
+        reason: '行尾最后一个字必须含在选区内（改前会差 1：光标条那一格没被扣掉）');
+  });
   testWidgets('★ 退格：有选区 ⇒ 只删那一段', (WidgetTester tester) async {
     final DocBuffer buf = await _pump(tester, '甲乙丙丁', a: 1, b: 3);
     await tester.tap(find.textContaining('甲').first); // 取焦点

@@ -403,6 +403,7 @@ class DocViewState extends State<DocView> {
   /// 空行槽的渲染盒（⑥ 丙）：给"光标在空行上"时的输入面定位用
   final Map<String, RenderBox> _blankBoxes = <String, RenderBox>{};
 
+
   /// ⑤ 选区（绝对偏移；无选区时 `start == end`）
   int _selStart = 0;
   int _selEnd = 0;
@@ -574,18 +575,25 @@ class DocViewState extends State<DocView> {
     // ② 文字（段落 / 标题 / 引用 / 列表项）：交给段落排版器
     final String text = _renderParts(u.type, u.source).text;
     final int? rel = u.relFor(_caret);
-    final List<int> map = paragraphIndexMap(
-      text,
-      // ★ 光标在本段文字里时，段落会多一个"光标条"码元 → 映射表必须算上它，
-      //   否则点击映射整体偏 1（用户实测的"点哪儿都没规律"）
-      caretInText: _caretInTextSegment(text, rel),
-    );
+    final int? caretInText = _caretInTextSegment(text, rel);
+    // ★★ 2026-10-17 用户实测「单行拖选少最后一个字符」的**根因**就在这里：
+    //   段落里那根**零宽光标条**占了**一个格子**（`caretInText` 让映射表多一格），
+    //   而 `getPositionForOffset` 在"拖到行尾右侧"时会把落点吸到**光标条之前**
+    //   ⇒ 段落坐标比真实行末少 1；再套上多了一格的映射表，正好又少 1 ⇒ 差 1 格。
+    //   修法：**映射用"纯表"**（不含光标条），再把段落坐标里"光标条那一格"扣掉。
+    final List<int> pureMap = paragraphIndexMap(text);
+    final int? caretCell =
+        caretInText == null ? null : paragraphIndexMap(text, caretInText: caretInText).indexOf(caretInText);
     final RenderParagraph? para = _contentParagraph(ro, _plainTextOf(text));
     if (para == null) return null;
     final TextPosition tp =
         para.getPositionForOffset(para.globalToLocal(global));
-    final int p = tp.offset.clamp(0, map.length - 1);
-    return u.renderBase + map[p];
+    var p = tp.offset;
+    // ★ 段落里那根光标条是**零宽**的，却占了段落坐标里的一个位置
+    //   ⇒ 落点跑到它之后时要扣 1（否则"拖到行尾"永远差最后一个字）
+    if (caretCell != null && caretCell >= 0 && p > caretCell) p -= 1;
+    p = p.clamp(0, pureMap.length - 1);
+    return u.renderBase + pureMap[p];
   }
 
   /// 光标落在本段**文字段**里的相对偏移（落在数学段里则 null —— 那时不产生额外码元）
@@ -735,8 +743,10 @@ class DocViewState extends State<DocView> {
   /// 本单元的**局部选区**（渲染坐标）；无选区 / 与本单元无交集 ⇒ null。
   ({int from, int to})? _localSelFor(_Unit u) {
     if (widget.hideCaretAndSelection || _selEnd <= _selStart) return null;
-    final int a = (_selStart - u.renderBase).clamp(0, u.renderLength);
-    final int b = (_selEnd - u.renderBase).clamp(0, u.renderLength);
+    final int rawA = _selStart - u.renderBase;
+    final int rawB = _selEnd - u.renderBase;
+    final int a = rawA.clamp(0, u.renderLength);
+    final int b = rawB.clamp(0, u.renderLength);
     if (b > a) return (from: a, to: b);
     if (_selStart <= u.renderBase && _selEnd >= u.renderBase + u.renderLength) {
       return (from: 0, to: u.renderLength); // 整单元被选中（含两端）
