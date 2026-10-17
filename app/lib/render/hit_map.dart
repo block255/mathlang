@@ -99,6 +99,92 @@ double _medianGlyphHeight(List<LeafBox> boxes) {
 /// ⇒ 取半个正文汉字宽（16px 的一半）：0–8px 都能点中"旁边那个字"。
 const double kHitRowSlackPx = 8.0;
 
+/// 把**左缘对齐、上下分开**的一对"块"的可点横向范围取并集（y 带各自不变）。
+///
+/// 用户 2026-10-17 的原话：「这个求和的 `n`……取**上下两块的最长者**的长度来决定它们的
+/// 点击判定矩形框如何？」⇒ `\sum_{k=2}^{n}` 的上限 `n` 只有 8.4px 宽、下限 `k=2` 25.6px 宽，
+/// 两者的可点宽度应当一致（KaTeX 把上下限**左对齐**排：实测都是 x 21.1 起）。
+///
+/// 做法（纯几何，不动任何渲染）：
+///   ① 对本块 `a`（字号级、非拉伸盒），找**左缘对齐**（±2px）、**竖直不相交**且间距 ≤1.5 行高的兄弟块；
+///   ② 从那个兄弟块的第一个字形起，沿**同一行**把**相邻**（间隙 ≤1.5px）的字形并成一整块；
+///   ③ 把 `a` 的可点横向范围放宽到"本块 ∪ 兄弟整块"。
+/// ★ 只改**横向**：竖向各自保留自己的带 ⇒ 分式分数线那一带仍不属于任何字形，
+///   ③-B"点装饰区 ⇒ 结构之前/之后"完全不受影响；兄弟块内部各字形**逐个保持原样**（精度不降）。
+List<Rect> _widenAlignedScriptBlocks(List<Rect> rects, double rowH) {
+  final List<Rect> out = List<Rect>.of(rects);
+  if (rects.length < 2 || rowH <= 0) return out;
+  bool small(Rect r) => r.height <= rowH * 1.2;
+  bool disjointY(Rect a, Rect b) => a.bottom <= b.top + 0.01 || b.bottom <= a.top + 0.01;
+  double gapY(Rect a, Rect b) =>
+      a.bottom <= b.top ? b.top - a.bottom : a.top - b.bottom;
+
+  for (var i = 0; i < rects.length; i++) {
+    final Rect a = rects[i];
+    if (!small(a)) continue; // 基座（拉伸的行盒）不参与
+    double left = a.left;
+    double right = a.right;
+    var found = false;
+
+    for (var j = 0; j < rects.length; j++) {
+      if (j == i) continue;
+      final Rect b = rects[j];
+      if (!small(b)) continue;
+      if (!disjointY(a, b)) continue;
+      if (gapY(a, b) > rowH * 1.5) continue;
+      if ((b.left - a.left).abs() > 2.0) continue; // 必须左缘对齐（= 同一列的上下两块）
+
+      // 从 b 起沿同一行把相邻字形并成"整块"
+      double l = b.left;
+      double r = b.right;
+      final double bandTop = b.top;
+      final double bandBottom = b.bottom;
+      var grew = true;
+      while (grew) {
+        grew = false;
+        for (var k = 0; k < rects.length; k++) {
+          final Rect c = rects[k];
+          if (!small(c)) continue;
+          if (c.top >= bandBottom - 0.01 || c.bottom <= bandTop + 0.01) continue;
+          final bool adjacent = c.left <= r + 1.5 && c.right >= l - 1.5;
+          final bool outside = c.left < l - 0.01 || c.right > r + 0.01;
+          if (adjacent && outside) {
+            if (c.left < l) l = c.left;
+            if (c.right > r) r = c.right;
+            grew = true;
+          }
+        }
+      }
+      if (l < left) left = l;
+      if (r > right) right = r;
+      found = true;
+    }
+    if (found && right - left > a.width + 0.01) {
+      // ★ 只放宽**本行里"孤立"的那个字**：若本行还有别的字形落在放宽后的范围里
+      //   （典型＝较宽那一块自己的第一个字，如 k=2 的 k），就不许放宽 ——
+      //   否则它会把同块里的 `=` `2` 全吞掉，逐字精度反而变差。
+      var occupied = false;
+      for (var k = 0; k < rects.length; k++) {
+        if (k == i) continue;
+        final Rect c = rects[k];
+        if (!small(c)) continue;
+        // ★ 必须“有实质的竖直重叠”才算同一行：下限块的 = 与 2 和上限 n 的带只重叠 0.5px，
+        //   若按“有任何重叠”算，它们会把 n 的放宽判据顶掉（实测踩到）。
+        final double ovY = (c.bottom < a.bottom ? c.bottom : a.bottom) -
+            (c.top > a.top ? c.top : a.top);
+        final double minH = c.height < a.height ? c.height : a.height;
+        if (ovY <= minH * 0.3) continue;
+        if (c.right > a.left + 0.01 && c.left < right - 0.01) {
+          occupied = true;
+          break;
+        }
+      }
+      if (!occupied) out[i] = Rect.fromLTRB(left, a.top, right, a.bottom);
+    }
+  }
+  return out;
+}
+
 /// 在 Math 控件内做命中测试。
 ///
 /// [localPos] 是相对 Math 根盒（`root`）的坐标；[tex] 是该段**渲染用的** tex。
@@ -136,6 +222,12 @@ MathHit hitTestMathTex({
     return Rect.fromCenter(center: r.center, width: r.width, height: rowH);
   }
 
+  // ★★ **"上下两块的最长者"**（2026-10-17 用户提出的第二条手感修正）：
+  //   见 `_widenLoneBandGlyphs` —— 只放宽"独字带"（如 `\sum_{k=2}^{n}` 的上限 `n`），
+  //   多字形的带（下限 `k=2`）逐字精度保持不变。y 带一律不变。
+  final List<Rect> cropped = <Rect>[for (var i = 0; i < boxes.length; i++) hitRect(i)];
+  final List<Rect> hitRects = _widenAlignedScriptBlocks(cropped, rowH);
+
   // ★★ **行优先**（2026-10-17 用户实测"n 后面还是点不到"）：点在某个字形盒的**竖直范围之内**
   //   （`dy == 0`）⇒ 就落**那一行**里水平最近的那个盒。
   //   为什么必须加这一趟：`\sum` 的节点盒把上下限**整片盖住**，而"点上限右边"那一点
@@ -154,7 +246,7 @@ MathHit hitTestMathTex({
   //   所以：**严格包含优先**，都落空时才退回"外扩 + 就近"。
   how = '包含命中';
   for (var i = 0; i < boxes.length; i++) {
-    if (hitRect(i).contains(localPos)) {
+    if (hitRects[i].contains(localPos)) {
       hit = i;
       break;
     }
@@ -165,7 +257,7 @@ MathHit hitTestMathTex({
   onGlyph = hit >= 0;
   if (hit < 0) {
     for (var i = 0; i < boxes.length; i++) {
-      if (hitRect(i).inflate(inflate).contains(localPos)) {
+      if (hitRects[i].inflate(inflate).contains(localPos)) {
         hit = i;
         how = '外扩命中';
         onGlyph = true;
@@ -182,7 +274,7 @@ MathHit hitTestMathTex({
     var slackBest = double.infinity;
     var slackHit = -1;
     for (var i = 0; i < boxes.length; i++) {
-      final Rect r = hitRect(i);
+      final Rect r = hitRects[i];
       if (localPos.dy < r.top - 0.01 || localPos.dy > r.bottom + 0.01) continue;
       final double dx = localPos.dx < r.left
           ? r.left - localPos.dx
@@ -201,7 +293,7 @@ MathHit hitTestMathTex({
   if (hit < 0 && boxes.isNotEmpty) {
     var best = double.infinity;
     for (var i = 0; i < boxes.length; i++) {
-      final double d = (hitRect(i).center - localPos).distance;
+      final double d = (hitRects[i].center - localPos).distance;
       if (d < best) {
         best = d;
         hit = i;
@@ -225,7 +317,7 @@ MathHit hitTestMathTex({
     var bestDy = double.infinity;
     var bestDx = double.infinity;
     for (var i = 0; i < boxes.length; i++) {
-      final Rect r = hitRect(i);
+      final Rect r = hitRects[i];
       final double dy = localPos.dy < r.top
           ? r.top - localPos.dy
           : (localPos.dy > r.bottom ? localPos.dy - r.bottom : 0);

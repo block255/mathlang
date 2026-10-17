@@ -112,6 +112,48 @@ void main() {
     });
   });
 
+  group('★ 上下两块取最长者：上限的可点宽度 = 下限的宽度（用户 2026-10-17 提出）', () {
+    // `\sum_{k=2}^{n}`：上限 `n` 只有 11px 宽，下限 `k=2` 宽一倍多。
+    // 用户的原话：「取上下两块的最长者的长度来决定它们的点击判定矩形框」。
+    const String tex = r'\sum_{k=2}^{n} a_k';
+
+    testWidgets('点"下限右端 × 上限的高度" ⇒ 仍落 **n 之后**（改前这里超出 8px 宽容度）',
+        (WidgetTester tester) async {
+      final _Rig r = await _pump(tester, tex);
+      final Rect n = _supNBox(r);
+      // 实测（真实字体、字号 20，行内 text 样式）：
+      //   ∑  x 0.0..21.1   y −1.8..24.2
+      //   下限 k / = / 2   x 21.1..**46.7**   y 8.9..26.9
+      //   上限 n           x 21.1..29.5      y −4.6..9.4
+      // ⇒ 上限只有 8.4 宽、下限 25.6 宽（左对齐）；放宽后上限的可点横向范围 = 21.1..46.7。
+      const double subBandRight = 46.7;
+      expect(n.right, closeTo(29.5, 1.5), reason: '上限 n 的右缘（实测 29.5）');
+      expect(subBandRight - n.right, greaterThan(kHitRowSlackPx),
+          reason: '★ 这个用例必须"超出 8px 宽容度"才有意义（否则测不到放宽）');
+      final int want = _hit(r, Offset(n.right, n.center.dy)).offset!;
+      final MathHit h = _hit(r, Offset(subBandRight - 0.5, n.center.dy));
+      expect(h.onGlyph, isTrue, reason: 'how=${h.how}');
+      expect(h.offset, want,
+          reason: '上限的可点矩形必须放宽到"上下两块里较长的那块"（how=${h.how}）');
+    });
+
+    testWidgets('下限**逐字精度不变**：点 `=` 的右半 ⇒ 仍落 `=` 之后（不是被 `k` 抢走）',
+        (WidgetTester tester) async {
+      final _Rig r = await _pump(tester, tex);
+      final List<LeafBox> eq = r.scan.eligible
+          .where((LeafBox b) =>
+              b.kind == LeafBoxKind.glyph && (b.text ?? '') == '=')
+          .toList();
+      final LeafBox e = eq.first;
+      final MathHit right = _hit(r, Offset(e.rect.right - 1, e.rect.center.dy));
+      final MathHit left = _hit(r, Offset(e.rect.left + 1, e.rect.center.dy));
+      expect(right.offset, isNotNull);
+      expect(left.offset, isNotNull);
+      expect(right.offset, isNot(left.offset),
+          reason: '左右半必须给出不同端点（逐字精度没被"放宽"毁掉）');
+    });
+  });
+
   group('★ 宽容度不许影响 ③-B 的两个既有行为', () {
     testWidgets('远在公式之外（右边缘 +30px）⇒ 不算点中字形（交回结构层）',
         (WidgetTester tester) async {
