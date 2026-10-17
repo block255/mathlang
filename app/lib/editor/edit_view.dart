@@ -124,6 +124,9 @@ class EditViewState extends State<EditView> {
   bool _dragging = false;
   Offset? _pressAt;
 
+  /// 这次按下有没有命中到某个偏移（`onTapOffset` 是否被调用过）
+  bool _pressHit = false;
+
   /// 连击计数（同一处 400 ms 内）
   int _clickCount = 0;
   DateTime? _lastClickAt;
@@ -512,6 +515,7 @@ class EditViewState extends State<EditView> {
 
   /// 指针**按下**落在某个偏移上（DocView 命中后回吐）—— 决定这次是"点击"还是"连击"
   void _onPressHit(int offset) {
+    _pressHit = true;
     final Offset? pos = _pressAt;
     final DateTime now = DateTime.now();
     final bool sameSpot =
@@ -564,9 +568,16 @@ class EditViewState extends State<EditView> {
   }
 
   void _endDrag() {
+    // ★★ 用户实测："点了别的地方，选区没取消" —— 点在**页边 / 块间空隙**这类
+    //   "没有任何单元命中"的地方时，`onTapOffset` 根本不会触发，选区就一直留着。
+    //   标准编辑器行为：点页面里的空白也要**收起选区**。⇒ 没命中且没拖 ⇒ 折叠到当前光标。
+    if (!_pressHit && !_dragging && _buf.hasSelection) {
+      _buf.setCaret(_buf.caret);
+    }
     _pressAt = null;
     _dragging = false;
     _dragAnchor = null;
+    _pressHit = false;
   }
   /// 当前选中的源码（没有选区 ⇒ 空串）
   String get _selectedText => _buf.hasSelection
@@ -608,6 +619,7 @@ class EditViewState extends State<EditView> {
               focusInput();
               _pressAt = e.position;
               _dragging = false;
+              _pressHit = false;
             },
             onPointerMove: (PointerMoveEvent e) => _onDragMove(e.position),
             onPointerUp: (_) => _endDrag(),

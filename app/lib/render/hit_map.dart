@@ -17,6 +17,7 @@
 
 import 'package:flutter/rendering.dart';
 
+import 'injection_map.dart';
 import 'leaf_boxes.dart';
 import 'leaf_pairing.dart';
 import 'visible_atoms.dart';
@@ -257,9 +258,15 @@ List<Rect> selectionBands({
     boxes: boxes,
     atoms: atoms ?? renderOrderAtoms(tex, displayStyle: displayStyle),
   );
+  // ★★ 关键：`PairGroup.srcStart/srcEnd` 是**渲染 tex**（含空槽垫、光标锚点注入）里的偏移，
+  //   而调用方给的 `[from, to)` 是**源 tex** 的偏移 ⇒ 必须换回源坐标再比较，
+  //   否则一旦这段公式里有空槽/光标注入，整条区间就**错位**（用户实测："复杂结构的
+  //   数学语言有的子层级被漏掉"）。`renderToSourceOffset` 就是点击定位用的那个映射。
   final List<Rect> out = <Rect>[];
   for (final PairGroup g in pairing.groups) {
-    if (g.srcEnd <= from || g.srcStart >= to) continue;
+    final int a = renderToSourceOffset(tex, g.srcStart);
+    final int b = renderToSourceOffset(tex, g.srcEnd);
+    if (b <= from || a >= to) continue;
     out.add(g.hull(boxes));
   }
   return out;
