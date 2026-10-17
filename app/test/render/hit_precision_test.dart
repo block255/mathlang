@@ -1,4 +1,4 @@
-// ★★ 命中精度：**拉伸的行盒**不许把上下限的格子吞掉（2026-10-17，用户实测）
+﻿// ★★ 命中精度：**拉伸的行盒**不许把上下限的格子吞掉（2026-10-17，用户实测）
 //
 // 用户原话：「我发现我很难点到 `n` 后面的位置，点这里通常会落在 ∑ 和 aᵢ 之间，
 //            然后点 `i=1` 的 `i` 后面经常会落到 `i` 前面去」
@@ -23,7 +23,6 @@ import 'package:mathlang/render/hit_map.dart';
 import 'package:mathlang/render/leaf_boxes.dart';
 import 'package:mathlang/render/leaf_pairing.dart';
 import 'package:mathlang/render/slot_marks.dart';
-import 'package:mathlang/render/visible_atoms.dart';
 
 import '../support/math_fonts.dart';
 
