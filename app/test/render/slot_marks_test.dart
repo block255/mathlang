@@ -15,13 +15,15 @@ import 'package:mathlang/render/visible_atoms.dart';
 
 void main() {
   group('占位串的选取（④-1/④-2：**看不见的垫子** ＋ 自绘框）', () {
-    test(r'垫子 = `\square` + 零高宽度垫 ⇒ **2 个可见原子 ↔ 2 个叶盒**', () {
-      expect(kEmptySlotTex.contains(r'\square'), isTrue,
-          reason: '字形垫（渲染成 $kSlotPadGlyph）：给槽一个**自然的行高与基线**');
+    test(r'垫子 = 数学字形 + 零高宽度垫 ⇒ **2 个可见原子 ↔ 2 个叶盒**', () {
+      expect(kEmptySlotTex.contains(kSlotPadGlyph), isTrue,
+          reason: '字形垫（`$kSlotPadGlyph`）：给槽一个**自然的行高与基线**。'
+              '★ 字形是**挑过的**（`\\square` 的 ¶ 盒落在 AMS/回退度量上、1.55em ⇒ 框偏大）：'
+              '见 slot_pad.dart 的字形选择表');
       expect(kEmptySlotTex.contains(kSlotPadFiller), isTrue,
-          reason: '宽度垫（`0.3em` 零高）：行内槽宽从 11.2 补到 ≥16（一个正文汉字）');
+          reason: '宽度垫（`0.3em` 零高）：把槽补宽，行内也够一个正文汉字');
       expect(lexVisibleAtoms(kEmptySlotTex).length, 2,
-          reason: '★ `\\square` 1 个 + 宽度垫 **1 个合成原子** = 2。'
+          reason: '★ 字形 1 个 + 宽度垫 **1 个合成原子** = 2。'
               '引擎给宽度垫一个零高叶盒 ⇒ 不补这个原子就"叶盒数 ≠ 原子数"'
               '⇒ hitTestMathTex 静默 null（公式内点击全废，本仓踩过四次）');
       expect(lexVisibleAtoms(kCurrentSlotTex).length, 2);

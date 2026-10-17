@@ -400,18 +400,26 @@ const int kSlotCurrentFillColorValue = 0xFFE3F2FD;
 ///
 /// **判据（两条都要满足 —— 都是"认渲染事实"，与 `leaf_boxes` 那四条同一层）**：
 ///   ① **宽度垫**：`_RenderColoredBox`、**高 ≈ 0**、宽 ≥ [kMinLeafWidth]；
-///   ② 它**左边紧邻**的那个叶盒是 `RenderParagraph`，¶ 文本**恰好是** [kSlotPadGlyph]（`□`），
+///   ② 它**左边紧邻**的那个叶盒是 `RenderParagraph`，¶ 文本**恰好是** [kSlotPadGlyph]，
 ///      且两者 x 相接（≤ 0.75 px）。
 /// ① 把"光标锚点"（0×0）滤掉；② 把"结构尾垫"（左边是内容字形，如 `2`）滤掉。
 ///
-/// 矩形 = 字形盒 ∪ 宽度垫盒 —— 实测两者**严格相接**（display 17.9 = 17.9、text 13.1 = 13.1），
-/// 合起来就是**整个槽的占位矩形**（行内 16.8 × 11.0、行间 20.8 × 16.0，字号 16）。
+/// ★★ **矩形要夹进"槽带"**（2026-10-17 用户实测："分母的虚线框上边跑到分子区去了"）：
+/// 字形盒是**字体行高盒**，比槽带高得多 —— 实测（真实 KaTeX 字体、字号 20）行间分式里
+/// 分母的垫子盒 24.5..55.5（**31 px 高**，而分母那格只有 ~19 px）⇒ 上沿直接压到分数线上。
+/// 所以盒 = `字形盒 ∪ 宽度垫盒`，再按下面三条**夹**（全部来自渲染树实测，不猜）：
+///   ① **父结构节点**的盒（`_FracPos` / `_SqrtPos` / `_ScriptPos` / `RelativeWidthColumn`…）
+///      ⇒ 框不许比它所在的结构还大；
+///   ② **同结构里别的槽的内容盒**：垫子在它上方 ⇒ 下沿 ≤ 它上沿 − margin；
+///      在下方 ⇒ 上沿 ≥ 它下沿 + margin ⇒ "别的槽占着的地方不画"；
+///   ③ margin = 盒高的 12%（≈0.13em）⇒ 给那条**装饰线**（分数线 / 根号横线）让位。
+/// ②③ 就是"不同结构、不同位置各不一样"的**自适应**：它跟着**邻居的实际内容**走。
 ///
 /// [caretAt] 给了就顺便判"当前槽"：锚点落在哪个垫子盒里，哪个就是当前槽
 /// （空槽里锚点正好落在垫子右缘 ⇒ 用 `inflate(1)`；实测分母的垫子**不**含这个锚点）。
 List<SlotPad> scanSlotPads(RenderObject root, {Offset? caretAt}) {
-  final List<({Rect rect, String type, String? glyph})> leaves =
-      <({Rect rect, String type, String? glyph})>[];
+  final List<({Rect rect, String type, String? glyph, RenderObject obj})> leaves =
+      <({Rect rect, String type, String? glyph, RenderObject obj})>[];
 
   void walk(RenderObject o) {
     var hasChild = false;
@@ -425,24 +433,112 @@ List<SlotPad> scanSlotPads(RenderObject root, {Offset? caretAt}) {
       rect: r,
       type: o.runtimeType.toString(),
       glyph: o is RenderParagraph ? o.text.toPlainText() : null,
+      obj: o,
     ));
   }
 
   walk(root);
 
-  final List<SlotPad> out = <SlotPad>[];
+  // ── 先认出全部垫子（字形盒 ∪ 宽度垫盒）────────────────────────────
+  final List<({Rect rect, RenderObject glyph})> pads =
+      <({Rect rect, RenderObject glyph})>[];
   for (var i = 1; i < leaves.length; i++) {
-    final ({Rect rect, String type, String? glyph}) filler = leaves[i];
+    final ({Rect rect, String type, String? glyph, RenderObject obj}) filler =
+        leaves[i];
     if (filler.rect.height.abs() > 0.5) continue; // ① 零高
     if (filler.rect.width < kMinLeafWidth) continue; // ① 不是锚点（0 宽）
     if (!filler.type.contains('ColoredBox')) continue; // ① 是"填色盒"（`\rule` 的画法）
-    final ({Rect rect, String type, String? glyph}) glyph = leaves[i - 1];
+    final ({Rect rect, String type, String? glyph, RenderObject obj}) glyph =
+        leaves[i - 1];
     if (glyph.glyph != kSlotPadGlyph) continue; // ② 左边是我们垫的字形
-    if ((glyph.rect.right - filler.rect.left).abs() > 0.75) continue; // ② 紧邻
-    final Rect r = glyph.rect.expandToInclude(filler.rect);
+    // ★ ②"紧邻"要留余量：**斜体字形盒与宽度垫之间天然有 1–2px 空隙**
+    //   （实测真实字体：`M` 盒右缘 12.8 / 垫左缘 14.0；字号 20 时 21.8 / 24.0）
+    if (glyph.rect.right - filler.rect.left > math.max(3.0, glyph.rect.height * 0.2)) {
+      continue;
+    }
+    if (filler.rect.left - glyph.rect.right > math.max(3.0, glyph.rect.height * 0.2)) {
+      continue; // 垫子在字形**左边** ⇒ 不是我们的写法
+    }
+    pads.add((rect: glyph.rect.expandToInclude(filler.rect), glyph: glyph.obj));
+  }
+
+  // ── 再逐个夹进"槽带" ──────────────────────────────────────────
+  final Set<Rect> padRects = <Rect>{for (final p in pads) p.rect};
+  final List<SlotPad> out = <SlotPad>[];
+  for (final ({Rect rect, RenderObject glyph}) p in pads) {
+    final Rect r = _clipToSlotBand(
+      root: root,
+      glyph: p.glyph,
+      box: p.rect,
+      leaves: leaves,
+      padRects: padRects,
+    );
     out.add(SlotPad(r, current: caretAt != null && r.inflate(1.0).contains(caretAt)));
   }
   return out;
+}
+
+/// 结构承载节点的类型判据（与 `structure_geometry.collectStructureNodes` 同一张名单，
+/// 但这里**不能**调那个函数：它返回节点表，而我们要的是"**最近的祖先**"）
+bool _isStructureNode(String type) =>
+    type.contains('CustomLayout') ||
+    type.contains('RelativeWidthColumn') ||
+    type.contains('EqnArray');
+
+/// 把垫子的盒**夹进它所在的那个槽带**（见 [scanSlotPads] 的说明）。
+///
+/// 拿不到父结构节点（例如**空公式**，它上面没有任何结构）⇒ 原样返回 `box`。
+Rect _clipToSlotBand({
+  required RenderObject root,
+  required RenderObject glyph,
+  required Rect box,
+  required List<({Rect rect, String type, String? glyph, RenderObject obj})> leaves,
+  required Set<Rect> padRects,
+}) {
+  RenderObject? n = glyph.parent;
+  while (n != null && !_isStructureNode(n.runtimeType.toString())) {
+    n = n.parent;
+  }
+  if (n is! RenderBox || !n.hasSize) return box;
+  final Rect nodeRect = n.localToGlobal(Offset.zero, ancestor: root) & n.size;
+
+  Rect band = box;
+  // ① 父结构节点的盒
+  final Rect clamped = box.intersect(nodeRect);
+  if (clamped.width > 0.5 && clamped.height > 0.5) band = clamped;
+
+  // ② 同结构里**别的槽的内容**（同结构子树内的叶盒，去掉所有垫子自己）
+  Rect? others;
+  void collect(RenderObject o) {
+    var hasChild = false;
+    o.visitChildren((RenderObject c) {
+      hasChild = true;
+      collect(c);
+    });
+    if (hasChild || o is! RenderBox || !o.hasSize) return;
+    final Rect r = o.localToGlobal(Offset.zero, ancestor: root) & o.size;
+    if (padRects.contains(r)) return; // 是垫子（我们注入的）⇒ 不算"别的内容"
+    others = others == null ? r : others!.expandToInclude(r);
+  }
+
+  collect(n);
+  if (others != null) {
+    final Rect u = others!;
+    final double margin = box.height * 0.12;
+    if (box.center.dy <= u.center.dy) {
+      // 垫子在上方 ⇒ 下沿不许越到"下面的内容"上边
+      final double bottom = math.min(band.bottom, u.top - margin);
+      if (bottom > band.top + 1) {
+        band = Rect.fromLTRB(band.left, band.top, band.right, bottom);
+      }
+    } else {
+      final double top = math.max(band.top, u.bottom + margin);
+      if (top < band.bottom - 1) {
+        band = Rect.fromLTRB(band.left, top, band.right, band.bottom);
+      }
+    }
+  }
+  return band;
 }
 
 /// 画**竖条 ＋ 空槽占位框 ＋ 瞬时边界刻度**（三者同一支画笔，一次 `CustomPaint`）

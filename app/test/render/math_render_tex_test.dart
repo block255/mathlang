@@ -100,21 +100,23 @@ void main() {
   group('★ 空公式必须画出来（§6.1.1）', () {
     test('tex 空 / 全白 / 只有换行 → 渲染占位字形（不是空串）', () {
       for (final String empty in <String>['', '   ', '\n', ' \n ']) {
-        expect(renderMathTex(empty, caretRel: -1), contains(r'\square'),
-            reason: 'tex=「$empty」时必须画占位，否则空公式是零尺寸的幽灵');
+        expect(renderMathTex(empty, caretRel: -1), contains(kSlotPadGlyph),
+            reason: 'tex=「$empty」时必须画占位，否则空公式是零尺寸的幽灵'
+                '（占位字形 = `$kSlotPadGlyph`；为什么挑它见 slot_pad.dart 的字形表）');
       }
     });
 
     test('光标在空公式里 → 占位 + 锚点（否则用户不知道停在哪）', () {
       final String out = renderMathTex('', caretRel: 0);
-      expect(out, contains(r'\square'));
+      expect(out, contains(kSlotPadGlyph));
       expect(out, contains(kCursorTex),
           reason: '★ 2026-10-15 晚起光标是**零尺寸锚点**（竖条由 MathWithCaret 自绘上去）');
     });
 
     test('★ 只兜空公式：非空公式不受影响', () {
-      expect(renderMathTex('x', caretRel: -1), isNot(contains(r'\square')));
-      expect(renderMathTex(r'\frac{a}{b}', caretRel: -1), isNot(contains(r'\square')));
+      expect(renderMathTex('x', caretRel: -1), isNot(contains(kSlotPadGlyph)));
+      expect(renderMathTex(r'\frac{a}{b}', caretRel: -1),
+          isNot(contains(kSlotPadGlyph)));
     });
 
     testWidgets('★ 空公式渲染出来必须有非零宽度（这是"看得见"的客观判据）',

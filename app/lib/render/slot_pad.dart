@@ -33,13 +33,24 @@
 // **纯 Dart（无 Flutter 依赖）。**
 
 /// 垫子里的字形 —— 自绘层靠"它 ＋ 紧邻的宽度垫"认出"这是我们注入的垫子"（见 `math_caret.scanSlotPads`）。
-const String kSlotPadGlyph = '□';
+///
+/// ★★ **为什么要挑字形**（2026-10-17 真实字体下探针实测，字号 20）：
+/// | 字形 | ¶ 盒 | 说明 |
+/// |---|---|---|
+/// | `\square` / `\blacksquare` / `\Box` | 15.6 × **31**（1.55em） | ✗ 盒高落在 **AMS/回退字体**的度量上 ⇒ 框必然"偏大、顶穿分数线"（用户实测） |
+/// | `x` | 11.4 × 21 | ✓ 数学字体度量（1.05em），但偏窄 |
+/// | **`M`** | **19.4 × 21** | ✓ 数学字体度量 **且宽**（≈0.97em，帮 ④-2 够到"一个正文汉字"） |
+/// | `.` `\cdot` `\ast` `\prime` | 5.6 × **25** | ✗ 度量怪（1.25em） |
+///
+/// ⇒ 取 `M`：**不可见**（白墨）、¶ 盒 = **数学字体自己的行盒**、宽度还比 □ 更够
+/// （实测行内空分式：`\square` 版 12.6 → `M` 版 21.5，≥ 一个正文汉字 16.0 ✓）。
+const String kSlotPadGlyph = 'M';
 
 /// 零高**宽度垫**：`0.3em` 在字号 16 下行内 ≈ 5.6 px，刚好把 11.2 的字形垫补到 ≥ 16。
 const String kSlotPadFiller = r'\rule{0.3em}{0pt}';
 
 /// 垫子本体（字形 ＋ 宽度垫）。**顺序不能反**：字形在前、宽度垫紧接其右。
-const String kSlotPadInner = '\\square$kSlotPadFiller';
+const String kSlotPadInner = '$kSlotPadGlyph$kSlotPadFiller';
 
 /// **空槽**的垫子（白墨 ⇒ 看不见；框由自绘层画虚线）
 const String kSlotPadTex = '\\textcolor{#FFFFFF}{$kSlotPadInner}';
