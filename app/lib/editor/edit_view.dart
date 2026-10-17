@@ -68,6 +68,26 @@ class EditViewStats {
 /// 而且它处在「平台文本 → 缓冲区」这条链上，离输入最近。
 ///
 /// 只处理"单独插入一个换行"；粘贴进来的一大段（含换行）**原样放行**。
+/// 这个键是不是"**要产生文字**"的键（含**空格**）。
+///
+/// ★ 为什么单独抽出来：`EditView._onKey` 对这类键必须返回 `handled` —— 字符本身由
+/// **文本通道**插入（不靠键事件），我们只是拦住冒泡，免得祖先 `Scrollable` 把
+/// **空格**当成"向下翻页"（Flutter 默认快捷键），于是"按空格文档区自己滚一块"。
+///
+/// 判据用 `keyLabel.length == 1`：字母 / 数字 / 标点 / 空格的 label 都是单字符；
+/// 方向键（`↑` 之类虽也是单字符，但在 `_onKey` 里已被更早的分支拦下）、
+/// 功能键（`F1`、`Enter`、`Tab`、`Shift`…）的 label 长度都不是 1。
+bool isTextInputKey(LogicalKeyboardKey k) {
+  final String label = k.keyLabel;
+  if (label.length != 1) return false;
+  final int c = label.codeUnitAt(0);
+  if (c < 0x20) return false; // 控制字符（含 `\n`、`\t`）
+  // 方向键的 label 是 `↖` 之类的箭头符号：它们不该被当文字（而且上面已拦）
+  return k != LogicalKeyboardKey.arrowUp &&
+      k != LogicalKeyboardKey.arrowDown &&
+      k != LogicalKeyboardKey.arrowLeft &&
+      k != LogicalKeyboardKey.arrowRight;
+}
 class NewBlockOnEnterFormatter extends TextInputFormatter {
   const NewBlockOnEnterFormatter();
 
@@ -325,6 +345,13 @@ class EditViewState extends State<EditView> {
       return KeyEventResult.handled;
     }
     // `Enter` **不在这里处理**：它走文本通道（textarea 自己插 `\n` → formatter 变成 `\n\n`）。
+    //
+    // ★★ 2026-10-17 用户实测："按空格时**文本区自己往下滚**一小块"（标题栏不动 ⇒ 是 Flutter 侧滚动）。
+    //   根因：这里对"可打印键"返回了 `ignored` ⇒ 键事件继续**冒泡给祖先 `Scrollable`**，
+    //   而 Flutter 的默认快捷键里 **`空格` = 向下翻页**（`ScrollAction`）⇒ 文档区被翻走一块。
+    //   ⇒ 其余可打印键（含空格）一律 `handled`：字符由**文本通道**插入（不靠键事件），
+    //     我们只是**拦下冒泡**，不让它触发滚动/按钮激活等默认动作。
+    if (isTextInputKey(k)) return KeyEventResult.handled;
     return KeyEventResult.ignored;
   }
 
