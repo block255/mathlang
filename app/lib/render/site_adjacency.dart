@@ -42,6 +42,9 @@ SlotSpan? innermostSlotAt(CaretSiteTable t, int rel) {
 }
 
 /// 同一个「结构实例」的全部槽（同父路径 + 同命令 + 同行列）
+///
+/// ⚠️ **这一份只管"同一条路径"**，它**分不出两个同种结构**（`\frac{a}{b}+\frac{c}{d}` 的
+/// 四个槽路径完全一样）⇒ 要知道"哪些槽属于**同一次调用**"，用 [callSlotsAround]。
 List<SlotSpan> siblingSlots(CaretSiteTable t, List<SlotStep> path) {
   if (path.isEmpty) return const <SlotSpan>[];
   final List<SlotStep> parent = path.sublist(0, path.length - 1);
@@ -55,6 +58,59 @@ List<SlotSpan> siblingSlots(CaretSiteTable t, List<SlotStep> path) {
           _samePath(s.path.sublist(0, s.path.length - 1), parent))
         s,
   ];
+}
+
+/// ★★ **同一次调用**的全部槽 —— "实例"的真正判据（2026-10-17 加）。
+///
+/// 规则：在 [siblingSlots] 那批槽里，从 [me] 向左右扩展，
+/// **相邻两个槽之间只隔着"语法粘合剂"**（中间没有任何**可见原子**）才算同一次调用。
+///
+/// | tex | 相邻槽之间的东西 | 判 |
+/// |---|---|---|
+/// | `\frac{a}{b}` | `}{` | 粘合剂 ⇒ 同一次调用 |
+/// | `\frac{a}{b}+\frac{c}{d}` | 第二个 `\frac` 前面有 **`+`** | 有原子 ⇒ **断开**（两次调用） |
+/// | `\sqrt{x}+\sqrt{y}` | `}+\sqrt{` 里有 **`+`** | 断开 |
+/// | `\begin{cases}a&b\\c&d\end{cases}` | `&` / `\\` / 花括号 | 粘合剂 ⇒ 同一次调用（四格一个环境） |
+/// | `\sqrt[3]{x}` | `]{` | 粘合剂 ⇒ 同一次调用 |
+///
+/// ★ 为什么不用"参数号递增"当判据：多行环境的每一格参数号都是 0（靠 `row`/`col` 区分），
+///   用参数号会把一个环境拆成四份。
+List<SlotSpan> callSlotsAround(CaretSiteTable t, SlotSpan me) {
+  final List<SlotSpan> same = siblingSlots(t, me.path)
+    ..sort((SlotSpan a, SlotSpan b) => a.start.compareTo(b.start));
+  if (same.length <= 1) return <SlotSpan>[me];
+  var idx = -1;
+  for (var k = 0; k < same.length; k++) {
+    if (same[k].start == me.start && same[k].end == me.end) {
+      idx = k;
+      break;
+    }
+  }
+  if (idx < 0) return <SlotSpan>[me];
+  var lo = idx;
+  var hi = idx;
+  while (lo > 0 && _glueOnly(t.tex, same[lo - 1].end, same[lo].start)) {
+    lo--;
+  }
+  while (hi + 1 < same.length && _glueOnly(t.tex, same[hi].end, same[hi + 1].start)) {
+    hi++;
+  }
+  return same.sublist(lo, hi + 1);
+}
+
+/// `[from, to)` 这段里**只有语法粘合剂**（花括号 / 可选参数方括号 / `&` / `\\` / 空白）
+///
+/// ★ 为什么不用"词法上有没有可见原子"：词法把 `[` `]` 当可见字符（`\sqrt[3]` 的方括号
+///   在**源码里**是语法、不是原子）⇒ 用原子判据会把 `]{` 当成"有东西"，于是
+///   `\sqrt[3]{x}` 的次数槽与内容槽被判成两次调用（实测：实例范围只有 [0,7)）。
+bool _glueOnly(String tex, int from, int to) {
+  if (to <= from) return true;
+  if (from < 0 || to > tex.length) return false;
+  const String glue = '{}[]& \\\n\t\r';
+  for (var i = from; i < to; i++) {
+    if (!glue.contains(tex[i])) return false;
+  }
+  return true;
 }
 
 bool _samePath(List<SlotStep> a, List<SlotStep> b) {

@@ -1,14 +1,24 @@
 // 数语引擎 · 「点屏幕 → 源偏移」命中映射
 //
-// 两侧按**同一次序** zip：
-//   渲染侧 = 有效叶盒（leaf_boxes.dart，两级过滤后）
-//   结构侧 = 可见原子（visible_atoms.dart，自己词法化）
-// 引擎保证 `GreenNode.children` 顺序 == 光标访问顺序，所以两列可以按下标直接对齐。
-// 详见 notes/design/技术选型与风险.md 9.8。
+// 两侧按**引擎的渲染顺序**配对（`leaf_pairing.dart`）：
+//   渲染侧 = 有效叶盒（`leaf_boxes.dart`，分字形/垫子两类）
+//   结构侧 = 可见原子（`visible_atoms.dart` 词法 ＋ `renderOrderAtoms` 重排）
+//
+// ★★ 2026-10-17 换了判据（旧判据见下）：以前是"**第 k 个叶盒 ↔ 第 k 个原子**、
+//   两列长度相等才算可靠"。探针量出两列**天然不等**：
+//   · `\sin x` = 4 盒 / 2 原子（`\sin` 画成 s、i、n 三个字形盒）
+//   · `\sum_{i=1}^{n}a_i` 的**盒序 ≠ 源序**（引擎把上限画在算子之前）
+//   ⇒ 旧判据下"含多字母算子名的公式点了没反应"，而"数量碰巧相等"的那些又**点 A 落 B**。
+//   现在改成：**一个原子吃掉它该占的那几个盒 ＋ 用"盒子画的是什么字"对账**，
+//   对不上就整份判为不完整（调用方退回 ③-B 的结构层落点 —— 宁可粗，不许错）。
+//
+// 详见 `leaf_pairing.dart` 文件头（引擎的五条渲染顺序规则，全部探针实测）
+// 与《位点与结构导航》§11.24 六 / §11.26 三 / §11.29。
 
 import 'package:flutter/rendering.dart';
 
 import 'leaf_boxes.dart';
+import 'leaf_pairing.dart';
 import 'visible_atoms.dart';
 
 /// 一次命中的结果。`offset` 是**相对该段 tex 的源偏移**，调用方再加上段的绝对起点。
@@ -23,15 +33,18 @@ class MathHit {
     required this.atomCount,
     this.boxRect,
     this.onGlyph = false,
+    this.pairing,
   });
 
-  /// 命中得到的源偏移；`null` = 没命中，或叶盒数与原子数不等（映射不可靠）
+  /// 命中得到的源偏移；`null` = 没命中，或两列**没对上**（映射不可靠）
   final int? offset;
 
   final int boxIndex;
+
+  /// 命中的原子在**渲染顺序**原子表里的下标（不可靠时为 -1）
   final int atomIndex;
 
-  /// `包含命中` / `就近命中(x px)`
+  /// `包含命中` / `外扩命中` / `就近命中(x px)`
   final String how;
 
   /// ★ **这一下真的点在某个字形盒上吗**（包含 / 外扩命中 = `true`；"就近"兜底 = `false`）。
@@ -41,7 +54,7 @@ class MathHit {
   /// `structure_geometry.glyphlessLanding`（§5.2 归属表）。
   final bool onGlyph;
 
-  /// 叶盒数与原子数是否一致
+  /// 两列是否**全部对上**（`leaf_pairing.LeafPairing.complete`）
   final bool reliable;
 
   final int boxCount;
@@ -50,26 +63,39 @@ class MathHit {
   /// 命中盒的矩形（诊断 / 调试用）
   final Rect? boxRect;
 
+  /// 这一份配对的完整结果（诊断用；调用方一般只用 [offset] / [reliable]）
+  final LeafPairing? pairing;
+
   @override
   String toString() => reliable
       ? 'MathHit(#$boxIndex ↔ 原子#$atomIndex → 段内 $offset, $how)'
-      : 'MathHit(不可靠：叶盒 $boxCount vs 原子 $atomCount, $how)';
+      : 'MathHit(不可靠：${pairing?.reason ?? "无配对"}；'
+          '叶盒 $boxCount / 原子 $atomCount, $how)';
 }
 
 /// 在 Math 控件内做命中测试。
 ///
-/// [localPos] 是相对 Math 根盒（`root`）的坐标；[tex] 是该段的源 tex。
-/// [atoms] 可以预先算好复用（同一段 tex 反复命中时省一次词法化）。
+/// [localPos] 是相对 Math 根盒（`root`）的坐标；[tex] 是该段**渲染用的** tex。
+/// [atoms] 可以预先算好复用（同一段 tex 反复命中时省一次词法化 + 区域表）——
+/// ★ 必须是**渲染顺序**（`renderOrderAtoms(tex, displayStyle: …)` 的产物）。
+/// [displayStyle] 决定"堆叠的上下限"（见 `leaf_pairing.dart` 规则 3）。
 MathHit hitTestMathTex({
   required RenderObject root,
   required Offset localPos,
   required String tex,
   List<VisibleAtom>? atoms,
   double inflate = 2.0,
+  bool displayStyle = false,
 }) {
   final LeafBoxScan scan = scanLeafBoxes(root);
   final List<LeafBox> boxes = scan.eligible;
-  final List<VisibleAtom> list = atoms ?? lexVisibleAtoms(tex);
+  final List<VisibleAtom> list =
+      atoms ?? renderOrderAtoms(tex, displayStyle: displayStyle);
+  final LeafPairing pairing = buildLeafPairing(
+    tex: tex,
+    boxes: boxes,
+    atoms: list,
+  );
 
   // ★ 两趟命中（S3-2 实测修正）：
   //   只做"外扩后第一个包含"的话，**前一个盒会把点抢走** ——
@@ -112,24 +138,25 @@ MathHit hitTestMathTex({
     onGlyph = false; // 只是"最近"，不是真的点中了
   }
 
-  final bool reliable = hit >= 0 && boxes.length == list.length;
+  final PairGroup? g = hit >= 0 ? pairing.groupOfBox(hit) : null;
+  final bool reliable = hit >= 0 && pairing.complete && g != null;
   int? offset;
   if (reliable) {
-    final LeafBox box = boxes[hit];
-    final VisibleAtom atom = list[hit];
-    // 点在盒子的左半 → 取原子左边界；右半 → 取右边界
-    offset = localPos.dx < box.rect.center.dx ? atom.start : atom.end;
+    // 点在**这一组的外框**左半 → 取区间左端；右半 → 取右端。
+    // （多字母算子名是一组 3 个盒 ⇒ 点 `s` 的左半 = `\sin` 之前，点 `n` 的右半 = 之后。）
+    offset = localPos.dx < g.hull(boxes).center.dx ? g.srcStart : g.srcEnd;
   }
 
   return MathHit(
     offset: offset,
     boxIndex: hit,
-    atomIndex: reliable ? hit : -1,
+    atomIndex: reliable ? list.indexOf(g.atom) : -1,
     how: how,
     reliable: reliable,
     boxCount: boxes.length,
     atomCount: list.length,
     boxRect: (hit >= 0 && hit < boxes.length) ? boxes[hit].rect : null,
     onGlyph: onGlyph,
+    pairing: pairing,
   );
 }

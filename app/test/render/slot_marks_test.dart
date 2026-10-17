@@ -91,9 +91,10 @@ void main() {
     });
   });
 
-  group('★ 真正的不变量：注入后"可见原子数"的增量 == **2 × 空槽数**', () {
+  group('★ 真正的不变量：注入后"可见原子数"的增量 == 2 × 空槽数 + 尾垫数', () {
     // 点击定位要求「我们的可见原子数 == 引擎叶盒数」。垫子是**两个盒**（字形 + 零高宽度垫），
-    // 所以原子数按"每个空槽 +2"增加 —— 要守的是"**增量恰好等于 2 × 空槽数**"（不多不少）。
+    // 尾垫是**一个盒**（`\rule{3pt}{0pt}`）⇒ 要守的是"**增量恰好**"（不多不少）。
+    int tailCount(String t) => kStructTailTex.allMatches(t).length;
     for (final String tex in <String>[
       r'\frac{}{}',
       r'\frac{a}{}',
@@ -109,9 +110,9 @@ void main() {
                 .allMatches(r.tex)
                 .length +
             RegExp(RegExp.escape(kCurrentSlotTex)).allMatches(r.tex).length;
-        expect(after, before + 2 * pads,
-            reason: '每个空槽恰好 +2 个原子（字形垫 1 + 零高宽度垫 1）；'
-                '多一个少一个都会让点击定位错位');
+        expect(after, before + 2 * pads + tailCount(r.tex),
+            reason: '每个空槽恰好 +2 个原子（字形垫 1 + 零高宽度垫 1）、'
+                '每个尾垫 +1；多一个少一个都会让点击定位错位');
       });
     }
 

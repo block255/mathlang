@@ -10,7 +10,10 @@ import 'package:flutter_math_fork/flutter_math.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mathlang/render/hit_map.dart';
 import 'package:mathlang/render/leaf_boxes.dart';
+import 'package:mathlang/render/leaf_pairing.dart';
 import 'package:mathlang/render/visible_atoms.dart';
+
+import '../support/math_fonts.dart';
 
 /// 覆盖各类结构：分式 / 根号 / 上下标 / 希腊字母 / 大算符上下限 / 行间公式 / 单个字母
 const List<String> _texs = <String>[
@@ -43,17 +46,27 @@ Future<RenderBox> _pumpMath(WidgetTester tester, String tex, GlobalKey key) asyn
 }
 
 void main() {
-  testWidgets('★ 有效叶盒数 == 可见原子数（不等则点屏幕定位静默失效）',
+  // ★ 量几何/量叶盒都必须用**真实数学字体**（否则量到的是回退度量的另一个世界，
+  //   见 2026-10-17 的教训与 `test/support/math_fonts.dart` 头部）
+  setUpAll(() async => loadMathFonts());
+
+  testWidgets('★ 有效叶盒与可见原子**全部配对**（旧判据"两列长度相等"已作废）',
       (WidgetTester tester) async {
     for (final String tex in _texs) {
       final GlobalKey key = GlobalKey();
       final RenderBox ro = await _pumpMath(tester, tex, key);
       final LeafBoxScan scan = scanLeafBoxes(ro);
+      final List<VisibleAtom> atoms =
+          renderOrderAtoms(tex, displayStyle: true);
+      final LeafPairing plan =
+          buildLeafPairing(tex: tex, boxes: scan.eligible, atoms: atoms);
+      // ★ 长度相等**不是**正确性判据：`\sin` 一族天然"一原子多盒"（见 leaf_pairing.dart）。
+      //   真正的不变量是"两列**全部**对上了"。
       expect(
-        scan.eligible.length,
-        lexVisibleAtoms(tex).length,
-        reason: '「$tex」叶盒 ${scan.eligible.length} vs 原子 '
-            '${lexVisibleAtoms(tex).length}（原始叶盒 ${scan.rawCount} 个）',
+        plan.complete,
+        isTrue,
+        reason: '「$tex」叶盒 ${scan.eligible.length} / 原子 ${atoms.length}'
+            '（原始叶盒 ${scan.rawCount} 个）：${plan.reason}',
       );
     }
   });
@@ -66,6 +79,9 @@ void main() {
         root: ro,
         localPos: ro.size.center(Offset.zero),
         tex: tex,
+        // ★ 2026-10-17：配对要按**渲染顺序**（`\sum` 的上下限在 display 下会重排），
+        //   而且必须告诉它这是 display 样式 —— 否则两列的次序对不上（测试自己用错了方言）。
+        displayStyle: true,
       );
       expect(hit.reliable, isTrue, reason: '「$tex」$hit');
       expect(hit.offset, isNotNull, reason: '「$tex」返回了 null（= 点了没反应）');
@@ -79,27 +95,33 @@ void main() {
       final GlobalKey key = GlobalKey();
       final RenderBox ro = await _pumpMath(tester, tex, key);
       final LeafBoxScan scan = scanLeafBoxes(ro);
-      final List<VisibleAtom> atoms = lexVisibleAtoms(tex);
+      final List<VisibleAtom> atoms =
+          renderOrderAtoms(tex, displayStyle: true);
+      final LeafPairing plan =
+          buildLeafPairing(tex: tex, boxes: scan.eligible, atoms: atoms);
+      expect(plan.complete, isTrue, reason: '「$tex」${plan.reason}');
 
       for (var i = 0; i < scan.eligible.length; i++) {
         final Rect r = scan.eligible[i].rect;
-        final VisibleAtom a = atoms[i];
+        final PairGroup g = plan.groupOfBox(i)!;
 
         final MathHit left = hitTestMathTex(
           root: ro,
           localPos: Offset(r.left + 1, r.center.dy),
           tex: tex,
           atoms: atoms,
+          displayStyle: true,
         );
-        expect(left.offset, a.start, reason: '「$tex」第 $i 个盒左半应取左边界');
+        expect(left.offset, g.srcStart, reason: '「$tex」第 $i 个盒左半应取左边界');
 
         final MathHit right = hitTestMathTex(
           root: ro,
           localPos: Offset(r.right - 1, r.center.dy),
           tex: tex,
           atoms: atoms,
+          displayStyle: true,
         );
-        expect(right.offset, a.end, reason: '「$tex」第 $i 个盒右半应取右边界');
+        expect(right.offset, g.srcEnd, reason: '「$tex」第 $i 个盒右半应取右边界');
       }
     }
   });

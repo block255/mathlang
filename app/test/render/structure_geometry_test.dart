@@ -205,7 +205,12 @@ void main() {
   // 三、P1 完备 / P2 包含 / P3 顺序（全域）
   // ─────────────────────────────────────────────────────────────
   group('★★ 全域不变量', () {
-    testWidgets('P1 完备：**有节点的**结构对象都有矩形；P2 包含：子 ⊆ 父',
+    /// ★ 内容被画进**矢量图**的装饰（实测整棵子树只有 2 个"无字垫子盒"，`A` `B` 没有字形盒）
+    const Set<String> pictureRendered = <String>{
+      'overbracket',
+      'underbracket',
+    };
+    testWidgets('P1 完备：结构对象都有矩形（`\\overbracket` 一族除外）；P2 包含：子 ⊆ 父',
         (WidgetTester tester) async {
       const double tol = 0.5;
       final List<String> p1 = <String>[];
@@ -217,18 +222,22 @@ void main() {
           for (var i = 0; i < g.objects.length; i++) {
             final StructureObject o = g.objects[i];
             final Rect? r = g.rectAt(i);
-            // ★ P1 的**精确条件**（不粉饰）：有节点的对象**必须**有矩形；
-            //   没有节点的对象本版**允许 null** —— 它要"叶盒并集"，
-            //   而并集卡在"一原子多盒"（`\sin` = 1 原子 3 盒）这个既有缺陷上，
-            //   所以 `\sin x` / `\left(…\right)` / `\overbracket{}` 暂时拿不到矩形。
-            //   见文件末尾「已知缺口」那组测试。
-            if (!o.nodeBacked) {
+            // ★★ 2026-10-17：P1 **不再有"有节点的"这个限定** ——
+            //   原来没有节点的对象（`\sin x` / `\left(…\right)`）只能靠叶盒并集，
+            //   而并集卡在「一原子多盒」那个既有缺陷上。
+            //   现在配对改走 `leaf_pairing`（一个原子可以吃多个盒）⇒ 并集生效 ⇒ 都有矩形。
+            //
+            // ★ 唯一的例外（**精确条件，不是"以后再修"**）：`\overbracket` / `\underbracket`
+            //   —— 引擎把它们的**内容**也画进了矢量图（实测整棵子树只有 2 个"无字垫子盒"，
+            //   `A` `B` 根本没有字形盒）⇒ 叶盒并集无从下手。它们本来就只能退化。
+            if (!o.nodeBacked && pictureRendered.contains(o.command)) {
               expect(r, isNull,
-                  reason: '没有节点的对象本版应当返回 null（否则说明并集悄悄生效了）：「$tex」$o → $r');
+                  reason: '这类对象的内容没有字形盒 ⇒ 只该有节点盒（它也没有节点）→ null：「$tex」$o → $r');
               continue;
             }
             if (r == null || r.width <= 0 || r.height <= 0) {
-              p1.add('「$tex」[${style.name}] $o → $r');
+              p1.add('「$tex」[${style.name}] $o → $r'
+                  '${o.nodeBacked ? "" : "（无节点）"}');
               continue;
             }
             final StructureObject? p = o.parent;
@@ -338,27 +347,24 @@ void main() {
   });
 
   // ─────────────────────────────────────────────────────────────
-  // 五、★ 已知缺口（**带精确条件**记账，不是"以后再修"）
+  // 五、★ 曾经的两条缺口 —— 2026-10-17 都已修好（留痕，别再当待办读）
   // ─────────────────────────────────────────────────────────────
-  group('★ 已知缺口：没有节点的结构拿不到矩形', () {
-    testWidgets(r'`\sin x`：nodeBacked = false ⇒ rectAt = null（并集卡在"一原子多盒"）',
+  group('★ 已修好：没有节点的结构**现在也有矩形**（走叶盒并集）', () {
+    testWidgets(r'`\sin x`：nodeBacked = false，但 rectAt 有值（配对已可靠）',
         (WidgetTester tester) async {
       final StructureGeometry g = await _geo(tester, r'\sin x', MathStyle.display);
       expect(g.aligned, isTrue, reason: g.mismatch);
       final StructureObject o = g.objects.single;
       expect(o.kind, StructureKind.operator);
       expect(o.nodeBacked, isFalse);
-      expect(g.rectAt(0), isNull);
-      // ★ 精确条件：一旦"一原子多盒"的配对修好（或换成别的配对通道），这条会变红 ⇒
-      //   那时把 `\sin x` / `\left(…\right)` / `\overbracket{}` 的并集补上，
-      //   并把 P1 的"有节点的"限定去掉。
-      expect(g.diagnostics, isNotEmpty, reason: '退化原因必须写进诊断');
+      // ★ 2026-10-17：`leaf_pairing` 把"一原子多盒"修好 ⇒ 并集不再退化 ⇒ 矩形有了。
+      //   它同时是 P1 去掉"有节点的"这个限定的依据（见上面的全域不变量）。
+      final Rect? r = g.rectAt(0);
+      expect(r, isNotNull, reason: '并集应当生效了：${g.diagnostics}');
+      expect(r!.width, greaterThan(0));
     });
 
-    test('★ 既有缺陷（不在本组修）：`\\sin` 是 **1 个原子**却有 **3 个字形盒**', () {
-      // 这条是"命中配对"的缺陷证据：`hitTestMathTex` 要求"叶盒数 == 原子数"，
-      // 不成立就**静默不可靠** ⇒ 含 `\sin` / `\lim` / `\log` 这类**多字母算子名**的公式
-      // 点击定位会退化（与 §11.21.2 的 accent 装饰盒是同一个 bug 家族）。
+    test(r'★ 证据：`\sin` 是 **1 个原子**却有 **3 个字形盒**（配对靠"一个原子吃多盒"解决）', () {
       expect(lexVisibleAtoms(r'\sin x').length, 2,
           reason: r'`\sin` 是 1 个可见原子（删一次删光）、`x` 是 1 个');
       expect(lexVisibleAtoms(r'\sin x').first.kind, r'\sin');

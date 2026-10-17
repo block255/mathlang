@@ -226,6 +226,24 @@ const Map<String, _ArgSpec> _kArgSpec = <String, _ArgSpec>{
   'sqrt': _ArgSpec(1, optional: true),
 };
 
+/// ★ 这些命令的**前 N 个参数不是内容**（颜色名 / 尺寸 / 间距）——整段跳过：
+/// **不建槽、不建内容项**，因而也不会在里面产生位点。
+///
+/// ★★ 为什么必须有这条（2026-10-17 配对探针撞出来的**既有缺陷**）：
+/// 注入链往 tex 里塞的是 `\textcolor{#FFFFFF}{M\rule{0.3em}{0pt}}` 与 `\rule{3pt}{0pt}`，
+/// 而本解析器原来对 `\rule` 走"命令 + 第一个 `{...}` 合成一个内容项、第二个 `{...}` 当裸组"，
+/// 于是渲染 tex 的区域表里出现 **两个 `path` 为空的区域**、还有一个范围算错的内容项 ——
+/// `renderOrderAtoms` 因此把重排整份放弃（`\sum` 的上下限一直没被重排、尾垫原子被排到末尾）。
+/// 换句话说：**注入物污染了"源码结构"的判据**，这正是本仓最怕的那一类自干扰。
+///
+/// 与 `visible_atoms.kNonRenderedArgCount`（那份管**原子**）是同一张表的两个视角。
+const Map<String, int> _kSkipArgs = <String, int>{
+  'rule': 2, // \rule{宽}{高}
+  'textcolor': 1, // \textcolor{颜色}{内容} —— 内容是**后面的那个组**，照常当内容
+  'color': 1, // \color{颜色}
+  'hspace': 1, 'hskip': 1, 'kern': 1, 'mspace': 1, 'vspace': 1, 'vskip': 1,
+};
+
 /// ★ 这些命令**要与紧跟其后的分隔符一起看**（`\left(`、`\right)`、`\big|`）——
 /// 它们与分隔符之间的位置是**语法夹缝**，不是位点（否则往那儿插字符会得到 `\left+(`，解析直接坏）。
 const Set<String> _kDelimCommands = <String>{
@@ -688,6 +706,18 @@ class _Parser {
       _readGroupName(); // 孤儿 `\end{...}`：跳过
       return _Item(t.start, t.end, const <_Region>[], t.name);
     }
+    // ★ 参数不是内容的命令（`\rule{宽}{高}` / `\textcolor{颜色}{内容}`）：
+    //   把那些参数**整段跳过**（只走 token，不建槽也不建项）—— 理由见 [_kSkipArgs]。
+    final int? skip = _kSkipArgs[t.name];
+    if (skip != null) {
+      _i++;
+      var end = t.end;
+      for (var k = 0; k < skip; k++) {
+        if (_i >= _toks.length || _toks[_i].kind != _K.lbrace) break; // 裸参数不处理
+        end = _skipTokenGroup();
+      }
+      return _Item(t.start, end, const <_Region>[], t.name);
+    }
     final _ArgSpec? spec = _kArgSpec[t.name];
     if (spec == null) {
       _i++;
@@ -729,6 +759,29 @@ class _Parser {
       at < _toks.length &&
       _toks[at].kind == _K.ch &&
       tex[_toks[at].start] == '[';
+
+  /// **只走 token** 地跳过一个 `{...}` 组（当前位置必须是 `{`），返回它 `}` 的结束偏移。
+  ///
+  /// 与 [_parseGroup] 的区别：不建区域、不建内容项 —— 给"参数不是内容"的命令用
+  /// （`\rule{宽}{高}`、`\textcolor{颜色}{内容}` 的第一个参数，见 [_kSkipArgs]）。
+  int _skipTokenGroup() {
+    var depth = 0;
+    var end = tex.length;
+    while (_i < _toks.length) {
+      final _Tok t = _toks[_i];
+      if (t.kind == _K.lbrace) {
+        depth++;
+      } else if (t.kind == _K.rbrace) {
+        depth--;
+        _i++;
+        if (depth <= 0) return t.end;
+        continue;
+      }
+      end = t.end;
+      _i++;
+    }
+    return end;
+  }
 
   /// `\sqrt[3]{x}` 的可选参数 `[3]`
   _Item _parseBracketArg(String command) {

@@ -37,6 +37,7 @@ import '../render/hit_map.dart';
 import '../render/inline_math_text.dart';
 import '../render/injection_map.dart';
 import '../render/leaf_boxes.dart';
+import '../render/leaf_pairing.dart';
 import '../render/math_caret.dart';
 import '../render/projection.dart';
 import '../render/slot_marks.dart';
@@ -440,27 +441,35 @@ class _DocViewState extends State<DocView> {
   ///
   /// ★ 为什么必须分这两条：`hitTestMathTex` 在没点中字形时的兜底是"**几何最近的字形盒**"，
   ///   于是在分式右端的装饰区里最近的是**分母** ⇒ "点分式右边"变成"点进分母"（用户实测 ①）。
-  /// ★ 顺带收益：叶盒 ↔ 原子配对失败（`\sin` 一族的多字母算子名）时不再"点了没反应"，
-  ///   而是落到**结构层**（结构之前 / 之后）—— 精确落点仍要等那条配对缺陷修好。
+  /// ★ 2026-10-17 起第 1 条**可靠了**：配对改走 `leaf_pairing`（一原子可占多盒 + 渲染顺序重排），
+  ///   所以含 `\sin` / `\lim` / `\sum` 这类算子名的公式也能精确落点；
+  ///   配对确实对不上（`cases` 那一族）时仍退回第 2 条的结构层落点，**宁可粗，不许错**。
   int? _mathTapTexOffset({
     required String tex,
     required String renderTex,
     required RenderObject root,
     required Offset global,
+    required bool displayStyle,
   }) {
     final Offset localPos = (root as RenderBox).globalToLocal(global);
     final MathHit hit = hitTestMathTex(
       root: root,
       localPos: localPos,
       tex: renderTex, // ★ 必须用渲染时的 tex（见 injection_map.dart）
-      atoms: atomsForHitTest(renderTex), // ★ 且原子表要补上尾垫的合成原子
+      // ★ 原子表必须是**渲染顺序**（尾垫/占位垫由词法自己在走查顺序里认出）
+      atoms: renderOrderAtoms(renderTex, displayStyle: displayStyle),
+      displayStyle: displayStyle,
     );
     if (hit.onGlyph && hit.offset != null) {
       return renderToSourceOffset(renderTex, hit.offset!);
     }
 
-    final StructureGeometry g =
-        buildStructureGeometry(tex: tex, renderTex: renderTex, mathRoot: root);
+    final StructureGeometry g = buildStructureGeometry(
+      tex: tex,
+      renderTex: renderTex,
+      mathRoot: root,
+      displayStyle: displayStyle,
+    );
     Rect? hull;
     for (final LeafBox b in scanLeafBoxes(root).eligible) {
       hull = hull == null ? b.rect : hull.expandToInclude(b.rect);
@@ -487,6 +496,7 @@ class _DocViewState extends State<DocView> {
       renderTex: renderTex,
       root: ro,
       global: global,
+      displayStyle: true, // ★ 行间块 = display 样式（堆叠上下限）
     );
     if (texRel == null) return;
     cb(u.renderBase + buildCaretSites(rawTex).snap(texRel).offset);
@@ -505,6 +515,7 @@ class _DocViewState extends State<DocView> {
       renderTex: renderTex,
       root: ro,
       global: global,
+      displayStyle: false, // ★ 行内 = text 样式（`\sum` 的上下限退回脚本位）
     );
     if (texRel == null) return;
     // ★ 位点吸附：落点必须是合法位点（设计稿 §2.4 的 P3）

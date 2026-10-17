@@ -92,16 +92,23 @@ class StructureUnit {
 /// 枚举 tex 里所有结构实例（按起点升序）。
 ///
 /// 同一次结构调用的多个参数（如 `\frac` 的分子分母）算**同一个实例** ——
-/// 靠 `siblingSlots`（同父路径 + 同命令 + 同行列）聚合。
+/// 靠 [callSlotsAround]（同路径 ＋ 相邻槽之间只有语法粘合剂）聚合。
+///
+/// ★★ **2026-10-17 修掉的身份判据**（《位点》§11.24 六① 记的账）：
+/// 原来用 `_instanceKey(path)` = 「父路径 + 命令 + 行列」当实例身份 ——
+/// 而同一层里**两个 `\frac` 的槽路径完全一样**（`SlotStep` 只有命令 + 参数号，不含位置），
+/// 于是 `\frac{a}{b}+\frac{c}{d}` 实测只返回**一个**实例、而且那个实例
+/// **横跨两个分式**（[0,23)）⇒ normalize 会把中间的 `+` 一起回收。
+///
+/// ⇒ 身份改成 **实例在源码里的起点**（[structureStartInfo] 解出来的偏移），
+///   而"哪些槽属于同一次调用"改用 [callSlotsAround]。
 List<StructureUnit> structureUnits(CaretSiteTable t) {
   if (t.degraded) return const <StructureUnit>[];
   final Set<String> seen = <String>{};
   final List<StructureUnit> out = <StructureUnit>[];
   for (final SlotSpan s in t.slots) {
     if (s.path.isEmpty) continue;
-    final String key = _instanceKey(s.path);
-    if (!seen.add(key)) continue;
-    final List<SlotSpan> inst = siblingSlots(t, s.path);
+    final List<SlotSpan> inst = callSlotsAround(t, s);
     if (inst.isEmpty) continue;
     var first = inst.first.start;
     var last = _extentEnd(t.tex, inst.first.end);
@@ -110,9 +117,18 @@ List<StructureUnit> structureUnits(CaretSiteTable t) {
       final int e = _extentEnd(t.tex, x.end);
       if (e > last) last = e;
     }
-    final int? start = structureStartBefore(t.tex, first);
+    final StructureStart? start = structureStartInfo(t.tex, first);
     if (start == null) continue;
-    out.add(StructureUnit(start, last, inst));
+    final String key =
+        '${_pathKey(s.path.sublist(0, s.path.length - 1))}@${start.at}';
+    if (!seen.add(key)) continue;
+    var end = last;
+    if (start.envName != null) {
+      // 环境（`\begin{cases}…`）：范围必须盖到 `\end{cases}`，否则回收会留下一个孤儿 `\end`
+      final int e = environmentEnd(t.tex, start.envName!, last);
+      if (e > end) end = e;
+    }
+    out.add(StructureUnit(start.at, end, inst));
   }
   out.sort((StructureUnit a, StructureUnit b) => a.start.compareTo(b.start));
   return out;
@@ -519,29 +535,70 @@ VisibleAtom? _firstAtomIn(String tex, int start, int end, int rel) {
 // 结构实例的辅助（`normalize` 用）
 // ---------------------------------------------------------------------------
 
-/// 结构起点：从参数内容起点往前找 `\cmd` 或 `^`/`_`
-int? structureStartBefore(String tex, int contentStart) {
+/// 结构起点的**完整信息**：起点偏移 ＋（若它是环境）环境名。
+class StructureStart {
+  const StructureStart(this.at, [this.envName]);
+
+  /// `\` 或 `^`/`_` 的位置
+  final int at;
+
+  /// 环境名（`\begin{cases}` ⇒ `cases`）；不是环境时为 null
+  final String? envName;
+
+  @override
+  String toString() => 'StructureStart@$at${envName == null ? '' : ' env=$envName'}';
+}
+
+/// 结构起点：从参数内容起点往前找 `\cmd` / `^`/`_` / `\begin{env}`。
+///
+/// 往前要跳过的东西（都是"参数与命令之间"的语法）：
+/// **花括号** `{` `}`、**可选参数的方括号** `[` `]`（`\sqrt[3]{x}` 的次数槽）、空格。
+/// ★ 跳过方括号是 2026-10-17 补的：`\sqrt[3]{x}` 的次数槽内容前面是 `[`，
+///   原来一律返回 null ⇒ **整个根号实例枚举不到** ⇒ normalize 回收不到它。
+StructureStart? structureStartInfo(String tex, int contentStart) {
   var i = contentStart - 1;
-  while (i >= 0 && (tex[i] == '{' || tex[i] == ' ')) {
+  while (i >= 0 && '{}[] '.contains(tex[i])) {
     i--;
   }
   if (i < 0) return null;
-  if (tex[i] == '^' || tex[i] == '_') return i;
+  if (tex[i] == '^' || tex[i] == '_') return StructureStart(i);
   if (!isAsciiLetter(tex.codeUnitAt(i))) return null;
-  while (i >= 0 && isAsciiLetter(tex.codeUnitAt(i))) {
-    i--;
+  var j = i;
+  while (j >= 0 && isAsciiLetter(tex.codeUnitAt(j))) {
+    j--;
   }
-  return (i >= 0 && tex[i] == r'\') ? i : null;
+  if (j < 0) return null;
+  final String name = tex.substring(j + 1, i + 1);
+  if (tex[j] == r'\') return StructureStart(j);
+  if (tex[j] == '{') {
+    // `\begin{cases}` / `\end{cases}`：名字前面是 `\begin{`
+    final String head = tex.substring(0, j);
+    for (final String kw in const <String>[r'\begin', r'\end']) {
+      if (head.endsWith(kw)) {
+        return StructureStart(
+          head.length - kw.length,
+          kw == r'\begin' ? name : null,
+        );
+      }
+    }
+  }
+  return null;
+}
+
+/// 结构起点（只要偏移的旧接口 —— 保留给既有调用方 / 测试）
+int? structureStartBefore(String tex, int contentStart) =>
+    structureStartInfo(tex, contentStart)?.at;
+
+/// `\end{name}` 之后的位置；找不到返回 [from]（**绝不猜**）
+int environmentEnd(String tex, String name, int from) {
+  final String needle = '\\end{$name}';
+  final int k = tex.indexOf(needle, from);
+  return k < 0 ? from : k + needle.length;
 }
 
 int _extentEnd(String tex, int slotEnd) =>
     (slotEnd < tex.length && tex[slotEnd] == '}') ? slotEnd + 1 : slotEnd;
 
-String _instanceKey(List<SlotStep> path) {
-  final SlotStep me = path.last;
-  return '${_pathKey(path.sublist(0, path.length - 1))}>${me.command}'
-      '@${me.row}:${me.col}';
-}
-
+/// 父路径的字符串键（**不含命令与行列** —— 实例身份由"源码起点"决定，见 [structureUnits]）
 String _pathKey(List<SlotStep> path) =>
     path.map((SlotStep s) => '${s.command}(${s.argIndex})').join('/');

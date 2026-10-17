@@ -48,6 +48,7 @@ import 'package:flutter/rendering.dart';
 import 'caret_sites.dart';
 import 'injection_map.dart';
 import 'leaf_boxes.dart';
+import 'leaf_pairing.dart';
 import 'scope_table.dart';
 import 'visible_atoms.dart';
 
@@ -475,6 +476,7 @@ StructureGeometry buildStructureGeometry({
   required String renderTex,
   required RenderObject mathRoot,
   bool includeLeafUnion = true,
+  bool displayStyle = false,
 }) {
   final List<StructureObject> objects = structureObjectsFor(tex);
   final List<StructureNode> nodes = collectStructureNodes(mathRoot);
@@ -484,14 +486,25 @@ StructureGeometry buildStructureGeometry({
   List<({int src, Rect rect})> leafUnion = const <({int src, Rect rect})>[];
   if (includeLeafUnion) {
     final LeafBoxScan scan = scanLeafBoxes(mathRoot);
-    final List<VisibleAtom> atoms = atomsForHitTest(renderTex);
-    if (scan.eligible.length == atoms.length) {
+    final List<VisibleAtom> atoms =
+        renderOrderAtoms(renderTex, displayStyle: displayStyle);
+    final LeafPairing pairing = buildLeafPairing(
+      tex: renderTex,
+      boxes: scan.eligible,
+      atoms: atoms,
+    );
+    if (pairing.complete) {
+      // ★ 2026-10-17：改成走**配对**（原来是"两列长度相等就按下标 zip"——
+      //   上限画在算子之前 / `\sin` 一原子三盒那些结构里，zip 出来的矩形成员是错的）。
       leafUnion = <({int src, Rect rect})>[
-        for (var i = 0; i < atoms.length; i++)
-          (src: renderToSourceOffset(renderTex, atoms[i].start), rect: scan.eligible[i].rect),
+        for (final PairGroup g in pairing.groups)
+          (
+            src: renderToSourceOffset(renderTex, g.srcStart),
+            rect: g.hull(scan.eligible),
+          ),
       ];
     } else {
-      diags.add('叶盒 ${scan.eligible.length} ≠ 原子 ${atoms.length} ⇒ 退化为只用节点盒');
+      diags.add('叶盒 ↔ 原子没对上（${pairing.reason}）⇒ 退化为只用节点盒');
     }
   }
 

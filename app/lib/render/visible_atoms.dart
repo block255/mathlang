@@ -40,6 +40,7 @@ const Set<String> kStructureCommands = <String>{
   'frac', 'dfrac', 'tfrac', 'sqrt', 'left', 'right', 'begin', 'end', 'binom',
   'overline', 'underline', 'vec', 'hat', 'bar', 'tilde', 'dot', 'ddot',
   'widehat', 'widetilde', 'overbrace', 'underbrace',
+  'overbracket', 'underbracket',
   'overrightarrow', 'xrightarrow', 'operatorname', 'mathrm', 'mathbf', 'mathbb',
   'mathcal', 'mathfrak', 'mathit', 'text', 'displaystyle', 'textstyle',
   'quad', 'qquad', 'limits', 'nolimits', 'not', 'color', 'phantom', 'enclose',
@@ -106,6 +107,12 @@ const Map<String, int> kNonRenderedArgCount = <String, int>{
   'rule': 2, // \rule{宽}{高}
   'hspace': 1, 'kern': 1, 'mspace': 1, 'vspace': 1, 'hskip': 1, 'vskip': 1,
   'phantom': 1, 'hphantom': 1, 'vphantom': 1, // 占位但不画
+  // ★★ 环境名（2026-10-17 探针量出）：`\begin{cases}` / `\end{cases}` 的 `{cases}`
+  //   **不是墨迹** —— 它只是环境的**名字**。原先把这 5 个字母当可见原子 ⇒
+  //   `\begin{cases}a&b\\c&d\end{cases}` 实测 **8 叶盒 vs 14 原子**（多出 10 个幻影原子）
+  //   ⇒ `hitTestMathTex` 静默不可靠 ⇒ 分段函数的公式里点击全废。
+  //   与 `\widehat` 那一族（见 [kStructureCommands] 的注释）是同一个 bug 家族。
+  'begin': 1, 'end': 1,
 };
 
 /// 把 tex 扫描成「可见原子」列表（每个原子的 `[start,end)` 是相对该段 tex 的源区间）。
@@ -134,6 +141,16 @@ List<VisibleAtom> lexVisibleAtoms(String tex) {
     if (tex.startsWith(kSlotPadFiller, i)) {
       out.add(VisibleAtom(i, i + kSlotPadFiller.length, 'slotpad'));
       i += kSlotPadFiller.length;
+      continue;
+    }
+    // ★★ **结构尾垫**（`slot_pad.kStructTailTex`）：同样是"0 原子 / 1 叶盒"的注入物。
+    //   原先它由 `injection_map.atomsForHitTest` 事后补出来、再**按源偏移排序**插进去 ——
+    //   2026-10-17 探针量出那样做是**错的**：排序会毁掉本函数刻意维持的"渲染顺序"
+    //   （`\sqrt[n]{…}` 的次数在源码里在前、渲染在后 ⇒ 排完序次数跑到被开方数前面 ⇒ 点 A 落 B）。
+    //   ⇒ 改成**在走查顺序里**就地认出它，与上面的占位垫同一机制。
+    if (tex.startsWith(kStructTailTex, i)) {
+      out.add(VisibleAtom(i, i + kStructTailTex.length, 'tail'));
+      i += kStructTailTex.length;
       continue;
     }
     if (tex.startsWith(r'\\', i)) {

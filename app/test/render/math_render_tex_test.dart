@@ -63,10 +63,13 @@ void main() {
 
   group('★ 守门人：注入后"可见原子数"的增量必须精确（点击定位靠它）', () {
     // 点击定位的不变量是「我们的可见原子数 == 引擎的叶盒数」。
-    // 所以注入只能"**每处恰好 +2**"：垫子（字形 ＋ 零高宽度垫）2 个叶盒 ↔ 2 个原子；
-    // 光标是零尺寸锚点 ⇒ 0。
+    // 所以注入只能"**每处恰好**"贡献原子：
+    //   · 空槽垫子 → **+2**（字形 1 + 零高宽度垫 1）
+    //   · 结构尾垫 → **+1**（`\rule{3pt}{0pt}`，2026-10-17 起由**词法自己**按渲染顺序产出）
+    //   · 光标锚点 → **0**（零尺寸 `\rule{0pt}{0pt}`）
     int padCount(String t) =>
         kEmptySlotTex.allMatches(t).length + kCurrentSlotTex.allMatches(t).length;
+    int tailCount(String t) => kStructTailTex.allMatches(t).length;
     for (final String tex in <String>[
       r'\frac{}{}',
       r'\frac{a}{}',
@@ -78,13 +81,17 @@ void main() {
         final int base = lexVisibleAtoms(tex).length;
         final String noCaret = renderMathTex(tex, caretRel: -1);
         final int pads = padCount(noCaret);
-        expect(lexVisibleAtoms(noCaret).length, base + 2 * pads,
-            reason: '每个空槽垫子各 +2 个原子（字形 1 + 宽度垫 1）');
+        expect(
+            lexVisibleAtoms(noCaret).length,
+            base + 2 * pads + tailCount(noCaret),
+            reason: '每个空槽垫子各 +2 个原子（字形 1 + 宽度垫 1）；每个尾垫 +1');
 
         final String withCaret = renderMathTex(tex, caretRel: 0);
-        expect(lexVisibleAtoms(withCaret).length, base + 2 * padCount(withCaret),
+        expect(
+            lexVisibleAtoms(withCaret).length,
+            base + 2 * padCount(withCaret) + tailCount(withCaret),
             reason: '★ 光标**不再**贡献原子（零尺寸锚点，2026-10-15 晚改）—— '
-                '注入后原子数只随空槽垫子变（每个 +2）');
+                '注入后原子数只随空槽垫子（+2）与尾垫（+1）变');
       });
     }
   });

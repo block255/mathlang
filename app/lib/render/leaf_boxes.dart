@@ -6,14 +6,43 @@ import 'dart:math' as math;
 
 import 'package:flutter/rendering.dart';
 
+/// 叶盒的**三类**（2026-10-17 加：配对需要知道"这个盒是不是墨迹"）。
+enum LeafBoxKind {
+  /// **字形盒**：`RenderParagraph`，画出来的是字（`text` 是它画的那个字/那串字）。
+  glyph,
+
+  /// **垫子盒**：没有墨迹、只占版面 —— 我们注入的空槽宽度垫 / 结构尾垫
+  /// （`\rule{…}{0pt}` ⇒ `_RenderColoredBox`，零高），以及引擎自己的零高空白
+  /// （`\,` 的 3.3 px、`\limsup` 名内那道空格、`cases` 的列间距）。
+  pad,
+
+  /// **不是原子**（不参与配对）：光标锚点/细线装饰/变音字形/失真矢量图。
+  spacer,
+}
+
 /// 渲染子树里的一个「叶盒」（无子节点的 RenderBox），坐标已换算到 Math 根盒坐标系。
 class LeafBox {
-  const LeafBox(this.rect);
+  const LeafBox(
+    this.rect, {
+    this.text,
+    this.kind = LeafBoxKind.glyph,
+  });
 
   final Rect rect;
 
+  /// 这个盒**画的是什么**（只有 [LeafBoxKind.glyph] 有）；`null` = 没墨迹。
+  ///
+  /// ★ 配对靠它把"盒子"和"源码里的字"对上号（§11.24 六 的两种坏法都在这上面收口）。
+  final String? text;
+
+  final LeafBoxKind kind;
+
+  bool get isGlyph => kind == LeafBoxKind.glyph;
+
   @override
-  String toString() => 'LeafBox(x ${rect.left.toStringAsFixed(0)}..'
+  String toString() => 'LeafBox(${kind.name}'
+      '${text == null ? '' : ' "$text"'} '
+      'x ${rect.left.toStringAsFixed(0)}..'
       '${rect.right.toStringAsFixed(0)}, y ${rect.top.toStringAsFixed(0)}..'
       '${rect.bottom.toStringAsFixed(0)})';
 }
@@ -92,6 +121,15 @@ const Set<String> kDecorationGlyphs = <String>{
   'ˇ', '˘', '´', '`', '˚', // check / breve / acute / grave / ring（同族，同一机制）
 };
 
+/// 文本是不是**只由私用区码位**组成（`\not` 那条斜杠 = U+E020）
+bool _isPrivateUseOnly(String s) {
+  if (s.isEmpty) return false;
+  for (final int r in s.runes) {
+    if (r < 0xE000 || r > 0xF8FF) return false;
+  }
+  return true;
+}
+
 /// 一次叶盒扫描的结果。
 class LeafBoxScan {
   const LeafBoxScan({
@@ -127,6 +165,10 @@ class LeafBoxScan {
 ///
 /// ③④ 是 2026-10-15 晚新增：它们让 accent 家族符合守门人（叶盒数 == 原子数），
 /// 顺带修好"**accent 里点击一直没反应**"这个既有 bug。
+///
+/// ★★ 2026-10-17：滤完之后再**分三类**（[LeafBoxKind]）—— 配对（`leaf_pairing.dart`）
+///   必须知道"这个盒画的是哪个字 / 它是不是只是一块垫子"。原来只留一个 `Rect`，
+///   配对只能按下标 zip ⇒ 多字母算子名与"盒序 ≠ 源序"两种坏法都无从发现。
 LeafBoxScan scanLeafBoxes(RenderObject root) {
   final Rect bounds = (root is RenderBox && root.hasSize)
       ? (Offset.zero & root.size)
@@ -145,8 +187,9 @@ LeafBoxScan scanLeafBoxes(RenderObject root) {
     });
     if (hasChild || o is! RenderBox || !o.hasSize) return;
     final Rect rect = o.localToGlobal(Offset.zero, ancestor: root) & o.size;
-    all.add(LeafBox(rect));
-    if (_isAtomBox(o, rect, maxWidth)) eligible.add(LeafBox(rect));
+    final LeafBox box = _classify(o, rect, maxWidth);
+    all.add(box);
+    if (box.kind != LeafBoxKind.spacer) eligible.add(box);
   }
 
   walk(root);
@@ -154,15 +197,28 @@ LeafBoxScan scanLeafBoxes(RenderObject root) {
   return LeafBoxScan(eligible: eligible, all: all, maxWidth: maxWidth);
 }
 
-/// 这个叶盒**是一个可见原子吗**？（四类假叶盒的判据集中在这一处，见 [scanLeafBoxes]）
-bool _isAtomBox(RenderObject o, Rect rect, double? maxWidth) {
-  if (rect.width < kMinLeafWidth) return false; // ① 光标条（1.5 px）
-  if (maxWidth != null && rect.width > maxWidth) return false; // ② 失真矢量图
-  // ③ 细线装饰：**严格正的极小高度**（尾垫是 0.0 ⇒ 留下）
-  if (rect.height > 0 && rect.height < kMinLeafHeight) return false;
-  // ④ 变音字形的装饰（几何上与内容完全重合 ⇒ 只能看它画的是什么）
-  if (o is RenderParagraph && kDecorationGlyphs.contains(o.text.toPlainText())) {
-    return false;
+/// 这个叶盒**是哪一类**？（四类假叶盒的判据集中在 [spacer] 这一支，见 [scanLeafBoxes]）
+LeafBox _classify(RenderObject o, Rect rect, double? maxWidth) {
+  LeafBox spacer() => LeafBox(rect, kind: LeafBoxKind.spacer);
+
+  if (rect.width < kMinLeafWidth) return spacer(); // ① 光标条 / 零宽占位
+  if (maxWidth != null && rect.width > maxWidth) return spacer(); // ② 失真矢量图
+  // ③ 细线装饰：**严格正的极小高度**（尾垫是 0.0 ⇒ 留下，走下面那一支）
+  if (rect.height > 0 && rect.height < kMinLeafHeight) return spacer();
+  if (o is RenderParagraph) {
+    final String text = o.text.toPlainText();
+    // ④ 变音字形的装饰（几何上与内容完全重合 ⇒ 只能看它画的是什么）
+    if (kDecorationGlyphs.contains(text)) return spacer();
+    // ⑤ **叠加装饰字形**（`\not` 一族画的那条斜杠）：码位在**私用区**（U+E000–U+F8FF）。
+    //    实测 `a\neq b` 的叶盒 = ["a", **U+E020**, "=", "b"] —— 那条斜杠是**另画的一个字形**，
+    //    与 `=` 重合（KaTeX 的 `\not` 就是这个做法）。它不是源码里的一个字 ⇒ 不是原子。
+    //    ★ 安全边界：引擎的符号表里**没有一个命令**映射到私用区（2026-10-17 grep 过
+    //      `symbols.dart` / `symbols_extra.dart` / `unicode_accents.dart`）⇒ 这条判据不会误杀真原子。
+    if (_isPrivateUseOnly(text)) return spacer();
+    return LeafBox(rect, text: text, kind: LeafBoxKind.glyph);
   }
-  return true;
+  // ★ 剩下的**没有墨迹**：我们自己注入的垫子（零高 `_RenderColoredBox`）
+  //   与引擎的零高空白（`\,`、`\limsup` 名内空格、`cases` 列间距）都在这里。
+  //   ⇒ 归 `pad`（"占版面但不画字"），配对时按"垫子原子"消费、或作为无害余量跳过。
+  return LeafBox(rect, kind: LeafBoxKind.pad);
 }

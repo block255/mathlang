@@ -4,20 +4,41 @@
 // **纯 Dart，不依赖 Flutter** —— 分段规则可以直接被单测钉死。
 
 /// 一个投影分段。`start` 是**相对 source 的偏移**。
+///
+/// ★★ **三类**（2026-10-17 加第三类）：文字段 / **行内**数学段 / **行间**数学段。
+///
+/// 为什么要认行间：`$$\nx=\frac{a}{b}\n$$` 这种输入被原先的实现切成
+/// `[Text(""), Math(""), Text("\nx=\frac{a}{b}\n"), Math("")]` —— **LaTeX 源码被当成正文**，
+/// 于是 `caretPlacement` 对块内每一格都给出**错误归属**。
+/// 块模型本来就不把行间块交给行内投影（各走各的），但"**喂错了会静默给出错误答案**"
+/// 是个陷阱（《位点》§11.25 附带 2 记的账）⇒ 现在明明白白给它一类分段。
 class ProjectionSegment {
-  const ProjectionSegment._(this.start, this.isMath, this.text, this.tex);
+  const ProjectionSegment._(
+    this.start,
+    this.isMath,
+    this.isDisplayMath,
+    this.text,
+    this.tex,
+  );
 
   factory ProjectionSegment.text(int start, String text) =>
-      ProjectionSegment._(start, false, text, '');
+      ProjectionSegment._(start, false, false, text, '');
 
   factory ProjectionSegment.math(int start, String tex) =>
-      ProjectionSegment._(start, true, '', tex);
+      ProjectionSegment._(start, true, false, '', tex);
+
+  /// 行间块（`$$…$$`）：[start] 指向**开围栏之后**那一格，[tex] 是围栏**之内**的原文。
+  factory ProjectionSegment.displayMath(int start, String tex) =>
+      ProjectionSegment._(start, true, true, '', tex);
 
   /// 在 source 内的起始偏移。
-  /// 数学段的 start 指向 `$` **之后**的第一个字符（即 `tex[0]`）。
+  /// 数学段的 start 指向**定界符之后**的第一个字符（即 `tex[0]`）。
   final int start;
 
   final bool isMath;
+
+  /// 是不是**行间**块（`$$…$$`，围栏连自己一起被这一段落覆盖）
+  final bool isDisplayMath;
 
   /// 文字段的内容（数学段为空串）
   final String text;
@@ -28,22 +49,28 @@ class ProjectionSegment {
   int get length => isMath ? tex.length : text.length;
 
   /// 在 source 内的结束偏移（不含）。
-  /// 文字段 = 最后一个字符之后；数学段 = 闭合 `$` 所在的位置。
+  /// 文字段 = 最后一个字符之后；数学段 = 闭合定界符所在的位置。
   int get end => start + length;
 
   @override
-  String toString() =>
-      isMath ? 'Math($start..$end, "$tex")' : 'Text($start..$end, "$text")';
+  String toString() => isMath
+      ? '${isDisplayMath ? 'DisplayMath' : 'Math'}($start..$end, "$tex")'
+      : 'Text($start..$end, "$text")';
 }
 
-/// 把一段 L0 文本投影成「文字段 / 数学段」序列。
+/// 把一段 L0 文本投影成「文字段 / 行内数学段 / 行间数学段」序列。
 ///
 /// 规则：
-///   · `$...$` → 数学段（tex 不含定界符）
+///   · **行间块** `$$…$$` → 一个 [ProjectionSegment.displayMath]（见 [displayFenceEnd]）
+///   · `$...$` → 行内数学段（tex 不含定界符）
 ///   · **未闭合的 `$`** → 余下全部当普通文字（打字过程中它是常态，不能报错）
 ///   · 数学区段内的 `_ * \` 归数学，不做 md 解析
 ///
 /// **S2 已知缺口**（后续阶段补）：`\$` 转义、`\(...\)` 兼容写法、行内代码里的 `$` 不解析。
+///
+/// ★★ **边界（2026-10-17 写进代码）**：行内投影只负责**一行之内**的东西。
+/// 行间块由**块模型**认领（`BlockType.math` 的单元自己拿 `renderBase`/`renderLength`），
+/// 本函数对它的职责只有一条：**喂进来也不会把 LaTeX 当正文**。
 List<ProjectionSegment> projectInline(String source) {
   final out = <ProjectionSegment>[];
   var i = 0;
@@ -53,6 +80,21 @@ List<ProjectionSegment> projectInline(String source) {
       i++;
       continue;
     }
+    // ① 行间围栏（`$$` 独占行首、且有闭合）—— 整块当一个 displayMath 段
+    final int? fenceEnd = displayFenceEnd(source, i);
+    if (fenceEnd != null) {
+      if (i > textStart) {
+        out.add(ProjectionSegment.text(textStart, source.substring(textStart, i)));
+      }
+      out.add(ProjectionSegment.displayMath(
+        i + 2,
+        source.substring(i + 2, fenceEnd - 2),
+      ));
+      i = fenceEnd;
+      textStart = i;
+      continue;
+    }
+    // ② 行内 `$…$`
     final close = source.indexOf(r'$', i + 1);
     if (close < 0) break; // 未闭合 → 余下全是文字
     if (i > textStart) {
@@ -66,6 +108,57 @@ List<ProjectionSegment> projectInline(String source) {
     out.add(ProjectionSegment.text(textStart, source.substring(textStart)));
   }
   return out;
+}
+
+/// 若 [at] 处是**行间围栏**的开头，返回"覆盖整个块之后"的偏移（= 闭合 `$$` 之后）；
+/// 不是围栏（或**未闭合**）返回 null。
+///
+/// 判据与块模型**同一套**（`BlockMarkers.isMathFence`）：
+/// 行首（前导 ≤3 空格）的 `$$`，且
+///   · **同行闭合**（`$$x=1$$`），或
+///   · 下文某个**行首的 `$$`** 收尾（`$$\n…\n$$`）。
+///
+/// ★ **未闭合时返回 null**（而不是"吞到文末"）：`$$ x` 这种"空壳公式 + 后续内容"
+///   按块模型是**普通段落**（§11.22 收紧过判据），它那里的 `$$` 要按**空的行内公式**渲染。
+///   真正的"未闭合行间块"（`$$\n…` 到文末）由**块模型**当整块吃掉，轮不到行内投影。
+int? displayFenceEnd(String source, int at) {
+  if (at + 1 >= source.length || source[at + 1] != r'$') return null;
+  // 必须在行首（允许最多 3 个前导空格，与块模型一致）
+  var k = at - 1;
+  var spaces = 0;
+  while (k >= 0 && source[k] == ' ' && spaces <= 3) {
+    k--;
+    spaces++;
+  }
+  if (spaces > 3) return null;
+  if (k >= 0 && source[k] != '\n') return null;
+
+  final int lineEndRaw = source.indexOf('\n', at);
+  final int lineEnd = lineEndRaw < 0 ? source.length : lineEndRaw;
+
+  // ① 同行闭合
+  final int same = source.indexOf(r'$$', at + 2);
+  if (same >= 0 && same + 2 <= lineEnd) return same + 2;
+  // ② 跨行：找下一行行首的 `$$`
+  var j = lineEnd + 1;
+  while (j < source.length) {
+    var m = j;
+    var sp = 0;
+    while (m < source.length && source[m] == ' ' && sp <= 3) {
+      m++;
+      sp++;
+    }
+    if (sp <= 3 &&
+        m + 1 < source.length &&
+        source[m] == r'$' &&
+        source[m + 1] == r'$') {
+      return m + 2;
+    }
+    final int nl = source.indexOf('\n', j);
+    if (nl < 0) break;
+    j = nl + 1;
+  }
+  return null;
 }
 
 bool isAsciiLetter(int c) =>

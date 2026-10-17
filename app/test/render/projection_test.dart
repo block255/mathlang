@@ -121,6 +121,69 @@ void main() {
     });
   });
 
+  // ─────────────────────────────────────────────────────────────
+  // ★★ 行间块（旧账 2026-10-17）：行内投影不许把 LaTeX 当正文
+  //
+  // 原先 `$$\nx=\frac{a}{b}\n$$` 被切成 `[Text(""), Math(""), Text("\nx=\frac{a}{b}\n"), Math("")]`
+  // —— **LaTeX 源码成了正文**，于是 `caretPlacement` 对块内每一格都给出错误归属。
+  // 行间块本来由**块模型**接手（`BlockType.math`），但"喂错了会静默给错答案"是陷阱。
+  // ─────────────────────────────────────────────────────────────
+  group(r'★★ 行间围栏（`$$…$$`）→ 一个 displayMath 段，LaTeX 绝不当正文', () {
+    test('独占行的围栏：整块一段，tex = 围栏之内', () {
+      final segs = projectInline('\$\$\nx=\\frac{a}{b}\n\$\$');
+      expect(segs.length, 1, reason: '$segs');
+      expect(segs.single.isMath, isTrue);
+      expect(segs.single.isDisplayMath, isTrue);
+      expect(segs.single.tex, '\nx=\\frac{a}{b}\n');
+      expect(segs.single.start, 2, reason: '开围栏之后那一格');
+    });
+
+    test('前后有正文：Text + DisplayMath + Text（且没有任何段把 LaTeX 当正文）', () {
+      final segs = projectInline('前文\n\n\$\$\nx=1\n\$\$\n\n后文');
+      expect(segs.length, 3, reason: '$segs');
+      expect(segs[0].isMath, isFalse);
+      expect(segs[1].isDisplayMath, isTrue);
+      expect(segs[1].tex, '\nx=1\n');
+      expect(segs[2].isMath, isFalse);
+      expect(segs[2].text, '\n\n后文');
+      // ★ 关键：不允许出现"含 LaTeX 源码的正文段"
+      for (final ProjectionSegment s in segs) {
+        if (s.isMath) continue;
+        expect(s.text.contains(r'\frac'), isFalse);
+      }
+    });
+
+    test(r'同行闭合的 `$$…$$` 也算行间块（与块模型 `isClosedMathFence` 同一判据）', () {
+      final segs = projectInline(r'$$\frac{a}{b}$$');
+      expect(segs.length, 1);
+      expect(segs.single.isDisplayMath, isTrue);
+      expect(segs.single.tex, r'\frac{a}{b}');
+    });
+
+    test(r'★ 未闭合的 `$$ x` 不算围栏（§11.22：那一行是普通段落，`$$` 是空的行内公式）', () {
+      final segs = projectInline(r'$$ x');
+      expect(segs.every((ProjectionSegment s) => !s.isDisplayMath), isTrue,
+          reason: '$segs');
+      // 与收紧后的块模型一致：这里退回"空的行内公式 + 正文"
+      expect(segs.first.isMath, isTrue);
+      expect(segs.first.tex, '');
+    });
+
+    test(r'`a $$x$$ b`（不在行首）不算围栏 —— 行内投影只认行首围栏', () {
+      final segs = projectInline(r'a $$x$$ b');
+      expect(segs.every((ProjectionSegment s) => !s.isDisplayMath), isTrue,
+          reason: '$segs');
+    });
+
+    test('★ displayFenceEnd 自身：行首（含 ≤3 空格）才算', () {
+      expect(displayFenceEnd('\$\$\nx\n\$\$', 0), 7, reason: r'7 个字符，闭合 `$$` 之后');
+      expect(displayFenceEnd('   \$\$x\$\$', 3), 8);
+      expect(displayFenceEnd('    \$\$x\$\$', 4), isNull, reason: '4 空格 = 缩进代码');
+      expect(displayFenceEnd(r'a $$x$$', 2), isNull);
+      expect(displayFenceEnd(r'$$\frac{a}{b}$$', 0), 15);
+    });
+  });
+
   // 旧的 `snapCaretInTex`（只防切开命令名）已删除：注入光标一律走
   // `caret_sites.dart` 的位点表 + `injectCursor()`，它的单测在 caret_sites_test.dart 里。
 }

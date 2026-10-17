@@ -23,25 +23,18 @@ import 'caret_sites.dart';
 import 'slot_marks.dart';
 import 'visible_atoms.dart';
 
-/// **给命中测试用的原子表**：渲染 tex 的原子，但**补上尾垫的合成原子**（§11.18）。
+/// **给命中测试用的原子表**：渲染 tex 的可见原子，**按渲染顺序**（= 叶盒顺序）。
 ///
-/// ★ 尾垫是 `\rule{3pt}{0pt}`：**词法上是 0 个原子**（`\rule` 是结构命令），
-///   而引擎**照样给它一个叶盒**（4.8 × 0）⇒ 不补就"叶盒数 ≠ 原子数" ⇒
-///   `hitTestMathTex` **静默返回 null**（公式内点击静默全废 —— 这个坑踩过四次）。
+/// ★ 2026-10-17 起它就是 `lexVisibleAtoms(renderTex)` —— 两类注入物
+///   （空槽宽度垫 `kSlotPadFiller` · 结构尾垫 `kStructTailTex`）都**由词法自己
+///   在走查顺序里**认出来（见 `visible_atoms.dart` 里的两条注释），本函数不再补账。
 ///
-/// ★★ 2026-10-15 晚：**光标不再是"要从原子里剔掉"的东西了** ——
-///   它现在是一个**零尺寸锚点**（`\rule{0pt}{0pt}`）：词法上 0 个原子 ✓，
-///   渲染成 0×0 的盒子 ⇒ 被 `leaf_boxes` 的宽度下限滤掉 ✓
-///   ⇒ 两侧天然对齐、**不需要任何特判**（以前那根 1.5 px 的 `\cursor{}` 两个方向都要补账）。
-List<VisibleAtom> atomsForHitTest(String renderTex) {
-  return <VisibleAtom>[
-    for (final VisibleAtom a in lexVisibleAtoms(renderTex)) a,
-    for (int i = renderTex.indexOf(kStructTailTex);
-        i >= 0;
-        i = renderTex.indexOf(kStructTailTex, i + 1))
-      VisibleAtom(i, i + kStructTailTex.length, 'tail'),
-  ]..sort((VisibleAtom a, VisibleAtom b) => a.start.compareTo(b.start));
-}
+/// ★★ **为什么删掉原来那段"补尾垫再按源偏移排序"**（这是修正，不是简化）：
+///   排序会毁掉词法刻意维持的渲染顺序 —— 实测 `\sqrt[3]{x}` 在源码里次数在前、
+///   叶盒里次数在**后**，排完序两列就整体错位（点次数落到被开方数，§11.26 三）。
+///   同一件事在 `\sum` 的上下限上更明显（引擎把上限画在算子**之前**）。
+List<VisibleAtom> atomsForHitTest(String renderTex) =>
+    lexVisibleAtoms(renderTex);
 
 /// 一个被注入的常量串
 class _Marker {
