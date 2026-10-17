@@ -168,7 +168,14 @@ int nextCaretOffset(String source, int offset) {
   //
   // ★ `←` **故意不跳**（见 [prevCaretOffset]）：从公式外面进到公式末尾，
   //   是"我要继续改这段数学"的正当动作 —— 这是**有意的不对称**：`←` 进去、`→` 出去。
-  final int next = i + 1;
+  // ★★ 2026-10-17：**跳过"粘合位点"**（用户用 `→` 扫出三处"没反应"）——
+  //   基座与它自己的 `^`/`_` 之间、同一基座两个脚本之间、裸参数内容开头。
+  //   这些位置的注入被挪进了"脚本内容开头"⇒ 与脚本第一个位点**同一根像素**。
+  //   位点本身保留（点击/吸附要用），只在**方向键**上跳过。
+  var next = i + 1;
+  while (next < t.sites.length && t.sites[next].glue) {
+    next++;
+  }
   if (next < t.sites.length && t.sites[next].offset < r.tex.length) {
     return r.abs(t.sites[next].offset);
   }
@@ -191,7 +198,12 @@ int prevCaretOffset(String source, int offset) {
   final CaretSiteTable t = buildCaretSites(r.tex);
   final CaretSite s = t.snap(r.rel(o));
   final int i = t.indexOf(s.offset);
-  if (i > 0) return r.abs(t.sites[i - 1].offset);
+  // ★ `←` 也跳过粘合位点（对称；理由见 [nextCaretOffset]）。
+  var back = i - 1;
+  while (back >= 0 && t.sites[back].glue) {
+    back--;
+  }
+  if (back >= 0) return r.abs(t.sites[back].offset);
   return r.openStart; // 段内第一个位点 → 走出到 `$` 之前
 }
 // ★ 注意：`←` **不做**「跳过 tex 末位点」那件事（与 [nextCaretOffset] 有意不对称）——

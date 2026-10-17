@@ -44,7 +44,7 @@ class SlotStep {
 
 /// 一个位点：`offset` 是**相对该段 tex** 的源偏移。
 class CaretSite {
-  const CaretSite(this.offset, this.path, this.indexInSlot);
+  const CaretSite(this.offset, this.path, this.indexInSlot, {this.glue = false});
 
   final int offset;
 
@@ -54,11 +54,20 @@ class CaretSite {
   /// 它在所属内容列表里的序号（0 = 槽首，items.length = 槽末）
   final int indexInSlot;
 
+  /// ★★ 是不是**语法粘合处**（2026-10-17）：基座与它自己的 `^`/`_` 之间、
+  /// 同一基座两个脚本之间、裸参数的内容开头。
+  ///
+  /// 这些位置**插入非法**（插入物会顶掉结合关系），所以注入被挪进脚本内容开头
+  /// ⇒ 视觉上与"脚本的第一个位点"同一根像素 ⇒ **方向键要跳过它们**（否则像"没反应"）。
+  /// 但**位点本身保留**：点击与吸附需要它（删了会让"点基座右半"吸附倒退）。
+  final bool glue;
+
   bool get isMain => path.isEmpty;
 
   @override
   String toString() => 'site@$offset'
-      '${path.isEmpty ? "（主行）" : "（${path.map((SlotStep s) => s.label).join(" › ")}）"}';
+      '${path.isEmpty ? "（主行）" : "（${path.map((SlotStep s) => s.label).join(" › ")}）"}'
+      '${glue ? "·粘合" : ""}';
 }
 
 /// 一个槽（参数位）在源码里的区间。
@@ -605,7 +614,14 @@ class _Item {
 
 /// 一个**内容列表**（主行 / 某槽内部 / 环境的一格）。
 class _Region {
-  _Region(this.start, this.end, this.path, this.items, {this.isSlot = false});
+  _Region(
+    this.start,
+    this.end,
+    this.path,
+    this.items, {
+    this.isSlot = false,
+    this.isBareArg = false,
+  });
 
   /// 内容的可插入区间 `[start, end)`；空槽时 `start == end`
   final int start;
@@ -616,6 +632,11 @@ class _Region {
   /// 是否是"导航意义上的槽"（命令参数 / 上下标 / 环境格）。
   /// 裸花括号组 `{...}` 也是区域，但**不算槽**（不产生层级，只是括起来）。
   final bool isSlot;
+
+  /// ★ **裸参数**槽（`a_i` 的 `i`、`x^2` 的 `2`、`\frac12` 的 `2`）：
+  /// 它的"内容开头"**不是位点** —— 往那儿插东西，插入物会**变成**那个参数
+  /// （`a_|i` 打一个字符 ⇒ `i` 掉成普通字号）。要进这个参数，先打字（会自动补花括号）。
+  final bool isBareArg;
 }
 
 class _Parser {
@@ -628,6 +649,9 @@ class _Parser {
   bool _degraded = false;
   String? _degradeReason;
   final List<_Region> _slots = <_Region>[];
+
+  /// 所有"粘合处"的偏移（见 [CaretSite.glue]）
+  final Set<int> _glueOffsets = <int>{};
 
   // ---------- 入口 ----------
 
@@ -646,7 +670,14 @@ class _Parser {
       tex,
       _dedupe(<CaretSite>[
         for (final CaretSite s in raw)
-          CaretSite(s.offset, _fullPathAt(slots, s), s.indexInSlot),
+          CaretSite(
+            s.offset,
+            _fullPathAt(slots, s),
+            s.indexInSlot,
+            // ★ "粘合处"是**这个偏移**的性质，不是某一次发射的性质 ——
+            //   `_dedupe` 只按 offset 去重，所以这里按偏移统一补上（否则标记会丢）。
+            glue: s.glue || _glueOffsets.contains(s.offset),
+          ),
       ]),
       List<SlotSpan>.unmodifiable(slots),
       false,
@@ -738,12 +769,41 @@ class _Parser {
   }
 
   /// 位点发射：区域两端 + 每个内容项的两端；空区域只有一个位点。
+  ///
+  /// ★★ 2026-10-17：**"插入非法的粘合处"不再产生位点**（用户用 `→` 扫出来的三处"没反应"）：
+  ///   · 基座与**紧跟它的** `^`/`_` 之间（`\sum` 与 `_{…}`）：往那儿插字符会顶掉结合关系；
+  ///   · 同一个基座的两个脚本之间（`_{i=1}` 与 `^{n}`）：同上；
+  ///   · **裸参数**的内容开头（`a_i` 的 `i` 前）：插入物会**变成**那个参数。
+  ///   这三处的注入/插入已经被 `neutralPoint` / `planInsert` 挪走，于是"位点在数据上不同、
+  ///   屏幕上却是同一根像素" ⇒ 用户按 `→` 看到"没反应"。**按 §2.2 的原则（位点 = 合法插入位置）
+  ///   它们本来就不该是位点**；去掉之后每一次 `→` 都有可见变化。
+  /// 位点发射：区域两端 + 每个内容项的两端；空区域只有一个位点。
+  ///
+  /// ★★ 2026-10-17：**"粘合处"的位点要标出来**（用户用 `→` 扫出三处"没反应"）：
+  ///   · 基座与**紧跟它的** `^`/`_` 之间（`\sum` 与 `_{…}`）；
+  ///   · 同一个基座的两个脚本之间（`_{i=1}` 与 `^{n}`）；
+  ///   · **裸参数**的内容开头（`a_i` 的 `i` 前）。
+  ///   这三处的注入/插入都被 `neutralPoint` 挪进了"脚本内容开头"⇒ 视觉上与
+  ///   脚本自己的第一个位点**同一根像素** ⇒ 按 `→` 看着像"没反应"。
+  ///   ⇒ 位点**照旧保留**（点击/吸附要靠它，删了会让"点基座右半"吸附**倒退**），
+  ///   只在**方向键**上跳过（`math_nav.next/prevCaretOffset`）。
   void _emit(_Region r, List<CaretSite> out) {
+    // ★ 裸参数的"内容开头"**不是**粘合位点：它是那个脚本自己的第一格
+    //   （旁边那个"基座与脚本之间"才是粘合位点，它被跳过之后这里就成了唯一的停靠）。
     out.add(CaretSite(r.start, r.path, 0));
     out.add(CaretSite(r.end, r.path, r.items.length));
     for (var k = 0; k < r.items.length; k++) {
-      out.add(CaretSite(r.items[k].start, r.path, k));
-      out.add(CaretSite(r.items[k].end, r.path, k + 1));
+      final _Item it = r.items[k];
+      final bool glueBefore = k > 0 &&
+          _isScriptItem(it) &&
+          it.start == r.items[k - 1].end;
+      final bool glueAfter = k + 1 < r.items.length &&
+          _isScriptItem(r.items[k + 1]) &&
+          r.items[k + 1].start == it.end;
+      if (glueBefore) _glueOffsets.add(it.start);
+      if (glueAfter) _glueOffsets.add(it.end);
+      out.add(CaretSite(it.start, r.path, k, glue: glueBefore));
+      out.add(CaretSite(it.end, r.path, k + 1, glue: glueAfter));
     }
     for (final _Item it in r.items) {
       for (final _Region s in it.slots) {
@@ -751,6 +811,10 @@ class _Parser {
       }
     }
   }
+
+  /// `^` / `_`（脚本项）
+  static bool _isScriptItem(_Item it) =>
+      it.cmd == '^' || it.cmd == '_';
 
   // ---------- 内容列表 ----------
 
@@ -926,8 +990,8 @@ class _Parser {
     }
 
     final _Item inner = _parseSingle();
-    final _Region r =
-        _Region(inner.start, inner.end, path, <_Item>[inner], isSlot: true);
+    final _Region r = _Region(inner.start, inner.end, path, <_Item>[inner],
+        isSlot: true, isBareArg: true);
     _slots.add(r);
     return _Item(inner.start, inner.end, <_Region>[r]);
   }

@@ -347,6 +347,16 @@ Rect? findLocalRowBox(RenderObject root, Offset at, {RenderObject? anchor}) {
 
   walk(root);
 
+  // ★★ 2026-10-17：**被拉伸的行盒要按行高裁**（与 `hit_map` 同一条判据）。
+  //   `\sum` 的字形盒是引擎给的行盒（实测高 **46** = 整个带上下限的算子节点）；
+  //   把它当"当地那一行"⇒ 竖条高 38.6（用户："直接点末尾是**长蓝光标**"），
+  //   而同一格按行高应该是 17.6 或 11.8。⇒ 高度超过**本段中位数 × 1.6** 的盒，
+  //   竖直裁到中位数高（中心不变）后再参与选行。
+  final double rowH = _medianHeight(hits);
+  Rect clip(Rect r) => (rowH <= 0 || r.height <= rowH * 1.6)
+      ? r
+      : Rect.fromCenter(center: r.center, width: r.width, height: rowH);
+
   // ① 层优先：锚点那一行（及其后代行）里、且竖直含基线的字形盒
   final RenderObject? anchorRow = anchor == null ? null : rowOf(anchor, root);
   if (anchorRow != null) {
@@ -354,8 +364,9 @@ Rect? findLocalRowBox(RenderObject root, Offset at, {RenderObject? anchor}) {
       ({Rect rect, double dx, RenderObject? row})? best;
       for (final ({Rect rect, double dx, RenderObject? row}) h in hits) {
         if (!sameLayer(h.row, anchorRow)) continue;
-        if (at.dy < h.rect.top - slack || at.dy > h.rect.bottom + slack) continue;
-        if (best == null || h.dx < best.dx) best = h;
+        final Rect r = clip(h.rect);
+        if (at.dy < r.top - slack || at.dy > r.bottom + slack) continue;
+        if (best == null || h.dx < best.dx) best = (rect: r, dx: h.dx, row: h.row);
       }
       return best;
     }
@@ -367,16 +378,26 @@ Rect? findLocalRowBox(RenderObject root, Offset at, {RenderObject? anchor}) {
   // ② 退路：纯几何（严格含基线 → ±2 px）
   ({Rect rect, double dx, RenderObject? row})? best;
   for (final ({Rect rect, double dx, RenderObject? row}) h in hits) {
-    if (at.dy < h.rect.top || at.dy > h.rect.bottom) continue;
-    if (best == null || h.dx < best.dx) best = h;
+    final Rect r = clip(h.rect);
+    if (at.dy < r.top || at.dy > r.bottom) continue;
+    if (best == null || h.dx < best.dx) best = (rect: r, dx: h.dx, row: h.row);
   }
   if (best == null) {
     for (final ({Rect rect, double dx, RenderObject? row}) h in hits) {
-      if (at.dy < h.rect.top - 2 || at.dy > h.rect.bottom + 2) continue;
-      if (best == null || h.dx < best.dx) best = h;
+      final Rect r = clip(h.rect);
+      if (at.dy < r.top - 2 || at.dy > r.bottom + 2) continue;
+      if (best == null || h.dx < best.dx) best = (rect: r, dx: h.dx, row: h.row);
     }
   }
   return best?.rect;
+}
+
+/// 本段字形盒高度的**中位数**（用来认"被拉伸的行盒"，见 [findLocalRowBox]）
+double _medianHeight(List<({Rect rect, double dx, RenderObject? row})> hits) {
+  if (hits.isEmpty) return 0;
+  final List<double> hs = <double>[for (final ({Rect rect, double dx, RenderObject? row}) h in hits) h.rect.height]
+    ..sort();
+  return hs[hs.length ~/ 2];
 }
 
 /// 一个**空槽占位垫**的矩形（Math 盒局部坐标）＋ 它是不是**当前槽**
