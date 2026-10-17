@@ -1212,7 +1212,11 @@ class _DocViewState extends State<DocView> {
         id: 'blank@$tail',
         height: free,
         offset: tail,
-        caretHere: after >= 0 && _caret == after,
+        // ★★ 2026-10-17 用户实测："enter 和点空白都能到空行了，但光标显示不出来"：
+        //   插入 `\n\n` 之后缓冲区是 `…\n\n`，**光标落在 after + 1**（末尾那行空行的行首），
+        //   而空行的**起点**是 `after` ⇒ 原来 `_caret == after` 永远不成立 ⇒ 一根竖条都不画。
+        //   ⇒ 文末槽只要是"光标停在末尾那片空白里"就画。
+        caretHere: after >= 0 && (_caret ?? -1) >= after,
         caretHeight: textCaretHeight(_s.bodyFontSize),
         caretWidth: 1.5,
         caretColor: const Color(kCaretColorValue),

@@ -76,17 +76,9 @@ Future<Rect?> _bar(WidgetTester tester, String tex, int caretRel) async {
   );
 }
 
-/// ★ **固有合并**（去花括号的必然代价，不是 bug；已报给用户决定要不要改 normalize 策略）：
-///
-/// 去花括号会把**两个不同的位点合并成一个偏移**：
-///   · `\sum_{i=1}^{n}a_i` 的 13（n 之后）与 14（整个上标之后）⇒ 归一后都是 12
-///   · `x^{2}_{1}` 的 4（上标之后）与 5（下标之前）⇒ 归一后都是 3
-/// 合并后只能画在一行上；按用户拍板的"**∑ 上面归上部**"，取**脚本那一行**。
-const Set<String> _collapse = <String>{
-  r'\sum_{i=1}^{n}a_i@14',
-  r'\prod_{k=1}^{m}k@15',
-  r'x^{2}_{1}@4',
-};
+// ★ 2026-10-17 收窄 normalize 之后：只有 `x^{2}` / `a_{i}` 这种**最简单**的还会被改写，
+//   而且**一处固有合并都不剩** ⇒ 白名单已删，这条守卫现在是"纯全域不变量"：
+//   任何位点失焦后都不许跳走（x 差 ≤1px、竖直区间至少重叠一半）。
 
 void main() {
   setUpAll(() async => loadMathFonts());
@@ -101,10 +93,7 @@ void main() {
         final NormalizeResult nr = normalizeTex(tex, site.offset);
         if (!nr.changed) continue;
         if (!changed.contains(tex)) changed.add(tex);
-        if (_collapse.contains('$tex@${site.offset}')) {
-          collapsed.add('$tex@${site.offset}');
-          continue;
-        }
+
         final Rect? before = await _bar(tester, tex, site.offset);
         final Rect? after = await _bar(tester, nr.tex, nr.caret);
         if (before == null || after == null) {

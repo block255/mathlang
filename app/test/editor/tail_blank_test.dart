@@ -71,6 +71,30 @@ void main() {
     expect(buf.buf, '甲', reason: '一步就该回到点之前');
   });
 
+  testWidgets('★ 点完之后**竖条要画出来**（用户实测："能到空行，但光标显示不出来"）',
+      (WidgetTester tester) async {
+    final DocBuffer buf = await _pump(tester, '甲');
+    await tester.tap(_blankSlot);
+    await tester.pumpAndSettle();
+    expect(buf.buf, '甲\n\n');
+    final Iterable<Container> bars = tester
+        .widgetList<Container>(find.byType(Container))
+        .where((Container c) => c.constraints?.maxWidth == 1.5);
+    expect(bars, isNotEmpty,
+        reason: '空行上必须看得见竖条：插入 `\\n\\n` 后光标在 after+1，'
+            '而空行起点是 after ⇒ 判据不能写 `_caret == after`');
+  });
+
+  testWidgets('★ Enter 到底再回车（文末空行）也要画竖条', (WidgetTester tester) async {
+    final DocBuffer buf = await _pump(tester, '甲\n\n');
+    buf.setCaret(3); // 文末空行的行首（Enter 之后就是这个位置）
+    await tester.pumpAndSettle();
+    final Iterable<Container> bars = tester
+        .widgetList<Container>(find.byType(Container))
+        .where((Container c) => c.constraints?.maxWidth == 1.5);
+    expect(bars, isNotEmpty, reason: 'Enter 出来的空行上要看得见光标');
+  });
+
   testWidgets('★ 文末已有空行时：点它只移光标，**不画第二根**竖条',
       (WidgetTester tester) async {
     final DocBuffer buf = await _pump(tester, '甲\n\n');
