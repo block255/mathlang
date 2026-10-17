@@ -42,12 +42,16 @@ NormalizeResult normalizeTex(String tex, int caretRel) {
     final CaretSiteTable t = buildCaretSites(cur);
     if (t.degraded) break; // 结构不可靠就别动（§4.4 同样的克制）
 
-    final List<({int from, int to, String repl})> edits =
-        <({int from, int to, String repl})>[];
+    // `lead` = 区域开头**被丢掉**的字符数（去花括号时 = 1，因为 `{` 不属于 repl）。
+    // ★ 少了它，光标落在"内容开头"时会算成 +1 —— 2026-10-17 探针实测：
+    //   `x^{2}` 的位点 3（`2` 之前）失焦后变成"`2` 之后"，光标右移一格；
+    //   `\sum_{i=1}^{n}` 同理（"n 之前"跳到"n 之后"）。
+    final List<({int from, int to, String repl, int lead})> edits =
+        <({int from, int to, String repl, int lead})>[];
 
     // ① 全空结构：整段删
     for (final StructureUnit u in structureUnits(t)) {
-      if (u.allEmpty) edits.add((from: u.start, to: u.end, repl: ''));
+      if (u.allEmpty) edits.add((from: u.start, to: u.end, repl: '', lead: 0));
     }
 
     // ② 单原子脚本参数：去掉花括号（`x^{2}` → `x^2`）
@@ -60,28 +64,29 @@ NormalizeResult normalizeTex(String tex, int caretRel) {
       if (cur[s.start - 1] != '{' || cur[s.end] != '}') continue;
       final String inner = cur.substring(s.start, s.end);
       if (lexVisibleAtoms(inner).length != 1) continue; // ★ 多原子绝不去括号
-      edits.add((from: s.start - 1, to: s.end + 1, repl: inner));
+      edits.add((from: s.start - 1, to: s.end + 1, repl: inner, lead: 1));
     }
 
     if (edits.isEmpty) break;
 
     // 去掉互相重叠的：**外层优先**（嵌套的空结构只删最外层就够）
-    edits.sort((({int from, int to, String repl}) a,
-            ({int from, int to, String repl}) b) =>
+    edits.sort((({int from, int to, String repl, int lead}) a,
+            ({int from, int to, String repl, int lead}) b) =>
         a.from != b.from ? a.from.compareTo(b.from) : b.to.compareTo(a.to));
-    final List<({int from, int to, String repl})> kept =
-        <({int from, int to, String repl})>[];
-    for (final ({int from, int to, String repl}) e in edits) {
+    final List<({int from, int to, String repl, int lead})> kept =
+        <({int from, int to, String repl, int lead})>[];
+    for (final ({int from, int to, String repl, int lead}) e in edits) {
       if (kept.isNotEmpty && e.from < kept.last.to) continue;
       kept.add(e);
     }
 
     // ★ 从右往左应用，并**精确映射光标**（不得乱跳）
-    for (final ({int from, int to, String repl}) e in kept.reversed) {
+    for (final ({int from, int to, String repl, int lead}) e in kept.reversed) {
       if (caret >= e.to) {
         caret += e.repl.length - (e.to - e.from);
       } else if (caret > e.from) {
-        caret = e.from + (caret - e.from).clamp(0, e.repl.length);
+        // ★ 减掉 `lead`：区域开头那些**被丢掉**的字符不该算进 repl 的偏移
+        caret = e.from + (caret - e.from - e.lead).clamp(0, e.repl.length);
       }
       cur = cur.substring(0, e.from) + e.repl + cur.substring(e.to);
     }

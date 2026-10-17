@@ -63,6 +63,7 @@ class _BlankSlot extends StatefulWidget {
     required this.caretColor,
     required this.onTap,
     required this.onBox,
+    this.topAligned = false,
   });
 
   final String id;
@@ -77,6 +78,9 @@ class _BlankSlot extends StatefulWidget {
   final Color caretColor;
   final void Function(int at) onTap;
   final void Function(String id, RenderBox box) onBox;
+
+  /// 竖条是否**贴顶**（末尾槽占整片剩余空白时，光标要紧贴最后一行下面，不浮在中间）
+  final bool topAligned;
 
   @override
   State<_BlankSlot> createState() => _BlankSlotState();
@@ -116,9 +120,13 @@ class _BlankSlotState extends State<_BlankSlot> {
           width: double.infinity,
           child: widget.caretHere
               ? Align(
-                  alignment: Alignment.centerLeft,
+                  alignment: widget.topAligned
+                      ? Alignment.topLeft
+                      : Alignment.centerLeft,
                   child: OverflowBox(
-                    alignment: Alignment.centerLeft,
+                    alignment: widget.topAligned
+                        ? Alignment.topLeft
+                        : Alignment.centerLeft,
                     minWidth: 0,
                     maxWidth: widget.caretWidth * 4,
                     minHeight: 0,
@@ -1189,25 +1197,29 @@ class _DocViewState extends State<DocView> {
       }
     }
 
-    // ★★ ⑥ 丙 · **文末空行**（2026-10-17 用户实测："点底下空行，光标在文本末尾没消失"）：
-    //   末段之后没有"下一个单元"夹着 ⇒ 上面那个 gap 循环里根本轮不到它。
-    //   做法：在**最后一页**末尾补一个空行槽（高度取普通块间距，不改变分页 ——
-    //   分页是按单元高度算的，这一段只在页面内部）。
+    // ★★ ⑥ 丙 · **文末那片空白 = 一行空行**（2026-10-17 用户拍板 **甲**）：
+    //   「添加空行有两条途径：Enter、点下方空白」—— 两条**都会改文档**（和 Enter 一样）：
+    //   点一下就在文末起一行空行、光标落在那儿；已经有一行就不再加（**幂等**）。
+    //   槽的高度取**这一页剩下的正文高度** ⇒ 那片空白**整片**都能点；
+    //   竖条**贴顶**画在最后一行下面。
+    //   ★ 只有**文末真的有那一行空行**时才画竖条（否则会和最后一行字尾的光标叠成两根）。
     if (p == layout.pageCount - 1 && prevUnit != null) {
-      final int blankOffset = _blankOffsetAfter(prevUnit);
-      if (blankOffset >= 0) {
-        children.add(_BlankSlot(
-          id: 'blank@$blankOffset',
-          height: _gapBefore(BlockType.paragraph),
-          offset: blankOffset,
-          caretHere: _caret == blankOffset,
-          caretHeight: textCaretHeight(_s.bodyFontSize),
-          caretWidth: 1.5,
-          caretColor: const Color(kCaretColorValue),
-          onTap: (int at) => widget.onTapOffset?.call(at),
-          onBox: (String id, RenderBox box) => _blankBoxes[id] = box,
-        ));
-      }
+      final int after = _blankOffsetAfter(prevUnit);
+      final int tail = after >= 0 ? after : widget.buffer.buf.length;
+      final double free = (_m.bodyHeight - bottom)
+          .clamp(textCaretHeight(_s.bodyFontSize), _m.bodyHeight);
+      children.add(_BlankSlot(
+        id: 'blank@$tail',
+        height: free,
+        offset: tail,
+        caretHere: after >= 0 && _caret == after,
+        caretHeight: textCaretHeight(_s.bodyFontSize),
+        caretWidth: 1.5,
+        caretColor: const Color(kCaretColorValue),
+        topAligned: true,
+        onTap: (int at) => _onTailBlankTap(),
+        onBox: (String id, RenderBox box) => _blankBoxes[id] = box,
+      ));
     }
 
     return PageSheet(
@@ -1218,6 +1230,26 @@ class _DocViewState extends State<DocView> {
       warnings: warnings,
       children: children,
     );
+  }
+
+  /// ★★ 点"文末那片空白" = **在文末起一行空行**（⑥ 甲；与 `Enter` 同一条路、同样会改文档）。
+  ///
+  /// 幂等：文末已经是一行空行（`…\n\n`）就只把光标放上去；末尾只有一个换行 ⇒ 补一个；
+  /// 没有换行 ⇒ 补两个。一次插入 = 一步编辑（`Ctrl+Z` 可一步回退）。
+  void _onTailBlankTap() {
+    final DocBuffer b = widget.buffer;
+    final String s = b.buf;
+    if (s.isEmpty) {
+      b.setCaret(0);
+      return;
+    }
+    final String add =
+        s.endsWith('\n\n') ? '' : (s.endsWith('\n') ? '\n' : '\n\n');
+    if (add.isEmpty) {
+      b.setCaret(s.length); // 已经有一行空行 ⇒ 只移光标（落点自动在那一行行首）
+    } else {
+      b.replace(s.length, s.length, add); // 落点自动到插入之后 = 新行行首
+    }
   }
 
   /// 上一个单元之后如果跟着**空行**，返回那个空行的起点；否则 -1。

@@ -76,11 +76,12 @@ void main() {
   testWidgets('★ 点空白 ⇒ 落到那行空行（原来点这儿什么都不发生）',
       (WidgetTester tester) async {
     final r = await _pump(tester, caret: 0);
-    // 找到空行槽（那块 gap）的矩形，点它的中心
-    final Finder slot = find.byWidgetPredicate((Widget w) =>
+    // ★ 2026-10-17（甲）：现在**每页末尾**也有一个"文末空白"槽 ⇒ 文档里通常有两个：
+    //   第一个是"块与块之间"的空行槽，最后一个是文末那个。这里点**中间那个**。
+    final Finder slots = find.byWidgetPredicate((Widget w) =>
         w.runtimeType.toString() == '_BlankSlot');
-    expect(slot, findsOneWidget, reason: '`甲` 与 `乙` 之间应当有一个空行槽');
-    final Rect box = tester.getRect(slot);
+    expect(slots, findsNWidgets(2), reason: '`甲`/`乙` 之间一个 + 文末一个');
+    final Rect box = tester.getRect(slots.first);
     expect(box.height, greaterThan(0));
     await tester.tapAt(box.center);
     await tester.pumpAndSettle();
@@ -89,15 +90,29 @@ void main() {
     //   （本用例只验"空行槽接住了点击、给出的正是空行位点"）。
   });
 
-  testWidgets('★ 相邻两行都没有空行时**不产生**空行槽（不许凭空造位点）',
+  testWidgets('★ 相邻两块之间没有空行时**不产生**中间槽（只有文末那一个）',
       (WidgetTester tester) async {
     final DocBuffer buf = DocBuffer('# 标题\n正文')..setCaret(0);
     await tester.pumpWidget(MaterialApp(
       home: Scaffold(body: SingleChildScrollView(child: DocView(buffer: buf))),
     ));
     await tester.pumpAndSettle();
-    final Finder slot = find.byWidgetPredicate((Widget w) =>
+    final Finder slots = find.byWidgetPredicate((Widget w) =>
         w.runtimeType.toString() == '_BlankSlot');
-    expect(slot, findsNothing, reason: '标题与正文之间是"块间距"，不是空行');
+    expect(slots, findsOneWidget, reason: '标题与正文之间是"块间距"，不是空行 ⇒ 只剩文末槽');
+    // 而且那个槽的落点必须是**文末**（文档没有末尾空行 ⇒ 落在 buf.length）
+    final _BlankSlotProbe probe = _BlankSlotProbe.of(tester.widget(slots));
+    expect(probe.offset, buf.length, reason: '不是文末的槽就说明"凭空造了一个位点"');
   });
+}
+
+/// 只为读 `_BlankSlot` 的私有字段（测试里不去改生产代码的可见性）
+class _BlankSlotProbe {
+  const _BlankSlotProbe(this.offset);
+  final int offset;
+
+  static _BlankSlotProbe of(Widget w) {
+    final dynamic d = w;
+    return _BlankSlotProbe(d.offset as int);
+  }
 }
