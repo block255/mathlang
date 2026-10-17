@@ -174,8 +174,14 @@ class EditViewState extends State<EditView> {
   ///
   /// ★ 这里**不碰输入设备**（不再有"回写镜像框"这一步）：
   ///   输入设备的内容由 [TextInputSurfaceController] 自己维持成"空的"。
-  void _commitText(String text) {
-    if (text.isEmpty) return;
+  void _commitText(String rawText) {
+    if (rawText.isEmpty) return;
+    // ★★ 自动分隔（2026-10-17 用户拍板）：**"命令词结不结束"不该由用户来判断**。
+    //   TeX 的控制词只由字母组成，紧跟字母会被读成一个更长的命令名（`\sin` + `x` ⇒ `\sinx`）。
+    //   ⇒ 插入字母、而光标正好停在控制词末尾时，**我们**先补一个空格（TeX 的规范分隔符）。
+    final String text = _needsCommandSeparator(_buf.buf, _buf.caret, rawText)
+        ? ' $rawText'
+        : rawText;
     // ★★ 插入侧守门人（`render/insert_guard.dart`）：
     //   ① **块级换行不许落在数学段内部**（用户实测的路径：点进分式 → `→` 到行末
     //      （其实停在"闭合 `$` 之前那一格"）→ `Enter` → `$` 被配成单数 → **整行退化成源码**）。
@@ -196,6 +202,26 @@ class EditViewState extends State<EditView> {
     });
   }
 
+  /// 插入 [insert] 之前需不需要先补一个**命令分隔符**（空格）？
+  ///
+  /// 条件：插入的是**字母**、光标前是字母、向前扫到 `\`（即光标停在控制词末尾）、
+  /// 且光标后**不是字母**（否则是"插在命令名中间"，补分隔也救不了，不去动它）。
+  bool _needsCommandSeparator(String s, int caret, String insert) {
+    if (caret <= 0 || caret > s.length) return false;
+    if (!_isLetterChar(insert[0])) return false;
+    if (!_isLetterChar(s[caret - 1])) return false;
+    if (caret < s.length && _isLetterChar(s[caret])) return false;
+    var i = caret - 1;
+    while (i >= 0 && _isLetterChar(s[i])) {
+      i--;
+    }
+    return i >= 0 && s[i] == r'\';
+  }
+
+  static bool _isLetterChar(String ch) {
+    final int c = ch.codeUnitAt(0);
+    return (c >= 0x41 && c <= 0x5A) || (c >= 0x61 && c <= 0x7A);
+  }
   /// 跑一次可能改缓冲区的操作，**只在真的改动了**的时候记一次编辑。
   ///
   /// 两条通道（文本 / 命令键）都走这里，所以 `EditViewStats.edits` 的含义是
@@ -338,7 +364,11 @@ class EditViewState extends State<EditView> {
     //     **连字母都打不出来**（用户实测）⇒ 只能**只处理空格**：自己把它落进缓冲区。
     //   ★ 顺序：上面的 `_input.isComposing` 早退保证"拼音组合中的空格"仍归输入法。
     if (k == LogicalKeyboardKey.space) {
-      _commitText(' ');
+      // ★ 2026-10-17 用户拍板：**数学段里按空格 = "我要一个空隙"** ⇒ 插 `\ `（TeX 控制空格）；
+      //   文本段里就是普通空格。这样"空格键"两边都**有可见效果**，
+      //   也不会出现"存了裸空格、渲染时被丢掉"的诡异状态（裸空格在数学里只是词法分隔符）。
+      final bool inMath = mathRegionAt(_buf.buf, _buf.caret) != null;
+      _commitText(inMath ? r'\ ' : ' ');
       return KeyEventResult.handled;
     }
     return KeyEventResult.ignored;
