@@ -90,6 +90,15 @@ double _medianGlyphHeight(List<LeafBox> boxes) {
   return hs[hs.length ~/ 2];
 }
 
+/// ★★ **行内宽容**（像素）：同一个行带里，点离某个字形水平不超过这个距离，就认作"点在它旁边"。
+///
+/// 为什么需要它（2026-10-17 用户实测）：字形盒是**精确**的、外扩只有 2px ⇒ 偏 2px 以上就从
+/// "精确到某个字"掉成 `glyphlessLanding` 的"**整个结构之前/之后**"。实测那一处：
+/// 行内 `A_n = \sum_{k=2}^n |a_k|` 的上标 `n`（盒 68.9,−3.6–80.1,7.4），
+/// **右边缘 +2px 就落到 9（= `\sum` 之前）**，只有贴边 0–2px 才落 `n` 之后。
+/// ⇒ 取半个正文汉字宽（16px 的一半）：0–8px 都能点中"旁边那个字"。
+const double kHitRowSlackPx = 8.0;
+
 /// 在 Math 控件内做命中测试。
 ///
 /// [localPos] 是相对 Math 根盒（`root`）的坐标；[tex] 是该段**渲染用的** tex。
@@ -162,6 +171,31 @@ MathHit hitTestMathTex({
         onGlyph = true;
         break;
       }
+    }
+  }
+  // ★★ **行内宽容**（2026-10-17，用户实测"上标 n 右边稍远一点就跳到 ∑ 之前"）：
+  //   竖直落在某个字形盒的带内（= **同一行**）时，取这一行**水平最近**的字形；
+  //   距离 ≤ [kHitRowSlackPx] ⇒ 认作"点在它旁边"（仍然 onGlyph ⇒ 走左/右半给端点）。
+  //   ★ 安全性：③-B 的两个既有行为都**竖直上不在任何字形带里**
+  //     （点分式右侧的装饰区 = 分数线那一带；点公式外侧留白 = 字形并集之外）⇒ 不会被这一档抢走。
+  if (hit < 0 && boxes.isNotEmpty) {
+    var slackBest = double.infinity;
+    var slackHit = -1;
+    for (var i = 0; i < boxes.length; i++) {
+      final Rect r = hitRect(i);
+      if (localPos.dy < r.top - 0.01 || localPos.dy > r.bottom + 0.01) continue;
+      final double dx = localPos.dx < r.left
+          ? r.left - localPos.dx
+          : (localPos.dx > r.right ? localPos.dx - r.right : 0);
+      if (dx < slackBest) {
+        slackBest = dx;
+        slackHit = i;
+      }
+    }
+    if (slackHit >= 0 && slackBest <= kHitRowSlackPx) {
+      hit = slackHit;
+      how = '行内宽容(${slackBest.toStringAsFixed(1)}px)';
+      onGlyph = true;
     }
   }
   if (hit < 0 && boxes.isNotEmpty) {
