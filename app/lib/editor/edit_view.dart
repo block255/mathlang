@@ -20,6 +20,7 @@ import 'package:flutter/services.dart';
 import '../core/block.dart';
 import '../core/doc_buffer.dart';
 import '../core/doc_settings.dart';
+import '../lang/smart_wrap.dart';
 import '../render/caret_sites.dart' show kCaretColorValue;
 import '../render/insert_guard.dart';
 import '../render/math_nav.dart';
@@ -38,6 +39,7 @@ class EditViewStats {
     required this.edits,
     required this.composing,
     required this.composingText,
+    this.autoWrapped = 0,
   });
 
   final int length;
@@ -48,6 +50,12 @@ class EditViewStats {
   final bool composing;
   final String composingText;
 
+  /// ★ S4-a A2：**最近一次粘贴**里"智能包裹"自动补了几处 `$…$`（打字/其它编辑会归零）。
+  ///
+  /// 为什么要有它：包裹是**编辑器替用户做的编码** ⇒ 必须可见（原则 5：可疑要可见）。
+  /// 走状态栏 = **不进正文流**（不触发重排/分页）；同时它也是 S4-a A4「诊断清单」的数据来源。
+  final int autoWrapped;
+
   @override
   bool operator ==(Object other) =>
       other is EditViewStats &&
@@ -55,14 +63,17 @@ class EditViewStats {
       other.caret == caret &&
       other.edits == edits &&
       other.composing == composing &&
-      other.composingText == composingText;
+      other.composingText == composingText &&
+      other.autoWrapped == autoWrapped;
 
   @override
-  int get hashCode => Object.hash(length, caret, edits, composing, composingText);
+  int get hashCode =>
+      Object.hash(length, caret, edits, composing, composingText, autoWrapped);
 
   @override
   String toString() => '$length 字符 · 光标 $caret · $edits 次编辑'
-      '${composing ? ' · 组合中「$composingText」' : ''}';
+      '${composing ? ' · 组合中「$composingText」' : ''}'
+      '${autoWrapped > 0 ? ' · 自动包裹 $autoWrapped 处' : ''}';
 }
 
 /// ★ 提交规则 ①：`Enter` = 新块 → 写入 `\n\n`（《块模型与md往返.md》§四 输出侧约定）
@@ -151,6 +162,10 @@ class EditViewState extends State<EditView> {
   final GlobalKey<State<StatefulWidget>> _docKey = GlobalKey<State<StatefulWidget>>();
 
   int _edits = 0;
+
+  /// ★ S4-a A2：最近一次**粘贴**里智能包裹了几处（0 = 没包裹 / 已被后续编辑清掉）
+  int _autoWrapped = 0;
+
   EditViewStats? _lastStats;
 
   /// `false` = 已经开始 dispose（此时一律不再 setState —— `mounted` 在 dispose 期间仍为 true）
@@ -209,7 +224,7 @@ class EditViewState extends State<EditView> {
   ///
   /// ★ 这里**不碰输入设备**（不再有"回写镜像框"这一步）：
   ///   输入设备的内容由 [TextInputSurfaceController] 自己维持成"空的"。
-  void _commitText(String rawText) {
+  void _commitText(String rawText, {int autoWrapped = 0}) {
     if (rawText.isEmpty) return;
     // ★★ 自动分隔（2026-10-17 用户拍板）：**"命令词结不结束"不该由用户来判断**。
     //   TeX 的控制词只由字母组成，紧跟字母会被读成一个更长的命令名（`\sin` + `x` ⇒ `\sinx`）。
@@ -237,6 +252,7 @@ class EditViewState extends State<EditView> {
       final String payload = pad.wrap(text);
       _mutate(() =>
           _buf.replace(_buf.selectionStart, _buf.selectionEnd, payload));
+      _stampWrapped(autoWrapped);
       return;
     }
     final InsertPlan plan = planInsert(_buf.buf, _buf.caret, text);
@@ -250,6 +266,14 @@ class EditViewState extends State<EditView> {
       if (_buf.caret != plan.offset) _buf.setCaret(plan.offset);
       _buf.insertText(plan.padText(text));
     });
+    _stampWrapped(autoWrapped);
+  }
+
+  /// 记下"这次粘贴自动包裹了几处"并补一次上报（`_mutate` 会把计数清零 ⇒ 必须**之后**再盖上去）。
+  void _stampWrapped(int n) {
+    if (n <= 0) return;
+    _autoWrapped = n;
+    if (mounted) _emitStats();
   }
 
   /// 插入 [insert] 之前需不需要先补一个**命令分隔符**（空格）？
@@ -284,6 +308,8 @@ class EditViewState extends State<EditView> {
     op();
     if (identical(before, _buf.buf)) return;
     _edits++;
+    // ★ 任何一次**普通**编辑都把"上次粘贴的包裹计数"清掉（它只描述**最近一次粘贴**）
+    _autoWrapped = 0;
     if (mounted) _emitStats();
   }
 
@@ -548,6 +574,7 @@ class EditViewState extends State<EditView> {
       edits: _edits,
       composing: _input.isComposing,
       composingText: _input.composingText,
+      autoWrapped: _autoWrapped,
     );
     if (_lastStats == s) return;
     _lastStats = s;
@@ -705,12 +732,28 @@ class EditViewState extends State<EditView> {
       ? _buf.buf.substring(_buf.selectionStart, _buf.selectionEnd)
       : '';
 
-  /// 粘贴：读剪贴板 → 走**同一条**提交链（`_commitText`，含选区替换与结构守门）
+  /// 粘贴：读剪贴板 → **智能包裹** → 走**同一条**提交链（含选区替换与结构守门）
+  ///
+  /// ★ S4-a A2：**只在粘贴/导入这条入口跑智能包裹**，`updateEditingValue`（打字 / 中文 IME 提交）
+  ///   **不跑** —— IME 一次提交一个词，跑包裹会把正常中文误伤成公式。
   Future<void> _pasteFromClipboard() async {
     final ClipboardData? d = await Clipboard.getData(Clipboard.kTextPlain);
     final String text = d?.text ?? '';
     if (text.isEmpty) return;
-    _commitText(text);
+    pasteText(text);
+  }
+
+  /// ★★ 粘贴入口（`Ctrl+V` / 右键粘贴 / 未来的**导入**共用）——**智能包裹 ＋ 同一条提交链**。
+  ///
+  /// 顺序要紧：**先包裹、再算落点** —— 包裹出来的 `$…$` 仍是单行内联，
+  /// 所以 `planInsert` 的 ③④⑤（围栏行不可落 / 整行语法补边界 / `$` 不许粘连）对**包裹后**的文本照样生效。
+  ///
+  /// ★ 一次语义动作 = **一次 `_mutate`** ⇒ 包裹 + 插入 + 补行边界合起来**一步撤销**。
+  @visibleForTesting
+  void pasteText(String raw) {
+    final SmartWrapPlan plan = planSmartWrap(raw);
+    final String text = plan.isEmpty ? raw : applySmartWrap(raw, plan);
+    _commitText(text, autoWrapped: plan.runs.length);
   }
 
   void _pushCaretToInput() {

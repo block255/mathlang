@@ -896,4 +896,89 @@ $$
           reason: r'★ 围栏行不许被撑长（`$$第一行` 就不再是围栏了）');
     });
   });
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // ★★ S4-a · A2：粘贴入口 = **智能包裹** ＋ 同一条提交链（2026-10-17）
+  //    口径（用户拍板）：只产出**行内** `$…$`（整行显示块留给 S4-b 的面板/用户断块）；
+  //    只在粘贴/导入入口跑（IME 提交不跑）；包裹计数走**状态栏**（不进正文流）。
+  // ══════════════════════════════════════════════════════════════════════════
+  group('★★ S4-a A2：粘贴 = 智能包裹 ＋ 一次编辑', () {
+    const String raw = '1. A_n 是递增的，所以它收敛。\n'
+        '2. 比如 a_n = (-1)^n 有界但发散。\n'
+        '这题用 Cauchy Criterion 就行。';
+
+    testWidgets('裸 LaTeX 被包成 `\$…\$`、纯英文短语不包、**只记一次编辑**',
+        (WidgetTester tester) async {
+      final DocBuffer buf = DocBuffer('前言\n');
+      EditViewStats? last;
+      final EditViewState st = await _mount(tester, buf, onStats: (EditViewStats s) => last = s);
+      buf.setCaret(buf.length);
+      await tester.pump();
+
+      st.pasteText(raw); // ← 真实粘贴入口（Ctrl+V 走的就是这里）
+      await tester.pump();
+
+      expect(buf.buf.contains(r'$A_n$'), isTrue, reason: buf.buf);
+      expect(buf.buf.contains(r'$a_n = (-1)^n$'), isTrue, reason: buf.buf);
+      expect(buf.buf.contains(r'Cauchy Criterion'), isTrue,
+          reason: '★ 纯英文短语绝不许被包成公式（保守优先）');
+      expect(last?.edits, 1, reason: '★ 包裹 + 插入 + 补行边界 = **同一次编辑**');
+      expect(last?.autoWrapped, greaterThanOrEqualTo(2),
+          reason: '★ 状态栏要能报"自动包裹 N 处"（原则 5：可疑要可见）');
+      expect(find.textContaining(r'$A_n$'), findsNothing,
+          reason: r'★ 画面上不许出现 `$` 编码（原则 1）');
+      expect(find.textContaining('❌'), findsNothing);
+    });
+
+    testWidgets('★ `Ctrl+Z` **一步**回到粘贴前的纯文本', (WidgetTester tester) async {
+      const String before = '前言\n';
+      final DocBuffer buf = DocBuffer(before);
+      final EditViewState st = await _mount(tester, buf);
+      buf.setCaret(buf.length);
+      await tester.pump();
+
+      st.pasteText(raw);
+      await tester.pump();
+      expect(buf.buf, isNot(before));
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyZ);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pump();
+
+      expect(buf.buf, before, reason: '★ 粘贴必须是一步撤销（不许要按多次）');
+    });
+
+    testWidgets('粘贴里**已经带 `\$` / `\$\$`** 的文本 ⇒ 不重复包裹，且行边界规则照旧',
+        (WidgetTester tester) async {
+      const String src = '前文 甲乙丙 后文';
+      final DocBuffer buf = DocBuffer(src);
+      final EditViewState st = await _mount(tester, buf);
+      buf.setCaret(5);
+      await tester.pump();
+
+      st.pasteText('\$\$\nx=1\n\$\$'); // 自带围栏：包裹阶段会跳过，剩下的是行边界 ③④⑤
+      await tester.pump();
+
+      expect(buf.buf, '前文 甲乙\n\$\$\nx=1\n\$\$\n丙 后文',
+          reason: '★ 智能包裹不许动已有的 `\$\$` 块；行边界仍由 insert_guard 负责');
+      final BlockIndex idx = BlockIndex.parse(buf.buf);
+      expect(idx.blocks.where((Block b) => b.type == BlockType.math).length, 1);
+    });
+
+    testWidgets('纯英文长句粘贴 ⇒ 一处都不包（不产生 `\$`）', (WidgetTester tester) async {
+      const String english = '答案是你之前学过的利器：Cauchy Criterion。';
+      final DocBuffer buf = DocBuffer('');
+      EditViewStats? last;
+      final EditViewState st = await _mount(tester, buf, onStats: (EditViewStats s) => last = s);
+      buf.setCaret(0);
+      await tester.pump();
+
+      st.pasteText(english);
+      await tester.pump();
+
+      expect(buf.buf.contains(r'$'), isFalse, reason: buf.buf);
+      expect(last?.autoWrapped ?? 0, 0);
+    });
+  });
 }
