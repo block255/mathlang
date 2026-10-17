@@ -521,7 +521,32 @@ class DocViewState extends State<DocView> {
       if (!(Offset.zero & box.size).contains(box.globalToLocal(global))) continue;
       return _offsetAt(u, box, global);
     }
-    return null; // 页边/空白空隙 ⇒ 拖选不动（视觉上"拖到这儿就停了"）
+    // ★★ 2026-10-17 用户实测：**单行内**拖选会少最后一个字符（跨行没事）。
+    //   原因：拖到行末时指针已经出了该单元的盒子（盒子只有文字的宽度）⇒ 这里返回 null
+    //   ⇒ 落点停在"上一个还命中的位置"，最后一个字就选不上。
+    //   ⇒ 退路：按**竖直位置**找最近的那一行；在它右半边就落到**行末**，左半边就落到**行首**。
+    _Unit? near;
+    var bestDy = double.infinity;
+    for (final _Unit u in _units) {
+      final RenderBox? box = _unitBoxes[u.id];
+      if (box == null || !box.hasSize) continue;
+      final Offset topLeft = box.localToGlobal(Offset.zero);
+      final double dy = global.dy < topLeft.dy
+          ? topLeft.dy - global.dy
+          : (global.dy > topLeft.dy + box.size.height
+              ? global.dy - (topLeft.dy + box.size.height)
+              : 0);
+      if (dy < bestDy) {
+        bestDy = dy;
+        near = u;
+      }
+    }
+    if (near == null) return null;
+    final RenderBox? nb = _unitBoxes[near.id];
+    if (nb == null) return null;
+    final Offset tl = nb.localToGlobal(Offset.zero);
+    final bool right = global.dx >= tl.dx + nb.size.width / 2;
+    return near.renderBase + (right ? near.renderLength : 0);
   }
 
   /// 命中计算本体（[ro] 是单元盒或公式盒）

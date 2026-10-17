@@ -182,6 +182,22 @@ void main() {
     expect(buf.undo(), isTrue);
     expect(buf.buf, '甲乙丙丁', reason: '一次撤销就该回来');
   });
+  testWidgets('★★ 单行内拖到**行尾之外** ⇒ 整行都选中（用户实测：会少最后一个字）',
+      (WidgetTester tester) async {
+    final DocBuffer buf = await _pump(tester, '甲乙丙丁戊己');
+    final Rect r = tester.getRect(find.textContaining('甲乙丙丁戊己').first);
+    final TestGesture g = await tester.startGesture(r.centerLeft + const Offset(3, 0));
+    await g.moveBy(const Offset(4, 0));
+    await tester.pump();
+    // 拖到**文字右侧很远**（已经出了这个单元的盒子）
+    await g.moveTo(r.centerRight + const Offset(40, 0));
+    await tester.pump();
+    await g.up();
+    await tester.pumpAndSettle();
+    expect(buf.hasSelection, isTrue);
+    expect(buf.selectionEnd, buf.length,
+        reason: '拖出行尾也要落到**行末**（改前会停在最后一个字之前）');
+  });
   testWidgets('★ 退格：有选区 ⇒ 只删那一段', (WidgetTester tester) async {
     final DocBuffer buf = await _pump(tester, '甲乙丙丁', a: 1, b: 3);
     await tester.tap(find.textContaining('甲').first); // 取焦点
