@@ -725,13 +725,16 @@ class DocViewState extends State<DocView> {
     //   ⇒ 只有"光标所在那一行"被重建、高亮消失，其余行的高亮**留着不动**。
     final ({int from, int to})? sel = _localSelFor(u);
     final String selKey = sel == null ? '' : '#s${sel.from}-${sel.to}';
-    if (rel == null) return '${u.contentKey}$selKey';
+    // 光标这一帧画不画（闪烁相位 / 失焦）也必须进键：否则单元从池里拿回旧 widget，
+    // 相位变了也不重画 ⇒ 看起来就是光标一直静态不闪、点完有时不出现。
+    final String caretKey = widget.caretVisible ? '#b1' : '#b0';
+    if (rel == null) return '${u.contentKey}$selKey$caretKey';
     // ★ 组合态也要进键：拼音变化会改变"含光标那个单元"的 widget 内容，
     //   不进键就会从池里拿回上一帧的旧拼音（叠字/不刷新）。
     final String comp = _composingFor(u, rel).isEmpty
         ? ''
         : '#k${_composingFor(u, rel).hashCode}';
-    return '${u.contentKey}#c$rel$comp$selKey';
+    return '${u.contentKey}#c$rel$comp$selKey$caretKey';
   }
 
   /// 这个单元要不要接组合串（**只给含光标的那一个单元，且行间公式块不接**）。
@@ -1228,7 +1231,7 @@ class DocViewState extends State<DocView> {
             id: 'blank@$blankOffset',
             height: gap,
             offset: blankOffset,
-            caretHere: _caret == blankOffset,
+            caretHere: !widget.hideCaretAndSelection && _caret == blankOffset,
             caretHeight: textCaretHeight(_s.bodyFontSize),
             caretWidth: 1.5,
             caretColor: const Color(kCaretColorValue),
@@ -1278,7 +1281,10 @@ class DocViewState extends State<DocView> {
         //   插入 `\n\n` 之后缓冲区是 `…\n\n`，**光标落在 after + 1**（末尾那行空行的行首），
         //   而空行的**起点**是 `after` ⇒ 原来 `_caret == after` 永远不成立 ⇒ 一根竖条都不画。
         //   ⇒ 文末槽只要是"光标停在末尾那片空白里"就画。
-        caretHere: after >= 0 && (_caret ?? -1) >= after,
+        caretHere: !widget.hideCaretAndSelection &&
+            widget.caretVisible &&
+            after >= 0 &&
+            (_caret ?? -1) >= after,
         caretHeight: textCaretHeight(_s.bodyFontSize),
         caretWidth: 1.5,
         caretColor: const Color(kCaretColorValue),

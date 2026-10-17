@@ -299,6 +299,15 @@ class EditViewState extends State<EditView> {
     }
   }
 
+  /// 光标移动/点击/打字后调用：把闪烁相位复位成亮，并重启计时。
+  /// 否则点击可能正好落在"灭"的半周期里 ⇒ 光标最长 530 ms 不出现（用户实测时好时坏）。
+  void _pokeBlink() {
+    if (!mounted || !_focus.hasFocus) return;
+    if (!_blinkOn) {
+      setState(() => _blinkOn = true);
+    }
+    _startBlink();
+  }
   void _startBlink() {
     _blink?.cancel();
     if (mounted && !_blinkOn) setState(() => _blinkOn = true);
@@ -496,6 +505,7 @@ class EditViewState extends State<EditView> {
 
   void _onBufferChanged() {
     if (!_alive) return;
+    _pokeBlink();
     _emitStats();
     if (mounted) setState(() {});
   }
@@ -560,6 +570,7 @@ class EditViewState extends State<EditView> {
   /// 指针**按下**落在某个偏移上（DocView 命中后回吐）—— 决定这次是"点击"还是"连击"
   void _onPressHit(int offset) {
     _pressHit = true;
+    _pokeBlink();
     final Offset? pos = _pressAt;
     final DateTime now = DateTime.now();
     final bool sameSpot =
@@ -625,8 +636,13 @@ class EditViewState extends State<EditView> {
   /// 滚动速度按"离边缘多近"线性加速；滚完立刻重算落点。
   void _maybeAutoScroll(Offset pos, int anchor) {
     final ScrollableState? sc = Scrollable.maybeOf(context);
-    final RenderBox? box = context.findRenderObject() as RenderBox?;
-    if (sc == null || box == null || !box.hasSize) return;
+    if (sc == null) return;
+    // ★★ 用**视口**的盒子，不是本 widget 的盒子！
+    //   本 widget（EditView）的高度是**整篇内容**（一千多像素），拿它当参照
+    //   ⇒ 只有把指针拖到内容最底部才会触发 ⇒ 可视区里永远不滚（用户实测没反应）。
+    final RenderObject? vpRo = sc.context.findRenderObject();
+    if (vpRo is! RenderBox || !vpRo.hasSize) return;
+    final RenderBox box = vpRo;
     final Offset local = box.globalToLocal(pos);
     // 感应带跟着字号走（不写死像素）：约 3 行字高
     final double edge = widget.settings.bodyFontSize * 3;
@@ -657,7 +673,12 @@ class EditViewState extends State<EditView> {
     });
   }
 
-  void _endDrag() {
+  void _endDrag(Offset? upAt) {
+    // 用户实测：一行内拖选会少最后一个字符 —— 浏览器会合并/丢掉最后的 pointerMove，
+    // 原来只在 move 里求落点 ⇒ 松手位置没被算进去。这里用松手坐标再求一次。
+    if (_dragging && upAt != null && _dragAnchor != null) {
+      _applyDragAt(upAt, _dragAnchor!);
+    }
     // ★★ 用户实测："点了别的地方，选区没取消" —— 点在**页边 / 块间空隙**这类
     //   "没有任何单元命中"的地方时，`onTapOffset` 根本不会触发，选区就一直留着。
     //   标准编辑器行为：点页面里的空白也要**收起选区**。⇒ 没命中且没拖 ⇒ 折叠到当前光标。
@@ -722,8 +743,8 @@ class EditViewState extends State<EditView> {
               _pressHit = false;
             },
             onPointerMove: (PointerMoveEvent e) => _onDragMove(e.position),
-            onPointerUp: (_) => _endDrag(),
-            onPointerCancel: (_) => _endDrag(),
+            onPointerUp: (PointerUpEvent e) => _endDrag(e.position),
+            onPointerCancel: (_) => _endDrag(null),
             child: DocView(
               key: _docKey,
               buffer: widget.buffer,
@@ -737,7 +758,9 @@ class EditViewState extends State<EditView> {
               composingText: _caretInMathBlock ? '' : _input.composingText,
               // ★ ⑤ 失焦不画光标与选区；聚焦时按 530 ms 闪烁
               hideCaretAndSelection: _blurred,
-              caretVisible: !_blurred && (_focus.hasFocus ? _blinkOn : true),
+              caretVisible: !_blurred &&
+                  !_buf.hasSelection &&
+                  (_focus.hasFocus ? _blinkOn : true),
             ),
           ),
 
