@@ -28,6 +28,9 @@ enum AutoExpandKind {
 
   /// 缩写（`>=` ⇒ `\ge`）
   shorthand,
+
+  /// `^` / `_` ⇒ 上下标（基座 = 光标前的可见原子；2026-10-18）
+  script,
 }
 
 /// 一次自动展开：**先把源区间 `[from, caret)` 删掉，再在那里插入 [tex]**。
@@ -121,6 +124,12 @@ AutoExpand? planAutoExpand({
     return _planFraction(doc, c);
   }
 
+  // ---------- ①b `^` / `_` → 上下标（2026-10-18 用户实测：原来只是插了个字符）----------
+  //   ★ 与 `/` 同一条思路：**基座 = 光标前那个可见原子**；在正文里则把基座包进 `$…$`。
+  if (typed == '^' || typed == '_') {
+    return _planScript(doc, c, typed);
+  }
+
   // ---------- ② 词触发（需要终止符）----------
   if (wordTriggers) {
     final bool isSpace = typed == ' ';
@@ -159,6 +168,47 @@ AutoExpand? planAutoExpand({
 ///
 /// ★ 公式里用 `lexVisibleAtoms` 的源区间（它跳过 `{` `}` `^` `_` `&` 这些**语法字符**），
 ///   所以"抽走分子"永远不会留下半个花括号 —— 这条是文档不被弄坏的关键。
+/// `^` / `_` ⇒ 上下标（基座 = 光标前那个可见原子 / 一个字符）。
+///
+/// ★ 与 [_planFraction] 同一条判据：公式里用 `lexVisibleAtoms` 的源区间，
+///   所以抽走基座不会留下半个花括号；正文里则把基座包进 `$…$`（同权：数学由内容产生）。
+/// ★ 空槽由 `firstSlotOffset` 定位 ⇒ 光标自动落进 `^{}` / `_{}` 里。
+AutoExpand? _planScript(String doc, int caret, String mark) {
+  if (caret <= 0) return null;
+  final MathRegion? r = mathRegionAt(doc, caret);
+  if (r != null) {
+    final int contentStart = r.contentStart;
+    final int rel = (caret - contentStart).clamp(0, r.tex.length);
+    VisibleAtom? last;
+    for (final VisibleAtom a in lexVisibleAtoms(r.tex)) {
+      if (a.kind == 'tail' || a.kind == 'slotpad' || a.kind == 'pad') continue;
+      if (a.end > rel) break;
+      last = a;
+    }
+    if (last == null || last.length == 0) return null;
+    final String base = r.tex.substring(last.start, last.end);
+    return AutoExpand(
+      from: contentStart + last.start,
+      caret: caret,
+      tex: '$base$mark{}',
+      kind: AutoExpandKind.script,
+      template: true,
+      matched: mark,
+    );
+  }
+    // 正文里：光标前那一个字符当基座（`$…$` 由编辑层按模板统一包，别在这里自己加）
+    final String prev = doc[caret - 1];
+    if (!_isNumeratorChar(prev)) return null;
+    return AutoExpand(
+      from: caret - 1,
+      caret: caret,
+      tex: '$prev$mark{}',
+      kind: AutoExpandKind.script,
+      template: true,
+      matched: mark,
+    );
+}
+
 AutoExpand? _planFraction(String doc, int caret) {
   if (caret <= 0) return null;
   final MathRegion? r = mathRegionAt(doc, caret);
