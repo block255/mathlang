@@ -61,6 +61,9 @@ class AppSettings {
     this.fitWidthOnPhone = true,
     this.showEmptySuggestions = true,
     this.showCellLabels = true,
+    this.autoSlashFraction = true,
+    this.autoWordTriggers = true,
+    this.autoShorthand = true,
   });
 
   /// ★ 页面在**可用空间**里的归一化位置：`0` 贴左 · `0.5` 居中 · `1` 贴右
@@ -104,6 +107,18 @@ class AppSettings {
   /// 面板格子里显不显示中文名（关掉 ⇒ 格子更大、不再被截字）
   final bool showCellLabels;
 
+  /// ★★ S4-c：**`/` → 分式**（Word 的 Autoformat 同款）。
+  ///
+  /// 默认**开**（《S4》§C2 把它列在默认表里，且用户明确"不加护栏、不想用就去设置里关"）。
+  /// 关掉 ⇒ `/` 就是普通斜杠字符。
+  final bool autoSlashFraction;
+
+  /// ★★ S4-c：**词触发**（`sqrt` + 空格/Tab ⇒ `\sqrt{}`）。关掉 ⇒ 只打字母。
+  final bool autoWordTriggers;
+
+  /// ★★ S4-c：**缩写**（`>=` `<=` `!=` `+-` `->` ⇒ `\ge` `\le` `\ne` `\pm` `\to`）。
+  final bool autoShorthand;
+
   /// 手机默认值：状态栏隐藏、面板覆盖
   static const AppSettings forPhone = AppSettings(
     panelMode: PanelMode.overlay,
@@ -146,6 +161,9 @@ class AppSettings {
     bool? fitWidthOnPhone,
     bool? showEmptySuggestions,
     bool? showCellLabels,
+    bool? autoSlashFraction,
+    bool? autoWordTriggers,
+    bool? autoShorthand,
   }) =>
       AppSettings(
         pageXDock: pageXDock ?? this.pageXDock,
@@ -161,6 +179,9 @@ class AppSettings {
         fitWidthOnPhone: fitWidthOnPhone ?? this.fitWidthOnPhone,
         showEmptySuggestions: showEmptySuggestions ?? this.showEmptySuggestions,
         showCellLabels: showCellLabels ?? this.showCellLabels,
+        autoSlashFraction: autoSlashFraction ?? this.autoSlashFraction,
+        autoWordTriggers: autoWordTriggers ?? this.autoWordTriggers,
+        autoShorthand: autoShorthand ?? this.autoShorthand,
       );
 
   /// 实际生效的面板形态（把 [autoPanelMode] 与窗口宽算进来）

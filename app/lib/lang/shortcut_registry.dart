@@ -3,9 +3,11 @@
 // 规格：《快捷键系统.md》§二（默认绑定）· §3.1（浏览器独占键）· §四（持久化草案）。
 //
 // ★★ 本文件存在的**唯一理由**：让设置页"说实话"。
-//   规格里有 39 条默认绑定，而 2026-10-17 代码里**真正接上的只有 17 条**
-//   （`edit_view.dart` 里一句 `if (kb.isAltPressed) return ignored;` 就是证据——
-//    整套 `Alt+=` / `Ctrl+Alt+*` 还没接，那是 S4-c 的活）。
+//   规格里有 39 条默认绑定；2026-10-17 代码里真正接上的只有 17 条，b2-② 之后 23 条。
+//   ★ **2026-10-18（S4-c）**：整套 `Ctrl+Alt+*` / `Ctrl+↑↓` / `Ctrl+1..3` / `Ctrl+Shift+7..9` /
+//     `Ctrl+Enter` / `Alt+=` 全部接线 ⇒ **只剩 `sourceView`（S5）未接入**。
+//   接线方式由外壳 `editor_page.dart` 的 `_actionForKey` 统一匹配本表（**用户改键即刻生效**）
+//   ⇒ "已接入"不再是一句声明，而是"真的按这张表匹配"的事实。
 //   ⇒ 每条都带 [ShortcutStatus]，未接入的**可以改键**（存偏好），但界面上必须写明白。
 //
 // 三条规矩（用户 2026-10-17 确认过的边界）：
@@ -171,29 +173,29 @@ const List<ShortcutAction> kShortcutActions = <ShortcutAction>[
   // ---------------- 结构类 ----------------
   ShortcutAction(id: 'newblock', name: '新块', group: '结构类', combo: 'Enter', status: ShortcutStatus.wired),
   ShortcutAction(id: 'blockNewline', name: '块内换行', group: '结构类', combo: 'Shift+Enter', status: ShortcutStatus.wired),
-  ShortcutAction(id: 'h1', name: '标题 1（再按回正文）', group: '结构类', combo: 'Ctrl+1', status: ShortcutStatus.planned, note: 'S4-c'),
-  ShortcutAction(id: 'h2', name: '标题 2', group: '结构类', combo: 'Ctrl+2', status: ShortcutStatus.planned, note: 'S4-c'),
-  ShortcutAction(id: 'h3', name: '标题 3', group: '结构类', combo: 'Ctrl+3', status: ShortcutStatus.planned, note: 'S4-c'),
-  ShortcutAction(id: 'ol', name: '有序列表', group: '结构类', combo: 'Ctrl+Shift+7', status: ShortcutStatus.planned, note: 'S4-c'),
-  ShortcutAction(id: 'ul', name: '无序列表', group: '结构类', combo: 'Ctrl+Shift+8', status: ShortcutStatus.planned, note: 'S4-c'),
-  ShortcutAction(id: 'quote', name: '引用块', group: '结构类', combo: 'Ctrl+Shift+9', status: ShortcutStatus.planned, note: 'S4-c'),
-  ShortcutAction(id: 'codeblock', name: '代码块', group: '结构类', combo: 'Ctrl+Alt+C', status: ShortcutStatus.planned, note: 'S4-c'),
-  ShortcutAction(id: 'pagebreak', name: '插入分页符', group: '结构类', combo: 'Ctrl+Enter', status: ShortcutStatus.planned, note: 'S4-c'),
+  ShortcutAction(id: 'h1', name: '标题 1（再按回正文）', group: '结构类', combo: 'Ctrl+1', status: ShortcutStatus.wired),
+  ShortcutAction(id: 'h2', name: '标题 2', group: '结构类', combo: 'Ctrl+2', status: ShortcutStatus.wired),
+  ShortcutAction(id: 'h3', name: '标题 3', group: '结构类', combo: 'Ctrl+3', status: ShortcutStatus.wired),
+  ShortcutAction(id: 'ol', name: '有序列表', group: '结构类', combo: 'Ctrl+Shift+7', status: ShortcutStatus.wired),
+  ShortcutAction(id: 'ul', name: '无序列表', group: '结构类', combo: 'Ctrl+Shift+8', status: ShortcutStatus.wired),
+  ShortcutAction(id: 'quote', name: '引用块', group: '结构类', combo: 'Ctrl+Shift+9', status: ShortcutStatus.wired),
+  ShortcutAction(id: 'codeblock', name: '代码块', group: '结构类', combo: 'Ctrl+Alt+C', status: ShortcutStatus.wired),
+  ShortcutAction(id: 'pagebreak', name: '插入分页符', group: '结构类', combo: 'Ctrl+Enter', status: ShortcutStatus.wired),
 
   // ---------------- 数学类 ----------------
-  ShortcutAction(id: 'mathInline', name: '行内公式', group: '数学类', combo: 'Alt+=', status: ShortcutStatus.planned, note: 'S4-c（Word 通用键）'),
-  ShortcutAction(id: 'mathDisplay', name: '行间公式', group: '数学类', combo: 'Ctrl+Alt+E', status: ShortcutStatus.planned, note: 'S4-c'),
-  ShortcutAction(id: 'frac', name: '分式', group: '数学类', combo: 'Ctrl+Alt+F', status: ShortcutStatus.planned, note: 'S4-c'),
-  ShortcutAction(id: 'sqrt', name: '根号', group: '数学类', combo: 'Ctrl+Alt+R', status: ShortcutStatus.planned, note: 'S4-c'),
-  ShortcutAction(id: 'sup', name: '上标', group: '数学类', combo: 'Ctrl+ArrowUp', status: ShortcutStatus.planned, note: 'S4-c'),
-  ShortcutAction(id: 'sub', name: '下标', group: '数学类', combo: 'Ctrl+ArrowDown', status: ShortcutStatus.planned, note: 'S4-c'),
-  ShortcutAction(id: 'integral', name: '积分', group: '数学类', combo: 'Ctrl+Alt+I', status: ShortcutStatus.planned, note: 'S4-c'),
-  ShortcutAction(id: 'summ', name: '求和', group: '数学类', combo: 'Ctrl+Alt+S', status: ShortcutStatus.planned, note: 'S4-c'),
-  ShortcutAction(id: 'limit', name: '极限', group: '数学类', combo: 'Ctrl+Alt+L', status: ShortcutStatus.planned, note: 'S4-c'),
-  ShortcutAction(id: 'aligned', name: '对齐推导模板', group: '数学类', combo: 'Ctrl+Alt+A', status: ShortcutStatus.planned, note: 'S4-c'),
-  ShortcutAction(id: 'cases', name: '分段函数模板', group: '数学类', combo: 'Ctrl+Alt+T', status: ShortcutStatus.planned, note: 'S4-c'),
-  ShortcutAction(id: 'pmatrix', name: '矩阵模板', group: '数学类', combo: 'Ctrl+Alt+X', status: ShortcutStatus.planned, note: 'S4-c'),
-  ShortcutAction(id: 'binom', name: '组合数', group: '数学类', combo: 'Ctrl+Alt+B', status: ShortcutStatus.planned, note: 'S4-c'),
+  ShortcutAction(id: 'mathInline', name: '行内公式', group: '数学类', combo: 'Alt+=', status: ShortcutStatus.wired, note: 'Word / OneNote 通行键'),
+  ShortcutAction(id: 'mathDisplay', name: '行间公式', group: '数学类', combo: 'Ctrl+Alt+E', status: ShortcutStatus.wired),
+  ShortcutAction(id: 'frac', name: '分式', group: '数学类', combo: 'Ctrl+Alt+F', status: ShortcutStatus.wired),
+  ShortcutAction(id: 'sqrt', name: '根号', group: '数学类', combo: 'Ctrl+Alt+R', status: ShortcutStatus.wired),
+  ShortcutAction(id: 'sup', name: '上标', group: '数学类', combo: 'Ctrl+ArrowUp', status: ShortcutStatus.wired),
+  ShortcutAction(id: 'sub', name: '下标', group: '数学类', combo: 'Ctrl+ArrowDown', status: ShortcutStatus.wired),
+  ShortcutAction(id: 'integral', name: '积分', group: '数学类', combo: 'Ctrl+Alt+I', status: ShortcutStatus.wired),
+  ShortcutAction(id: 'summ', name: '求和', group: '数学类', combo: 'Ctrl+Alt+S', status: ShortcutStatus.wired),
+  ShortcutAction(id: 'limit', name: '极限', group: '数学类', combo: 'Ctrl+Alt+L', status: ShortcutStatus.wired),
+  ShortcutAction(id: 'aligned', name: '对齐推导模板', group: '数学类', combo: 'Ctrl+Alt+A', status: ShortcutStatus.wired),
+  ShortcutAction(id: 'cases', name: '分段函数模板', group: '数学类', combo: 'Ctrl+Alt+T', status: ShortcutStatus.wired),
+  ShortcutAction(id: 'pmatrix', name: '矩阵模板', group: '数学类', combo: 'Ctrl+Alt+X', status: ShortcutStatus.wired),
+  ShortcutAction(id: 'binom', name: '组合数', group: '数学类', combo: 'Ctrl+Alt+B', status: ShortcutStatus.wired),
 
   // ---------------- 结构内（公式里） ----------------
   ShortcutAction(id: 'slotNext', name: '下一个槽', group: '结构内', combo: 'Tab', status: ShortcutStatus.wired),

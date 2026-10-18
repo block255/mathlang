@@ -22,6 +22,9 @@
 //   第 N+1 帧：读到新高度 → 重跑分页 → 页边界落定
 // 也就是说**打字零延迟，分页晚一帧**。
 
+import 'dart:typed_data';
+import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_math_fork/flutter_math.dart';
@@ -390,6 +393,55 @@ class DocViewState extends State<DocView> {
   int get measurePoolSize => _measurePool.size;
   int get renderPoolSize => _renderPool.size;
   int get pageCount => _layout?.pageCount ?? 0;
+
+  /// ★★ S4-d③：每页那张 `RepaintBoundary` 的句柄（图片集 / 图片式 PDF 抓的就是它）
+  final List<GlobalKey> _sheetKeys = <GlobalKey>[];
+
+  /// 取第 [p] 页的 key（按需增长；页数减少时**不缩短**，避免正在抓的时候 key 被换掉）
+  GlobalKey _sheetKeyOf(int p) {
+    while (_sheetKeys.length <= p) {
+      _sheetKeys.add(GlobalKey(debugLabel: 'page-${_sheetKeys.length + 1}'));
+    }
+    return _sheetKeys[p];
+  }
+
+  /// 第 [p] 页的绘制边界（**同步**取；单独抽出来是为了不跨 `await` 使用 `BuildContext`）
+  RenderRepaintBoundary? _boundaryOf(int p) {
+    if (p < 0 || p >= _sheetKeys.length) return null;
+    final BuildContext? ctx = _sheetKeys[p].currentContext;
+    if (ctx == null) return null;
+    final RenderObject? ro = ctx.findRenderObject();
+    return ro is RenderRepaintBoundary ? ro : null;
+  }
+
+  /// ★★ S4-d③：把**每一页**抓成 PNG 字节。
+  ///
+  /// 原则 4：抓的就是屏幕上那棵 `PageSheet` 子树（所见即所得），所以"图片集 / PDF"不另写排版。
+  /// [pixelRatio] 默认 2×（= 96 dpi × 2 ⇒ 打印也够用；一页 ≈ 1588 × 2246）。
+  ///
+  /// 返回的列表长度 = **实际抓到的页数**（某一页还没上屏时会少，调用方按需报错）。
+  ///
+  /// ★★ 用 `toImageSync` 而不是 `await toImage`：后者在"这一帧还没画"时会
+  ///   **等下一帧**，而调用方（导出按钮 / 测试）并不一定在出帧 —— 实测会把整个流程挂死。
+  ///   `toImageSync` 取的是**上一次画好的那一层**，正是"所见即所得"要的东西。
+  Future<List<Uint8List>> capturePages({double pixelRatio = 2.0}) async {
+    final int n = pageCount;
+    final List<Uint8List> out = <Uint8List>[];
+    for (var p = 0; p < n; p++) {
+      final RenderRepaintBoundary? ro = _boundaryOf(p);
+      // 还没画过的页跳过（真机上点导出时页面早就画好了；跳过比永远等下去强）
+      if (ro == null || ro.debugNeedsPaint) continue;
+      final ui.Image img = ro.toImageSync(pixelRatio: pixelRatio);
+      try {
+        final ByteData? bd =
+            await img.toByteData(format: ui.ImageByteFormat.png);
+        if (bd != null) out.add(bd.buffer.asUint8List());
+      } finally {
+        img.dispose();
+      }
+    }
+    return out;
+  }
 
   /// 本帧的光标（绝对偏移）—— S3-2
   int? _caret;
@@ -1345,6 +1397,8 @@ class DocViewState extends State<DocView> {
       pageNumber: p + 1,
       pageCount: layout.pageCount,
       warnings: warnings,
+      // ★ S4-d③：图片集 / 图片式 PDF 的抓取点（同一棵子树 = 同一张图）
+      sheetKey: _sheetKeyOf(p),
       children: children,
     );
   }

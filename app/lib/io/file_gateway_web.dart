@@ -3,6 +3,8 @@
 // ★ 这里**不许**出现 `dart:io`（web 编译会直接失败）：
 //   打开 = `<input type=file>`（file_picker 的 web 实现），保存 = 触发浏览器下载。
 
+import 'dart:typed_data';
+
 import 'package:file_picker/file_picker.dart';
 
 import '../core/document_file.dart';
@@ -55,5 +57,49 @@ class WebFileGateway implements FileGateway {
     );
     if (out == null) return const SaveOutcome.cancelled();
     return SaveOutcome(path: out);
+  }
+
+  @override
+  Future<SaveOutcome> saveBytes({
+    required List<int> bytes,
+    String? path,
+    String suggestedName = '未命名文档.pdf',
+    String extension = 'pdf',
+  }) async {
+    final String? out = await FilePicker.platform.saveFile(
+      dialogTitle: '下载文件',
+      fileName: suggestedName,
+      type: FileType.custom,
+      allowedExtensions: <String>[extension],
+      bytes: Uint8List.fromList(bytes),
+    );
+    if (out == null) return const SaveOutcome.cancelled();
+    return SaveOutcome(path: out);
+  }
+
+  /// ★ Web 没有"选文件夹然后批量写"的能力（浏览器只允许逐次下载）
+  /// ⇒ 退化成**逐个下载**（每张图一次下载提示）。正式端是 Windows/Android，这条只服务开发预览。
+  @override
+  Future<ExportBatch?> saveBatch({
+    required List<ExportFile> files,
+    String? directory,
+    String dialogTitle = '选择保存位置',
+  }) async {
+    final List<String> done = <String>[];
+    for (final ExportFile f in files) {
+      final String ext =
+          f.name.contains('.') ? f.name.split('.').last : 'png';
+      final String? out = await FilePicker.platform.saveFile(
+        dialogTitle: dialogTitle,
+        fileName: f.name,
+        type: FileType.custom,
+        allowedExtensions: <String>[ext],
+        bytes: Uint8List.fromList(f.bytes),
+      );
+      if (out == null) break; // 取消 ⇒ 停在这里（已下载的保留）
+      done.add(out);
+    }
+    if (done.isEmpty) return null;
+    return ExportBatch(directory: directory ?? '', paths: done);
   }
 }

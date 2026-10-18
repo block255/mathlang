@@ -48,4 +48,46 @@ abstract class FileGateway {
     String suggestedName = '未命名文档.md',
     String extension = 'md',
   });
+
+  /// ★★ S4-d③：写**二进制**（PDF）。语义与 [saveText] 相同。
+  Future<SaveOutcome> saveBytes({
+    required List<int> bytes,
+    String? path,
+    String suggestedName = '未命名文档.pdf',
+    String extension = 'pdf',
+  });
+
+  /// ★★ S4-d③：**一批文件写进同一个目录**（图片集 = 每页一张 PNG）。
+  ///
+  /// [files] 的每一项 = 文件名 + 内容；[directory] 为空 ⇒ 弹"选文件夹"让用户挑。
+  /// 用户取消 ⇒ `null`（界面什么都不该做）。
+  Future<ExportBatch?> saveBatch({
+    required List<ExportFile> files,
+    String? directory,
+    String dialogTitle = '选择保存位置',
+  });
+}
+
+/// 一批导出里的一项
+class ExportFile {
+  const ExportFile({required this.name, required this.bytes});
+
+  final String name;
+  final List<int> bytes;
+
+  @override
+  String toString() => 'ExportFile($name, ${bytes.length} B)';
+}
+
+/// 一次批量导出的结果（目录 + 真正写下去的路径）
+class ExportBatch {
+  const ExportBatch({required this.directory, required this.paths});
+
+  final String directory;
+  final List<String> paths;
+
+  int get count => paths.length;
+
+  @override
+  String toString() => 'ExportBatch($directory, ${paths.length} 个文件)';
 }

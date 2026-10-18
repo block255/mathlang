@@ -24,6 +24,8 @@ import '../core/doc_buffer.dart';
 import '../core/doc_settings.dart';
 import '../core/document_file.dart';
 import '../editor/edit_view.dart';
+import '../io/pdf_builder.dart';
+import '../lang/block_ops.dart';
 import '../lang/math_spans.dart';
 import '../lang/shortcut_registry.dart';
 import '../lang/smart_wrap.dart';
@@ -38,6 +40,33 @@ import 'diagnostics_panel.dart';
 import 'quick_bar.dart';
 import 'settings_page.dart';
 import 'symbol_panel.dart';
+
+/// ★★ S4-c：**快捷键 → 符号库 id**（唯一的映射表；tex 一律取符号库里的那一份）。
+///
+/// 为什么不在这里另写一遍 tex：符号库是"符号表"的唯一数据源（《符号表-分类与关键词》），
+/// 面板、快捷栏、快捷键三处必须插**同一个** tex —— 否则三处会漂（本仓已经因"两条写入路径"栽过）。
+const Map<String, String> kShortcutSymbolIds = <String, String>{
+  'frac': 'frac',
+  'sqrt': 'sqrt',
+  'integral': 'int',
+  'summ': 'sum',
+  'limit': 'lim',
+  'aligned': 'aligned',
+  'cases': 'cases',
+  'pmatrix': 'mat2',
+  'binom': 'binom',
+};
+
+/// ★★ S4-c：**外壳负责的**动作（其余动作由 `EditView` 自己的按键通道处理）。
+///
+/// 划这条线的判据：**"编辑缓冲区的字符级动作"留在 EditView，"插入/结构/文件"归外壳**。
+/// 两边不重叠 ⇒ 不会有同一个键被处理两次（那是"按一下删两个字符"这类 bug 的来源）。
+const Set<String> kShellActions = <String>{
+  'newdoc', 'open', 'save', 'saveAs', 'settings', 'panelToggle', 'quickSlot',
+  'h1', 'h2', 'h3', 'ol', 'ul', 'quote', 'codeblock', 'pagebreak', //
+  'mathInline', 'mathDisplay', 'frac', 'sqrt', 'sup', 'sub', 'integral',
+  'summ', 'limit', 'aligned', 'cases', 'pmatrix', 'binom',
+};
 
 class EditorPage extends StatefulWidget {
   const EditorPage({
@@ -102,6 +131,11 @@ class EditorPageState extends State<EditorPage> {
 
   /// 测试/诊断用：快捷键偏好与词表
   ShortcutSettings get shortcuts => _shortcuts;
+
+  /// 测试注入（守"用户改键即刻生效"这条：界面说的话必须是真的）
+  @visibleForTesting
+  set shortcuts(ShortcutSettings v) => setState(() => _shortcuts = v);
+
   TriggerSettings get triggers => _triggers;
 
   EditViewStats _stats = const EditViewStats(
@@ -390,6 +424,94 @@ class EditorPageState extends State<EditorPage> {
     if (!out.ok) return;
     _snack('已导出 ${DocumentFile.fileNameOf(out.path!)}');
   }
+
+  // ---------------- 图片集 / PDF（S4-d③） ----------------
+
+  /// 抓当前每一页的 PNG（`pixelRatio = 2` ⇒ 一页约 1588 × 2246，打印也够）
+  Future<List<Uint8List>?> _capturePages(String action) async {
+    final EditViewState? st = _editKey.currentState;
+    if (st == null) return null;
+    // ★ 这里**不**等 `endOfFrame`：`DocView.capturePages` 只在"这一页还没画过"时才等一帧。
+    //   无条件等会把调用方**永远挂住**（测试里没有自动出帧；真机上点导出时页面早就画好了）。
+    final List<Uint8List> pages;
+    try {
+      pages = await st.capturePages();
+    } catch (e) {
+      await _showFileError(action, e);
+      return null;
+    }
+    if (pages.isEmpty) {
+      await _showFileError(action, '还没有可以导出的页面（分页还没完成？）');
+      return null;
+    }
+    return pages;
+  }
+
+  /// ★★ S4-d③：**图片集** —— 每页一张 PNG（作业辅导场景直接发学生）。
+  ///
+  /// 命名 `文档名-第01页.png`（补零 ⇒ 文件管理器里按名字就是页序）。
+  Future<void> exportImages() async {
+    final List<Uint8List>? pages = await _capturePages('导出图片集');
+    if (pages == null) return;
+    final String base =
+        _title.trim().isEmpty ? DocumentFile.kUntitled : _title.trim();
+    final List<ExportFile> files = <ExportFile>[
+      for (var i = 0; i < pages.length; i++)
+        ExportFile(
+          name: '$base-第${(i + 1).toString().padLeft(2, '0')}页.png',
+          bytes: pages[i],
+        ),
+    ];
+    ExportBatch? batch;
+    try {
+      batch = await _file.saveBatch(
+        files: files,
+        dialogTitle: '选择图片集的保存位置',
+      );
+    } catch (e) {
+      await _showFileError('导出图片集', e);
+      return;
+    }
+    if (batch == null) return; // 取消 ⇒ 什么都不做
+    _snack('已导出 ${batch.count} 张图片到 ${batch.directory}');
+  }
+
+  /// ★★ S4-d③：**PDF**（图片式 ＋ `.md` 内嵌附件）。
+  ///
+  /// 视觉 1:1（就是屏幕上的每一页），而"能不能无损导回"靠附件（PDF 规范支持的 embedded file）。
+  /// ★ 导出**不改**文档身份与 dirty：它只是"另存一份出去"。
+  Future<void> exportPdf() async {
+    final List<Uint8List>? pages = await _capturePages('导出 PDF');
+    if (pages == null) return;
+    final String base =
+        _title.trim().isEmpty ? DocumentFile.kUntitled : _title.trim();
+    PdfExportResult r;
+    try {
+      r = await buildImagePdf(
+        pagePngs: pages,
+        markdown: _buf.buf,
+        title: base,
+      );
+    } catch (e) {
+      await _showFileError('导出 PDF', e);
+      return;
+    }
+    SaveOutcome out;
+    try {
+      out = await _file.saveBytes(
+        bytes: r.bytes,
+        suggestedName: '$base.pdf',
+        extension: 'pdf',
+      );
+    } catch (e) {
+      await _showFileError('导出 PDF', e);
+      return;
+    }
+    if (!out.ok) return;
+    _snack('已导出 ${DocumentFile.fileNameOf(out.path!)}'
+        '（${r.pageCount} 页，md 已内嵌 ${(r.attachmentBytes / 1024).toStringAsFixed(1)} KB）');
+  }
+
   /// 有未保存改动时先确认（`true` = 可以继续）
   Future<bool> _confirmDiscard(String action) async {
     if (!dirty) return true;
@@ -478,6 +600,12 @@ class EditorPageState extends State<EditorPage> {
   }
   // ---------------- 快捷键（外壳层） ----------------
 
+  /// ★★ S4-c：外壳按键的**唯一入口** = 查 `ShortcutSettings` 这张表。
+  ///
+  /// 为什么不再写一堆 `if (kb.isControlPressed && k == keyN)`：
+  ///   ① 用户在设置页改键/加副绑定之后，硬编码的 if **不会跟着变**（界面就会撒谎）；
+  ///   ② 45 条动作硬编码无法维护。现在"按键 → 动作 id → 干活"三段式，
+  ///      没接入的动作（`ShortcutStatus.planned`）**不抢键**，所以它照样是普通字符。
   KeyEventResult _onShellKey(FocusNode node, KeyEvent e) {
     if (e is! KeyDownEvent && e is! KeyRepeatEvent) {
       return KeyEventResult.ignored;
@@ -501,46 +629,146 @@ class EditorPageState extends State<EditorPage> {
       return KeyEventResult.ignored;
     }
 
-    // ★ Alt+1..8 直接插入快捷栏第 N 格（不管面板开没开）
-    if (kb.isAltPressed && !kb.isControlPressed && !kb.isMetaPressed) {
+    // ★ Alt+1..8：快捷栏第 N 格（同一个动作的 8 个键，表里只登记了 `Alt+1`）
+    if (kb.isAltPressed &&
+        !kb.isControlPressed &&
+        !kb.isMetaPressed &&
+        !kb.isShiftPressed) {
       final int? n = _altDigit(k);
-      if (n != null && n <= _s.quickBarSlots) {
-        insertFavorite(n - 1);
-        return KeyEventResult.handled;
+      if (n != null) {
+        if (n <= _s.quickBarSlots && !_shortcuts.isDisabled('quickSlot')) {
+          insertFavorite(n - 1);
+          return KeyEventResult.handled;
+        }
+        return KeyEventResult.ignored;
       }
-      return KeyEventResult.ignored;
+    }
+    // ★ `Ctrl+Shift+O` = 导入（表里没有这条动作：它是"新建一份内容"，不是"打开"）
+    if (kb.isControlPressed &&
+        kb.isShiftPressed &&
+        !kb.isAltPressed &&
+        k == LogicalKeyboardKey.keyO) {
+      importDocument();
+      return KeyEventResult.handled;
     }
 
-    if (kb.isControlPressed || kb.isMetaPressed) {
-      // ★ S4-d：文件动线四个键（与《快捷键系统》§二 的绑定一致）
-      if (k == LogicalKeyboardKey.keyN) {
-        newDocument();
-        return KeyEventResult.handled;
-      }
-      if (k == LogicalKeyboardKey.keyO) {
-        // Ctrl+Shift+O = 导入（与"打开"区分：导入是**新建一份内容**）
-        if (kb.isShiftPressed) {
-          importDocument();
-        } else {
-          openDocument();
-        }
-        return KeyEventResult.handled;
-      }
-      if (k == LogicalKeyboardKey.keyS) {
-        saveDocument(saveAs: kb.isShiftPressed);
-        return KeyEventResult.handled;
-      }
-      if (k == LogicalKeyboardKey.comma) {
-        _settingsOpen ? closeSettings() : openSettings();
-        return KeyEventResult.handled;
-      }
-      // Ctrl+/ = 开 / 关符号面板（《快捷键系统》§二·符号面板）
-      if (k == LogicalKeyboardKey.slash) {
-        togglePanel();
-        return KeyEventResult.handled;
-      }
+    final String? id = _actionForKey(k, kb);
+    if (id != null && _runShortcutAction(id)) {
+      return KeyEventResult.handled;
     }
     return KeyEventResult.ignored;
+  }
+
+  /// 这个按键（含修饰键）命中哪条**已接入的外壳动作**？
+  String? _actionForKey(LogicalKeyboardKey k, HardwareKeyboard kb) {
+    // 设置页 / 改标题时按键归那一层（否则会在输入框里抢键）
+    if (_settingsOpen || _editingTitle) return null;
+    final String? name = _comboKeyName(k);
+    if (name == null) return null;
+    for (final ShortcutAction a in kShortcutActions) {
+      if (!kShellActions.contains(a.id)) continue;
+      if (!a.wired) continue; // 未接入的动作**不抢键**
+      if (_shortcuts.isDisabled(a.id)) continue;
+      for (final ShortcutCombo c in _shortcuts.combosOf(a.id)) {
+        if (c.isEmpty) continue;
+        if (c.key.toUpperCase() != name.toUpperCase()) continue;
+        if (c.ctrl != kb.isControlPressed) continue;
+        if (c.alt != kb.isAltPressed) continue;
+        if (c.shift != kb.isShiftPressed) continue;
+        if (c.meta != kb.isMetaPressed) continue;
+        return a.id;
+      }
+    }
+    return null;
+  }
+
+  /// `LogicalKeyboardKey` → 登记表里的键名（`'F'` / `'1'` / `'ArrowUp'` / `'='` / `','` …）
+  String? _comboKeyName(LogicalKeyboardKey k) {
+    if (k == LogicalKeyboardKey.arrowUp) return 'ArrowUp';
+    if (k == LogicalKeyboardKey.arrowDown) return 'ArrowDown';
+    if (k == LogicalKeyboardKey.arrowLeft) return 'ArrowLeft';
+    if (k == LogicalKeyboardKey.arrowRight) return 'ArrowRight';
+    if (k == LogicalKeyboardKey.enter || k == LogicalKeyboardKey.numpadEnter) {
+      return 'Enter';
+    }
+    if (k == LogicalKeyboardKey.tab) return 'Tab';
+    if (k == LogicalKeyboardKey.escape) return 'Esc';
+    if (k == LogicalKeyboardKey.space) return 'Space';
+    final String label = k.keyLabel;
+    if (label.isEmpty) return null;
+    if (label.length == 1) {
+      final int c = label.codeUnitAt(0);
+      final bool letter =
+          (c >= 0x41 && c <= 0x5A) || (c >= 0x61 && c <= 0x7A);
+      return letter ? label.toUpperCase() : label;
+    }
+    return label;
+  }
+
+  /// 执行一条外壳动作；返回 `false` = 这条动作在这个状态下**不做事**（键继续往下走）
+  bool _runShortcutAction(String id) {
+    switch (id) {
+      case 'newdoc':
+        newDocument();
+        return true;
+      case 'open':
+        openDocument();
+        return true;
+      case 'save':
+        saveDocument();
+        return true;
+      case 'saveAs':
+        saveDocument(saveAs: true);
+        return true;
+      case 'settings':
+        _settingsOpen ? closeSettings() : openSettings();
+        return true;
+      case 'panelToggle':
+        togglePanel();
+        return true;
+      case 'h1':
+        return _blockOp(BlockOp.h1);
+      case 'h2':
+        return _blockOp(BlockOp.h2);
+      case 'h3':
+        return _blockOp(BlockOp.h3);
+      case 'ol':
+        return _blockOp(BlockOp.ol);
+      case 'ul':
+        return _blockOp(BlockOp.ul);
+      case 'quote':
+        return _blockOp(BlockOp.quote);
+      case 'codeblock':
+        return _blockOp(BlockOp.codeblock);
+      case 'pagebreak':
+        return _blockOp(BlockOp.pagebreak);
+      case 'mathInline':
+        _editKey.currentState?.insertMathShell(display: false);
+        return true;
+      case 'mathDisplay':
+        _editKey.currentState?.insertMathShell(display: true);
+        return true;
+      case 'sup':
+        _editKey.currentState?.insertScript(sup: true);
+        return true;
+      case 'sub':
+        _editKey.currentState?.insertScript(sup: false);
+        return true;
+      default:
+        final String? symId = kShortcutSymbolIds[id];
+        if (symId == null) return false;
+        final SymbolItem? item = _lib?.byId(symId);
+        if (item == null) return false; // 符号库还没加载完 ⇒ 这一下不接
+        insertSymbol(item);
+        return true;
+    }
+  }
+
+  bool _blockOp(BlockOp op) {
+    final EditViewState? st = _editKey.currentState;
+    if (st == null) return false;
+    st.insertBlockOp(op);
+    return true;
   }
 
   int? _altDigit(LogicalKeyboardKey k) {
@@ -722,7 +950,7 @@ class EditorPageState extends State<EditorPage> {
           case 'about':
             openSettings(group: 8);
           default:
-            _snack('这一项还没接入（导入 / 导出归 S4-d 第二阶段）');
+            _snack('这一项还没接入');
         }
       },
       itemBuilder: (BuildContext c) => <PopupMenuEntry<String>>[
@@ -733,8 +961,8 @@ class EditorPageState extends State<EditorPage> {
         _fileItem('保存', 'Ctrl+S', value: 'save'),
         _fileItem('另存为…', 'Ctrl+Shift+S', value: 'saveAs'),
         const PopupMenuDivider(),
-        _fileItem('导入…', '', value: 'import'),
-        _fileItem('导出', '', batch: 'S4-d②'),
+        _fileItem('导入…', 'Ctrl+Shift+O', value: 'import'),
+        // ★ 导出不在这里重复列：顶栏「导出 ▾」是唯一入口（md / txt / 图片集 / PDF）
         const PopupMenuDivider(),
         const PopupMenuItem<String>(
           value: 'settings',
@@ -881,23 +1109,29 @@ class EditorPageState extends State<EditorPage> {
   Widget _exportMenu() {
     return PopupMenuButton<String>(
       key: const Key('export-menu'),
-      tooltip: '导出（S4-d 接入）',
+      tooltip: '导出',
       itemBuilder: (BuildContext c) => <PopupMenuEntry<String>>[
         _fileItem('Markdown (.md)', '', value: 'export:md'),
         _fileItem('纯文本 (.txt)', '', value: 'export:txt'),
-        _fileItem('图片集', '', batch: 'S4-d③'),
-        _fileItem('PDF', '', batch: 'S4-d③'),
+        _fileItem('图片集（每页 PNG）', '', value: 'export:images'),
+        _fileItem('PDF（图片式 + md 附件）', '', value: 'export:pdf'),
       ],
       onSelected: (String v) {
-        if (v.startsWith('export:')) exportDocument(v.substring(7));
+        if (v == 'export:images') {
+          exportImages();
+        } else if (v == 'export:pdf') {
+          exportPdf();
+        } else if (v.startsWith('export:')) {
+          exportDocument(v.substring(7));
+        }
       },
       child: const Padding(
         padding: EdgeInsets.symmetric(horizontal: 8, vertical: 6),
         child: Row(
           children: <Widget>[
             Text('导出',
-                style: TextStyle(fontSize: 12, color: Color(0xFFCBD5E0))),
-            Icon(Icons.arrow_drop_down, size: 16, color: Color(0xFFCBD5E0)),
+                style: TextStyle(fontSize: 12, color: Color(0xFF4A5568))),
+            Icon(Icons.arrow_drop_down, size: 16, color: Color(0xFF4A5568)),
           ],
         ),
       ),
@@ -955,6 +1189,11 @@ class EditorPageState extends State<EditorPage> {
                 buffer: _buf,
                 settings: _doc,
                 onStats: _onStats,
+                // ★ S4-c：词触发表 + 三个自动展开开关（设置页「智能输入」里改）
+                triggers: _triggers,
+                autoSlashFraction: _s.autoSlashFraction,
+                autoWordTriggers: _s.autoWordTriggers,
+                autoShorthand: _s.autoShorthand,
               ),
             ),
           ),

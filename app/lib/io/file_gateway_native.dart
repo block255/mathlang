@@ -72,4 +72,47 @@ class NativeFileGateway implements FileGateway {
     if (out == null || out.isEmpty) return const SaveOutcome.cancelled();
     return SaveOutcome(path: out);
   }
+
+  @override
+  Future<SaveOutcome> saveBytes({
+    required List<int> bytes,
+    String? path,
+    String suggestedName = '未命名文档.pdf',
+    String extension = 'pdf',
+  }) async {
+    final Uint8List data = Uint8List.fromList(bytes);
+    if (path != null && path.isNotEmpty) {
+      await File(path).writeAsBytes(data, flush: true);
+      return SaveOutcome(path: path);
+    }
+    final String? out = await FilePicker.platform.saveFile(
+      dialogTitle: '导出 PDF',
+      fileName: suggestedName,
+      type: FileType.custom,
+      allowedExtensions: <String>[extension],
+      bytes: data,
+    );
+    if (out == null || out.isEmpty) return const SaveOutcome.cancelled();
+    return SaveOutcome(path: out);
+  }
+
+  @override
+  Future<ExportBatch?> saveBatch({
+    required List<ExportFile> files,
+    String? directory,
+    String dialogTitle = '选择保存位置',
+  }) async {
+    var dir = directory;
+    if (dir == null || dir.isEmpty) {
+      dir = await FilePicker.platform.getDirectoryPath(dialogTitle: dialogTitle);
+    }
+    if (dir == null || dir.isEmpty) return null; // 取消
+    final List<String> written = <String>[];
+    for (final ExportFile f in files) {
+      final String p = '$dir${Platform.pathSeparator}${f.name}';
+      await File(p).writeAsBytes(Uint8List.fromList(f.bytes), flush: true);
+      written.add(p);
+    }
+    return ExportBatch(directory: dir, paths: written);
+  }
 }

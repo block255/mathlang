@@ -338,7 +338,7 @@ class SettingsOverlayState extends State<SettingsOverlay> {
         3 => _quickBarGroup(),
         4 => _statusGroup(),
         5 => <Widget>[_shortcutGroup()],
-        6 => <Widget>[_triggerGroup()],
+        6 => _triggerGroup(),
         7 => <Widget>[
             _pending('高级',
                 '源码视图（S5）· 清空本地缓存（S4-e）。\n★ 诊断清单已经做好了：在**状态栏**点「自动包裹 N 处 · 查看清单 ›」。')
@@ -360,16 +360,47 @@ class SettingsOverlayState extends State<SettingsOverlay> {
     );
   }
 
-  /// ⑥ 智能输入：词触发表（词是用户自己编的 ⇒ 可加行可删行）
-  Widget _triggerGroup() {
+  /// ⑥ 智能输入：三个"打字即渲染"的开关 ＋ 词触发表（词是用户自己编的 ⇒ 可加行可删行）
+  List<Widget> _triggerGroup() {
     final TriggerSettings? t = widget.triggers;
-    if (t == null) {
-      return _pending('智能输入', '这一份设置没有接入词表状态（测试注入时可能出现）。');
-    }
-    return WordTriggerView(
-      settings: t,
-      onChanged: (TriggerSettings v) => widget.onTriggers?.call(v),
-    );
+    final AppSettings s = widget.settings;
+    void set(AppSettings v) => widget.onSettings(v);
+    return <Widget>[
+      const SettingSection(title: '自动展开（S4-c 已接入）'),
+      SwitchRow(
+        key: const Key('auto-slash'),
+        title: '打字「/」就变成分式',
+        subtitle: '光标前那个符号当分子，光标落进分母（Word 的 Autoformat 同款）。'
+            '不想要就关掉 —— 关掉后「/」就是普通斜杠。',
+        value: s.autoSlashFraction,
+        modified: !s.autoSlashFraction,
+        onChanged: (bool v) => set(s.copyWith(autoSlashFraction: v)),
+      ),
+      SwitchRow(
+        key: const Key('auto-word'),
+        title: '词触发（打字即模板）',
+        subtitle: '打 sqrt 再按空格 / Tab ⇒ 变成根号模板（整词匹配，summer 不会触发）。',
+        value: s.autoWordTriggers,
+        modified: !s.autoWordTriggers,
+        onChanged: (bool v) => set(s.copyWith(autoWordTriggers: v)),
+      ),
+      SwitchRow(
+        key: const Key('auto-shorthand'),
+        title: '符号缩写（>= <= != +- ->）',
+        subtitle: '连着打两个字符 ⇒ 变成一个数学符号。',
+        value: s.autoShorthand,
+        modified: !s.autoShorthand,
+        onChanged: (bool v) => set(s.copyWith(autoShorthand: v)),
+      ),
+      const SettingSection(title: '词表'),
+      if (t == null)
+        _pending('智能输入', '这一份设置没有接入词表状态（测试注入时可能出现）。')
+      else
+        WordTriggerView(
+          settings: t,
+          onChanged: (TriggerSettings v) => widget.onTriggers?.call(v),
+        ),
+    ];
   }
 
   Widget _pending(String title, String text) {

@@ -21,15 +21,19 @@ import 'package:flutter/services.dart';
 import '../core/block.dart';
 import '../core/doc_buffer.dart';
 import '../core/doc_settings.dart';
+import '../lang/auto_expand.dart';
+import '../lang/block_ops.dart';
 import '../lang/math_spans.dart';
 import '../lang/smart_wrap.dart';
 import '../lang/symbol_insert.dart';
+import '../lang/word_triggers.dart';
 import '../render/caret_sites.dart' show kCaretColorValue;
 import '../render/insert_guard.dart';
 import '../render/math_nav.dart';
 import '../render/normalize.dart';
 import '../render/selection_range.dart';
 import '../render/smart_delete.dart';
+import '../render/visible_atoms.dart' show VisibleAtom, lexVisibleAtoms;
 import 'doc_view.dart';
 import 'platform_text_diff.dart';
 import 'text_input_surface.dart';
@@ -124,6 +128,10 @@ class EditView extends StatefulWidget {
     required this.buffer,
     this.settings = DocSettings.defaults,
     this.onStats,
+    this.triggers,
+    this.autoSlashFraction = true,
+    this.autoWordTriggers = true,
+    this.autoShorthand = true,
     this.inputFormatters = const <TextInputFormatter>[
       NewBlockOnEnterFormatter(),
     ],
@@ -133,6 +141,14 @@ class EditView extends StatefulWidget {
   final DocSettings settings;
   final void Function(EditViewStats stats)? onStats;
   final List<TextInputFormatter> inputFormatters;
+
+  /// ★ S4-c：词触发表（`null` = 用默认八条）。设置页改的那份由外壳传进来。
+  final TriggerSettings? triggers;
+
+  /// ★ S4-c 三个开关（设置页「智能输入」里可关；关掉就是"这个键恢复成普通字符"）
+  final bool autoSlashFraction;
+  final bool autoWordTriggers;
+  final bool autoShorthand;
 
   @override
   State<EditView> createState() => EditViewState();
@@ -192,7 +208,13 @@ class EditViewState extends State<EditView> {
   /// `false` = 已经开始 dispose（此时一律不再 setState —— `mounted` 在 dispose 期间仍为 true）
   bool _alive = true;
 
+  /// ★ S4-c：正在展开中（防止"保留终止符"的分支再次触发展开）
+  bool _expanding = false;
+
   DocBuffer get _buf => widget.buffer;
+
+  TriggerSettings get _triggers =>
+      widget.triggers ?? TriggerSettings.defaults();
 
   @override
   void initState() {
@@ -247,6 +269,25 @@ class EditViewState extends State<EditView> {
   ///   输入设备的内容由 [TextInputSurfaceController] 自己维持成"空的"。
   void _commitText(String rawText, {int autoWrapped = 0}) {
     if (rawText.isEmpty) return;
+    // ★★ S4-c：**自动展开**（打字即渲染）先于插入守门人 —— 因为它是"改写用户刚打的那几个字符"，
+    //   不是"往后插一段东西"。三条（`/`→分式、词触发、`>=`→`\ge`）都只对**单字符/终止符**生效，
+    //   粘贴这种多字符载荷一律不参与（`planAutoExpand` 自己会拒）。
+    //   ★ 有选区时不展开（用户已经表达了"替换这一段"的意思）。
+    if (!_expanding && !_buf.hasSelection) {
+      final AutoExpand? ex = planAutoExpand(
+        doc: _buf.buf,
+        caret: _buf.caret,
+        typed: rawText,
+        triggers: _triggers,
+        slashFraction: widget.autoSlashFraction,
+        wordTriggers: widget.autoWordTriggers,
+        shorthand: widget.autoShorthand,
+      );
+      if (ex != null) {
+        _applyAutoExpand(ex);
+        return;
+      }
+    }
     // ★★ 自动分隔（2026-10-17 用户拍板）：**"命令词结不结束"不该由用户来判断**。
     //   TeX 的控制词只由字母组成，紧跟字母会被读成一个更长的命令名（`\sin` + `x` ⇒ `\sinx`）。
     //   ⇒ 插入字母、而光标正好停在控制词末尾时，**我们**先补一个空格（TeX 的规范分隔符）。
@@ -321,6 +362,14 @@ class EditViewState extends State<EditView> {
   /// 三选一的语义（并入数学段 / 自动建壳 / 替换选区）在 `lang/symbol_insert.dart` 里，
   /// 这里只做"一次编辑"的落盘与光标定位（模板 ⇒ 第一个空槽）。
   void insertSymbolTex(String tex, {required bool template}) {
+    _insertTexViaSymbolPath(tex, template: template);
+  }
+
+  /// 所有"插一段 tex"的入口共用的落盘逻辑（面板 / 快捷栏 / 快捷键 / 自动展开 / 上下标）。
+  ///
+  /// ★ 一次 `replace(0, len, …)` ⇒ **一步撤销**（`DocBuffer` 的撤销粒度是"每次 replace"，
+  ///   所以"删掉触发的词 + 插入模板"必须合成**一次**写入，否则要按两下 `Ctrl+Z`）。
+  void _insertTexViaSymbolPath(String tex, {required bool template}) {
     final SymbolInsertResult r = applySymbolInsert(
       doc: _buf.buf,
       caret: _buf.caret,
@@ -347,6 +396,132 @@ class EditViewState extends State<EditView> {
       }
     }
     _stampWrapped(r.wrapped ? 1 : 0, spans: spans);
+  }
+
+  /// ★★ S4-c：把一次**自动展开**落盘（`sqrt`+空格 / `/` / `>=` 都走这里）。
+  ///
+  /// 两步合成**一次**写入：① 删掉被吃掉的触发内容；② 在原位插入展开出来的 tex。
+  void _applyAutoExpand(AutoExpand ex) {
+    final String trimmed = _buf.buf.replaceRange(ex.from, ex.caret, '');
+    final SymbolInsertResult r = applySymbolInsert(
+      doc: trimmed,
+      caret: ex.from,
+      selStart: ex.from,
+      selEnd: ex.from,
+      tex: ex.tex,
+      template: ex.template,
+    );
+    _mutate(() {
+      _buf.replace(0, _buf.length, r.doc);
+      _buf.setCaret(r.caret);
+    });
+    _stampWrapped(r.wrapped ? 1 : 0, spans: _spansAround(ex.from, r.caret));
+    // ★ 终止符：空格被吃掉（`''`），`Enter` 保留 ⇒ 再走一次普通提交（它是块级动作）
+    final String tail = ex.keptTerminator;
+    if (tail.isNotEmpty) {
+      _expanding = true;
+      try {
+        _commitText(tail);
+      } finally {
+        _expanding = false;
+      }
+    }
+  }
+
+  /// ★★ S4-c：`Alt+=` / `Ctrl+Alt+E` —— 插入一个**空公式壳**，光标落在里面。
+  ///
+  /// 空壳的内容是一个**空格**（`$ $`）而不是空串：
+  ///   · `$$` 两个字符紧挨着在**整行**时会变成行间围栏（`BlockMarkers.isMathFence`），
+  ///     那会把用户接着打的字送进"TeX 源码"分区；
+  ///   · 空格在数学里只是词法分隔符（不占版面），KaTeX 也照样解析。
+  /// ⚠️ 记账：空公式目前**看不见**（只有一个光标）—— 那是 §6.1.1「空公式必须画出来」，
+  ///   属视觉规范批，不在这里假装解决。
+  void insertMathShell({required bool display}) {
+    final String payload = display ? '\$\$\n\n\$\$' : r'$ $';
+    // 光标落进壳里：`$ $` ⇒ 第一个 `$` 之后；`$$\n\n$$` ⇒ 第一道围栏与空行之间
+    final int inside = display ? 3 : 1;
+
+    // 有选区 ⇒ 用壳替换选区（标准编辑器行为，一步撤销）
+    if (_buf.hasSelection) {
+      final int s = _buf.selectionStart;
+      final String next = _buf.buf.replaceRange(s, _buf.selectionEnd, payload);
+      final int caret = (s + inside).clamp(0, next.length);
+      _mutate(() {
+        _buf.replace(0, _buf.length, next);
+        _buf.setCaret(caret);
+      });
+      return;
+    }
+
+    // ★ 走守门人：落点在围栏行 / 数学段内部时会被推开（规则 ①③④）
+    final InsertPlan plan = planInsert(_buf.buf, _buf.caret, payload);
+    final String padded = plan.padText(payload);
+    final int shift = padded.contains(payload) ? padded.indexOf(payload) : 0;
+    var d = _buf.buf;
+    if (plan.wrapBareArg != null) {
+      final ({int start, int end}) w = plan.wrapBareArg!;
+      d = d.replaceRange(w.start, w.end, '{${d.substring(w.start, w.end)}}');
+    }
+    final int at = plan.offset.clamp(0, d.length);
+    final String next = d.replaceRange(at, at, padded);
+    final int caret = (at + shift + inside).clamp(0, next.length);
+    _mutate(() {
+      _buf.replace(0, _buf.length, next);
+      _buf.setCaret(caret);
+    });
+  }
+
+  /// ★★ S4-c：`Ctrl+↑` / `Ctrl+↓` —— 上标 / 下标（MathType Web 的真实约定）。
+  ///
+  /// 有基座 ⇒ `^{}`（作用于前面那个原子）；**没有基座**（公式开头 / 正文里）⇒ `{}^{}`
+  /// —— 空的基座组 `{}` 在 TeX 里合法，直接写 `^{}` 会得到 `Parser Error: Expected group`。
+  void insertScript({required bool sup}) {
+    final String cmd = sup ? '^' : '_';
+    final bool hasBase = _hasBaseAtom();
+    _insertTexViaSymbolPath(hasBase ? '$cmd{}' : '{}$cmd{}', template: true);
+  }
+
+  /// 光标前（同一段数学里）有没有可以当基座的可见原子
+  bool _hasBaseAtom() {
+    final MathRegion? r = mathRegionAt(_buf.buf, _buf.caret);
+    if (r == null) return false;
+    final int rel = (_buf.caret - r.contentStart).clamp(0, r.tex.length);
+    if (rel == 0) return false;
+    for (final VisibleAtom a in lexVisibleAtoms(r.tex)) {
+      if (a.kind == 'tail' || a.kind == 'slotpad') continue;
+      if (a.end <= rel) return true;
+    }
+    return false;
+  }
+
+  /// ★★ S4-c：块类型快捷键（标题 / 列表 / 引用 / 代码块 / 分页符）。
+  ///
+  /// 只做"一次区间替换"（`lang/block_ops.dart` 已算出范围）⇒ **一步撤销**。
+  void insertBlockOp(BlockOp op) {
+    final BlockOpResult? r = planBlockOp(_buf.buf, _buf.caret, op);
+    if (r == null || r.isNoop) return;
+    final String out = applyBlockOpTo(_buf.buf, r);
+    final int caret = r.caret.clamp(0, out.length);
+    _mutate(() {
+      _buf.replace(0, _buf.length, out);
+      _buf.setCaret(caret);
+    });
+  }
+
+  /// ★★ S4-d③：把**每一页**抓成 PNG（图片集 / 图片式 PDF 的唯一入口）。
+  ///
+  /// 语义完全对齐原则 4「编辑时的分页预览 = 导出的 PDF 页 = 图片集的一张图」：
+  /// 抓的就是屏幕上那棵 `PageSheet` 子树（外面套了 `RepaintBoundary`）。
+  Future<List<Uint8List>> capturePages({double pixelRatio = 2.0}) async {
+    final State<StatefulWidget>? st = _docKey.currentState;
+    if (st is! DocViewState) return const <Uint8List>[];
+    return st.capturePages(pixelRatio: pixelRatio);
+  }
+
+  /// 本机 UI 是否已经分好页（导出前判断"有没有东西可抓"，测试也用它）
+  int get pageCount {
+    final State<StatefulWidget>? st = _docKey.currentState;
+    return st is DocViewState ? st.pageCount : 0;
   }
 
   /// ★★ S4-b②：诊断清单点一条 ⇒ **跳过去并高亮**那一段（不写缓冲区 ⇒ 不算一次编辑）。
@@ -483,7 +658,11 @@ class EditViewState extends State<EditView> {
     // ★ 而 S3-4 的结构删除是"**一次区间替换**" —— 所以
     //   **一次结构删除 = 一步撤销**（`\frac{}{}` 9 个字符一次删、一次就撤回来）。
     //   这正是当初坚持「一次语义编辑只写一次缓冲区」的回报。
-    if (kb.isControlPressed || kb.isMetaPressed) {
+    // ★★ 2026-10-18（S4-c 接线时发现）：**带 Alt 的 Ctrl 组合不许在这里被吃掉**。
+    //   `Ctrl+Alt+C` 本来是"代码块"，可原来 `k == keyC` 这一支不看 Alt，直接当"复制"吞掉
+    //   ⇒ 外壳永远收不到那个键（这类 bug 的表现是"快捷键没反应"，很难看出来）。
+    //   ⇒ 撤销/重做/剪贴板/全选只认**不带 Alt** 的组合；带 Alt 的一律交回上层。
+    if ((kb.isControlPressed || kb.isMetaPressed) && !kb.isAltPressed) {
       if (k == LogicalKeyboardKey.keyZ) {
         _mutate(() {
           if (shift) {
@@ -525,7 +704,6 @@ class EditViewState extends State<EditView> {
       return KeyEventResult.ignored; // 其余 Ctrl 组合键留给别处
     }
     if (kb.isAltPressed) return KeyEventResult.ignored;
-
     if (k == LogicalKeyboardKey.backspace || k == LogicalKeyboardKey.delete) {
       // ★ ⑤ 有选区 ⇒ 删整个区间（一步撤销），不走结构删除
       if (_buf.hasSelection) {
@@ -554,7 +732,24 @@ class EditViewState extends State<EditView> {
     }
     // ★ `Tab` = **走槽**（§十-①：下一个空槽 → 槽内容末尾 → 走出公式）。
     //   不在公式里时返回 null → 让给 Flutter 的焦点遍历。
+    //   ★★ S4-c：但它**首先是词触发的终止符**（`sqrt` + `Tab` ⇒ 根号模板），
+    //     这与"Tab 跳槽"不冲突：有词在光标前就展开，没有才走槽。
     if (k == LogicalKeyboardKey.tab) {
+      if (!_expanding && !_buf.hasSelection) {
+        final AutoExpand? ex = planAutoExpand(
+          doc: _buf.buf,
+          caret: _buf.caret,
+          typed: '\t',
+          triggers: _triggers,
+          slashFraction: widget.autoSlashFraction,
+          wordTriggers: widget.autoWordTriggers,
+          shorthand: widget.autoShorthand,
+        );
+        if (ex != null) {
+          _applyAutoExpand(ex);
+          return KeyEventResult.handled;
+        }
+      }
       final int? to = tabStopAt(_buf.buf, _buf.caret, forward: !shift);
       if (to == null) return KeyEventResult.ignored;
       _buf.setCaret(to);

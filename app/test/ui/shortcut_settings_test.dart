@@ -53,12 +53,12 @@ Future<void> _capture(WidgetTester tester, String actionId, int index,
 
 void main() {
   group('① 这张表说实话', () {
-    testWidgets('顶部报 已接入 23 / 共 45', (WidgetTester tester) async {
+    testWidgets('顶部报 已接入 44 / 共 45', (WidgetTester tester) async {
       await _pump(tester);
-      expect(find.text('已接入 23 / 共 45'), findsOneWidget);
+      expect(find.text('已接入 44 / 共 45'), findsOneWidget);
     });
 
-    testWidgets('已接入的（撤销）与未接入的（分式）徽标不同',
+    testWidgets('已接入的（撤销）与未接入的（源码视图）徽标不同',
         (WidgetTester tester) async {
       await _pump(tester);
       expect(
@@ -66,9 +66,12 @@ void main() {
               of: find.byKey(const Key('shortcut-status-undo')),
               matching: find.text('已接入')),
           findsOneWidget);
+      // ★ S4-c 之后只剩「源码视图」（S5）未接入
+      await tester.ensureVisible(
+          find.byKey(const Key('shortcut-status-sourceView')));
       expect(
           find.descendant(
-              of: find.byKey(const Key('shortcut-status-frac')),
+              of: find.byKey(const Key('shortcut-status-sourceView')),
               matching: find.text('未接入')),
           findsOneWidget);
     });
