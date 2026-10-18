@@ -189,6 +189,15 @@ const List<ShortcutAction> kShortcutActions = <ShortcutAction>[
   //   画成淡虚线小框 ⇒ 看得见、点得到）；而**行内公式必须由内容产生** ——
   //   平权不接受"行内多项式当成一个整体"，所以行内没有"先造空壳再写"这条路。
   ShortcutAction(id: 'mathDisplay', name: '插入行间公式段', group: '数学类', combo: 'Ctrl+Alt+E', status: ShortcutStatus.wired),
+  // ★★ 2026-10-18（用户要求）：把"打字即渲染"的**天然键**也登记进表
+  //   —— 用户要的不是新组合键，而是"打 Shift+6 就是上标、打 / 就是分式"这件事在**快捷键页里看得见**。
+  //     · `Shift+6` = `^` ⇒ 光标前那个可见原子变成上标基座（`x^{}`）；
+  //     · `/`      ⇒ 独立插入一条分数线（`\frac{}{}`，**不吃**前面的字符）。
+  //   ⚠️ 这两条**暂不支持改键**：行为由"打字即渲染"（`lang/auto_expand.dart`）产生，
+  //      不由快捷键表分发。要改成可改键，得给编辑器加"动作插入字符"的通道 + **短路去重**
+  //      （动作与平台文本通道会各插一次），那是单独一批的事。
+  ShortcutAction(id: 'typeSup', name: '上标（打 ^）', group: '数学类', combo: 'Shift+6', status: ShortcutStatus.wired),
+  ShortcutAction(id: 'typeFracKey', name: '分式（打 /）', group: '数学类', combo: '/', status: ShortcutStatus.wired),
   ShortcutAction(id: 'frac', name: '分式', group: '数学类', combo: 'Ctrl+Alt+F', status: ShortcutStatus.wired),
   ShortcutAction(id: 'sqrt', name: '根号', group: '数学类', combo: 'Ctrl+Alt+R', status: ShortcutStatus.wired),
   ShortcutAction(id: 'sup', name: '上标', group: '数学类', combo: 'Ctrl+ArrowUp', status: ShortcutStatus.wired),

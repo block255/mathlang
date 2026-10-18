@@ -209,9 +209,9 @@ void main() {
       expect(buf.buf, '甲乙丙');
     });
 
-    test('登记表口径：44 条里 43 条已接入（只剩源码视图等 S5）', () {
-      expect(kShortcutActions.length, 44);
-      expect(ShortcutSettings.wiredCount, 43);
+    test('登记表口径：46 条里 45 条已接入（只剩源码视图等 S5；2026-10-18 新增 ^ 与 / 两条天然键）', () {
+      expect(kShortcutActions.length, 46);
+      expect(ShortcutSettings.wiredCount, 45);
       final List<String> planned = <String>[
         for (final ShortcutAction a in kShortcutActions)
           if (!a.wired) a.id,
