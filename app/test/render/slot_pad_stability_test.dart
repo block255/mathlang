@@ -49,18 +49,21 @@ void main() {
   });
 
   group('多行环境不画占位框', () {
-    test(r'aligned 的格子：**只有当前格**画占位框', () {
+    // ★★ 2026-10-18 晚**第三版口径**（用户实测"在不同列之间切换会莫名改变列间距、
+    //   有时扰动竖线位置，猜测和占位框有关"）：**环境格子一律不注入垫子**。
+    //   垫子是真字形（`M` + 宽度垫 ≈ 25 px）⇒ 光标一进空格子那一列就变宽
+    //   ⇒ 列间距不均、行列式的竖线跟着变长。空格子的"看得见"改由自绘层
+    //   **跟着光标画框**（`math_caret`），纯绘制、不占版面。
+    test(r'aligned 的格子：**一个垫子都不注**（改了列宽就会让排版抖）', () {
       const String aligned = r'\begin{aligned}&=\\&=\end{aligned}';
-      // 2026-10-18 第二版口径（用户复验）：格子需要看得见的落点，但不能常驻
-      expect(countPads(renderMathTex(aligned, caretRel: 15)), 1,
-          reason: '光标在第一格 ⇒ 该格有占位框');
-      expect(countPads(renderMathTex(aligned, caretRel: -1)), 0,
-          reason: '光标不在环境里 ⇒ 一格都不画');
+      expect(countPads(renderMathTex(aligned, caretRel: 15)), 0,
+          reason: '光标在第一格也不注入 —— 框由自绘层按光标位置画');
+      expect(countPads(renderMathTex(aligned, caretRel: -1)), 0);
     });
 
     test(r'cases 的格子：同理', () {
       const String cases = r'\begin{cases}&\\&\end{cases}';
-      expect(countPads(renderMathTex(cases, caretRel: 13)), 1);
+      expect(countPads(renderMathTex(cases, caretRel: 13)), 0);
       expect(countPads(renderMathTex(cases, caretRel: -1)), 0);
     });
   });

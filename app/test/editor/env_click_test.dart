@@ -182,10 +182,42 @@ void main() {
     });
   });
 
+  group('⑤ 版面稳定性：在格子之间移动光标**不许改列宽**（用户："改列间距、扰动竖线"）', () {
+    testWidgets('★★ 光标从实格移到空格：其它字形与竖线的位置必须一模一样',
+        (WidgetTester tester) async {
+      // 空的是 (0,0)（第一列）⇒ 若往那格注入垫子，第一列变宽、B 与竖线都会右移
+      const String tex = r'\begin{vmatrix} & B \\ C & D \end{vmatrix}';
+      final DocBuffer buf = await _pump(tester, _doc(tex));
+
+      Map<String, double> xs() {
+        final List<LeafBox> boxes = _rig().boxes;
+        return <String, double>{
+          for (final LeafBox b in boxes)
+            if (b.text != null && <String>['B', 'C', 'D', '|', '∣'].contains(b.text))
+              '${b.text}@${b.rect.top.round()}': b.rect.left,
+        };
+      }
+
+      buf.setCaret(buf.buf.indexOf('D') + 1);
+      await tester.pumpAndSettle();
+      final Map<String, double> before = xs();
+
+      final int cellStart =
+          buf.buf.indexOf(r'\begin{vmatrix}') + r'\begin{vmatrix}'.length + 1;
+      buf.setCaret(cellStart);
+      await tester.pumpAndSettle();
+      final Map<String, double> after = xs();
+
+      expect(before, isNotEmpty, reason: '至少要量到 B/C/D 与竖线');
+      expect(after, before,
+          reason: '空格子不该有"占位垫"改变列宽 —— 排版必须一个像素都不动（改前会整体右移）');
+    });
+  });
+
   group('④ 行内矩阵：右键也要能改尺寸', () {
     testWidgets('★★ 段落里的行内矩阵右键 ⇒ 弹面板（改前：一点反应没有）',
         (WidgetTester tester) async {
-      final String doc = '甲${r'$'}${kTex}${r'$'}乙';
+      final String doc = '甲${r'$'}$kTex${r'$'}乙';
       await _pump(tester, doc);
       final ({RenderBox root, List<LeafBox> boxes}) r = _rig();
       final LeafBox a = r.boxes.firstWhere((LeafBox b) => b.text == 'A');

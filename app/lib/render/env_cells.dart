@@ -25,10 +25,15 @@ import 'visible_atoms.dart';
 
 /// 一次格子落点的结果：第几行、第几列、落在该格哪一侧。
 class EnvCellHit {
-  const EnvCellHit(this.row, this.col, {required this.atEnd});
+  const EnvCellHit(this.row, this.col, {required this.atEnd, this.onInk = false});
 
   final int row;
   final int col;
+
+  /// ★ 点是否落在**这一格有墨迹的内容上**（而不是格子里的空白）。
+  /// 用途：点在字与字之间时，调用方要能用**细粒度**命中（落到两个符号之间），
+  /// 而不是被压到格首/格尾。
+  final bool onInk;
 
   /// `true` = 落在这格**内容的末尾**（右侧）；`false` = 内容开头。
   final bool atEnd;
@@ -181,7 +186,10 @@ EnvCellHit? envCellHitAt({
   } else {
     atEnd = localPos.dx > cellRect.center.dx;
   }
-  return EnvCellHit(rowOf(pick), colOf(pick), atEnd: atEnd);
+  final bool onInk = cellRect != null &&
+      (cellRect.inflate(2).contains(localPos));
+  return EnvCellHit(rowOf(pick), colOf(pick),
+      atEnd: atEnd, onInk: onInk);
 }
 
 /// 某一列在**其它行**里的 x 中心（空格子靠它定位）；都没有 ⇒ null。

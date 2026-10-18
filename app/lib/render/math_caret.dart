@@ -39,6 +39,7 @@ import 'package:flutter_math_fork/flutter_math.dart';
 
 import 'caret_ownership.dart';
 import 'caret_sites.dart';
+import 'env_cells.dart';
 import 'leaf_boxes.dart';
 import 'leaf_pairing.dart';
 import 'slot_pad.dart';
@@ -209,7 +210,32 @@ class _MathWithCaretState extends State<MathWithCaret> {
     }
 
     // ★ 空槽垫子：**当前槽**靠"锚点落在哪个垫子盒里"认出来（实测：空槽里锚点正好在垫子右缘）
-    final List<SlotPad> pads = scanSlotPads(root, caretAt: at);
+    final List<SlotPad> pads = <SlotPad>[...scanSlotPads(root, caretAt: at)];
+    // ★★ 2026-10-18 晚：**多行环境里的空格子**改成"跟着光标画框"（不注入垫子）。
+    //   注入垫子会让那一列变宽 ⇒ 列间距不均、行列式竖线跟着变（用户实测的"扰动"）。
+    //   判据：光标所在的格子矩形里**一个字形盒都没有**（= 空格子）⇒ 在锚点处画一个
+    //   一个汉字宽 × 行高的框；绝对不占版面。
+    if (at != null && hasEnv(widget.tex) && root is RenderBox && root.hasSize) {
+      final EnvCellHit? cell = envCellHitAt(
+        root: root,
+        localPos: at,
+        tex: widget.tex,
+        displayStyle: widget.mathStyle == MathStyle.display,
+      );
+      if (cell != null) {
+        // 光标右边"一个汉字宽"的范围内没有任何字形 ⇒ 这是一个**空格子**
+        final Rect zone = Rect.fromLTWH(
+            at.dx, (bar?.top ?? at.dy), widget.fontSize * 1.4,
+            bar?.height ?? widget.fontSize);
+        final bool emptyCell = !scanLeafBoxes(root).eligible.any((LeafBox b) =>
+            b.text != null &&
+            b.text!.trim().isNotEmpty &&
+            b.rect.overlaps(zone));
+        if (emptyCell) {
+          pads.add(SlotPad(zone, current: true));
+        }
+      }
+    }
 
     if (!_samePads(pads, _pads) ||
         _bar != bar ||

@@ -781,22 +781,10 @@ class DocViewState extends State<DocView> {
   }) {
     final Offset localPos = (root as RenderBox).globalToLocal(global);
 
-    // ★★ P2-D（2026-10-18）：多行环境**按格子**判落点。
-    //   原因：`aligned` / `cases` 的一行里只有 `=` 之类有墨迹，其它位置是空白；
-    //   旧的"最近字形"会把远处点击吸到别处（用户实测：点第一行左侧空白，
-    //   光标落到**第二个等号**旁边）。格子有行/列的矩形可算 ⇒ 先按格子定，再退回旧判据。
-    if (hasEnv(tex)) {
-      final EnvCellHit? cell = envCellHitAt(
-        root: root,
-        localPos: localPos,
-        tex: renderTex,
-        displayStyle: displayStyle,
-      );
-      if (cell != null) {
-        final int? cellOffset = envCellOffset(tex, cell);
-        if (cellOffset != null) return cellOffset;
-      }
-    }
+    // ★★ 2026-10-18 晚（用户："坏文本导致符号之间点不到的问题依然存在，行列式也有"）：
+    //   **先试细粒度命中**（点在字形上 ⇒ 叶盒 ↔ 原子，能落到**符号之间**），
+    //   只有"没点在字形上"（格子里的空白 / 空格子 / 竖线）才退回**按格子**判。
+    //   原来是"有环境先按格子" ⇒ 格子内的 `a+b` 只能落到格首/格尾，**符号之间点不到**。
     final MathHit hit = hitTestMathTex(
       root: root,
       localPos: localPos,
@@ -805,6 +793,28 @@ class DocViewState extends State<DocView> {
       atoms: renderOrderAtoms(renderTex, displayStyle: displayStyle),
       displayStyle: displayStyle,
     );
+    if (hit.onGlyph && hit.offset != null && hit.reliable) {
+      return renderToSourceOffset(renderTex, hit.offset!);
+    }
+
+    // ★★ P2-D（2026-10-18）：多行环境**按格子**判落点（判的是"没点中字形"的那些位置）。
+    if (hasEnv(tex)) {
+      final EnvCellHit? cell = envCellHitAt(
+        root: root,
+        localPos: localPos,
+        tex: renderTex,
+        displayStyle: displayStyle,
+      );
+      if (cell != null) {
+        // ★★ 点在**这一格有墨迹的内容上**（字与字之间也算）⇒ 用细粒度落点，
+        //    落在两个符号之间；只有格子里的空白才压到格首/格尾。
+        if (cell.onInk && hit.offset != null) {
+          return renderToSourceOffset(renderTex, hit.offset!);
+        }
+        final int? cellOffset = envCellOffset(tex, cell);
+        if (cellOffset != null) return cellOffset;
+      }
+    }
     if (hit.onGlyph && hit.offset != null) {
       return renderToSourceOffset(renderTex, hit.offset!);
     }
