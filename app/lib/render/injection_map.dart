@@ -55,6 +55,7 @@ List<_Marker> get _kMarkers => <_Marker>[
       _Marker(kCurrentSlotTex),
       _Marker(kEmptySlotTex),
       _Marker(kCursorTex),
+      _Marker(kEnvCellFillTex),
       _Marker(kStructTailTex, isStructTail: true),
     ];
 

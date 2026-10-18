@@ -137,6 +137,11 @@ SlotMarkResult injectSlotMarks(String tex, {required int caretRel}) {
               : kEmptySlotTex,
           shiftAt: true,
         ),
+    // ★★ 2026-10-18 晚：**环境空格子恒定占 1em**（预留宽度，见 slot_pad.kEnvCellFillTex）。
+    //   与光标在哪一格无关 ⇒ 画框/移光标都不改变列宽。
+    for (final SlotSpan s in t.slots)
+      if (s.isEmpty && s.path.any((SlotStep st) => st.row != null || st.col != null))
+        _Ins(s.start, kEnvCellFillTex, shiftAt: true),
     // ② ★ 尾垫（§11.18）：插在**内容末尾**、花括号**之内** ⇒ 装饰跟着内容变长
     for (final SlotSpan s in t.slots)
       if (s.path.isNotEmpty &&
