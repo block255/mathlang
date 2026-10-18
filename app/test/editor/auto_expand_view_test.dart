@@ -115,8 +115,8 @@ void main() {
       await _type(tester, 'a');
       tester.testTextInput.updateEditingValue(_v('/'));
       await tester.pump();
-      expect(buf.buf, r'$\frac{a}{}$');
-      // 分母空槽里（`\frac{a}{}` 的第二个 `{}`）
+      expect(buf.buf, r'a$\frac{}{}$');
+      // 2026-10-18 用户改口径：`/` 独立插入分数线，**不吃**前面的 a；光标进分子空槽
       expect(buf.caret, buf.buf.indexOf('{}') + 1);
     });
 

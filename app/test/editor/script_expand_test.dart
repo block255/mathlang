@@ -56,7 +56,7 @@ void main() {
       (WidgetTester tester) async {
     final DocBuffer buf = await _mount(tester, 'a', 1);
     await _type(tester, '^');
-    expect(buf.buf, r'$a^{}$', reason: '正文里的基座要被包进 \$…\$');
+    expect(buf.buf, r'$a^{}$', reason: '正文里的基座要被包进行内公式');
     expect(buf.caret, 4);
   });
 

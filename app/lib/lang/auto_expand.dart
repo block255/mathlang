@@ -210,37 +210,15 @@ AutoExpand? _planScript(String doc, int caret, String mark) {
 }
 
 AutoExpand? _planFraction(String doc, int caret) {
-  if (caret <= 0) return null;
-  final MathRegion? r = mathRegionAt(doc, caret);
-  if (r != null) {
-    final int contentStart = r.contentStart;
-    final int rel = (caret - contentStart).clamp(0, r.tex.length);
-    final List<VisibleAtom> atoms = lexVisibleAtoms(r.tex);
-    VisibleAtom? last;
-    for (final VisibleAtom a in atoms) {
-      // 占位垫 / 尾垫不是"真原子"（它们是注入物，抽走会毁掉结构的像素几何）
-      if (a.kind == 'tail' || a.kind == 'slotpad' || a.kind == 'pad') continue;
-      if (a.end > rel) break; // 光标之后（含跨到光标上的那个）都不算
-      last = a;
-    }
-    if (last == null || last.length == 0) return null;
-    final String numerator = r.tex.substring(last.start, last.end);
-    return AutoExpand(
-      from: contentStart + last.start,
-      caret: caret,
-      tex: '\\frac{$numerator}{}',
-      kind: AutoExpandKind.fraction,
-      template: true,
-      matched: '/',
-    );
-  }
-  // 正文里：单个字符当分子（`考虑这样一个分式a/b` ⇒ `a` 进分子）
-  final String prev = doc[caret - 1];
-  if (!_isNumeratorChar(prev)) return null;
+  // ★★ 2026-10-18（用户改口径）：`/` = **独立插入一条分数线**，**不吃**前面的字符。
+  //   旧行为把光标前那个原子抽走当分子（`a/b` ⇒ `\frac{a}{}`），用户复验后明确否掉：
+  //   打 `/` 只该表示"这里开始一个分式"，前面写的东西原样留着；
+  //   空格之后裸打一个 `/` 同样要成分式 ⇒ **不看前面有没有原子**。
+  //   `$…$` 由编辑层按模板统一包（正文里会包成 `$\frac{}{}$`）。
   return AutoExpand(
-    from: caret - 1,
+    from: caret,
     caret: caret,
-    tex: '\\frac{$prev}{}',
+    tex: '\\frac{}{}',
     kind: AutoExpandKind.fraction,
     template: true,
     matched: '/',

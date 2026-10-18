@@ -104,46 +104,34 @@ void main() {
     });
   });
 
-  group('`/` → 分式 · 分子 = 光标前那个**可见原子**', () {
-    test('正文里 `a/` ⇒ `\\frac{a}{}`（模板 ⇒ 光标进分母空槽）', () {
-      final AutoExpand? e = expand('a', 1, '/');
+  group('`/` → **独立插入分数线**（2026-10-18 用户改口径：不吃前面的字符）', () {
+    test('正文里 `a/` ⇒ `\frac{}{}`，`a` 原样留着', () {
+      final AutoExpand? e = expand('a/', 2, '/');
       expect(e, isNotNull);
-      expect(e!.kind, AutoExpandKind.fraction);
-      expect(e.from, 0);
-      expect(e.tex, r'\frac{a}{}');
-      expect(e.template, isTrue);
+      expect(e!.tex, '\\frac{}{}');
+      expect(e.from, 2, reason: '只在光标处插入，不吞 a');
     });
 
-    test('前面是空格 ⇒ 不触发（否则会造出 `\\frac{ }{}`）', () {
-      expect(expand('a ', 2, '/'), isNull);
-    });
-
-    test('文首 `/` ⇒ 不触发', () {
-      expect(expand('', 0, '/'), isNull);
-    });
-
-    test('公式里取**最后一个可见原子**', () {
-      // `$a+b$` 光标停在 `$` 前 ⇒ 分子是 `b`
-      final AutoExpand? e = expand(r'$a+b$', 4, '/');
+    test('空格之后裸打 `/` 也成分式', () {
+      final AutoExpand? e = expand('a /', 3, '/');
       expect(e, isNotNull);
-      expect(e!.tex, r'\frac{b}{}');
-      expect(e.from, 3); // `b` 的源偏移
-      expect(e.caret, 4);
+      expect(e!.tex, '\\frac{}{}');
     });
 
-    test('公式里**命令算一个原子**（`\\beta` 整段进分子）', () {
-      final AutoExpand? e = expand(r'$\alpha+\beta$', 13, '/');
+    test('文首 `/` 也成分式', () {
+      final AutoExpand? e = expand('/', 1, '/');
       expect(e, isNotNull);
-      expect(e!.tex, r'\frac{\beta}{}');
-      expect(e.from, 8);
+      expect(e!.tex, '\\frac{}{}');
     });
 
-    test('公式里光标在开头（没有可见原子）⇒ 不触发', () {
-      expect(expand(r'$x$', 1, '/'), isNull);
+    test('公式里 `/` ⇒ 不抽原子（不乘分子）', () {
+      final AutoExpand? e = expand(r'$\frac{a}{b}$', 12, '/');
+      expect(e, isNotNull);
+      expect(e!.tex, '\\frac{}{}');
     });
 
-    test('分式开关关掉 ⇒ `/` 就是普通斜杠', () {
-      expect(expand('a', 1, '/', slash: false), isNull);
+    test('关掉开关 ⇒ 不展开', () {
+      expect(expand('a/', 2, '/', slash: false), isNull);
     });
   });
 
