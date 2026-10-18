@@ -68,9 +68,13 @@ class PageLayout {
 /// 把 item 序列贪心装箱成页。
 ///
 /// [bodyHeight] 来自 `PageMetrics.bodyHeight`。
+/// [topInset] = **第一页顶部**预留的高度（2026-10-18 晚新增：文档以空行开头时，
+///   那几行空行是"真空段落"，必须占位；它不能挂在 item 的 `leadingGap` 上 ——
+///   `paginate` 对页首本来就不留段前距）。
 PageLayout paginate({
   required List<FlowItem> items,
   required double bodyHeight,
+  double topInset = 0,
 }) {
   if (bodyHeight <= 0) {
     throw ArgumentError.value(bodyHeight, 'bodyHeight', '页正文高必须为正');
@@ -79,7 +83,7 @@ PageLayout paginate({
   final overflow = <FlowItem>[];
 
   var cur = <PageSlot>[];
-  var y = 0.0;
+  var y = topInset; // ★ 只有第一页从 topInset 起步（flush 会把它复位成 0）
 
   void flush() {
     if (cur.isEmpty) return;

@@ -31,13 +31,12 @@ void main() {
       expect(curAt, greaterThanOrEqualTo(0), reason: '分子应是当前槽');
       expect(emptyAt, greaterThanOrEqualTo(0), reason: '分母应是普通空槽');
       expect(renderToSourceOffset(marked, curAt + 2), 6, reason: '点当前槽 → 分子偏移 6');
-      // ⚠️ 已知偏差（2026-10-14 收工时未查完）：**第二个**占位映射到 7（应为 8），差 1。
-      //    影响可控：映射后还会做**位点吸附**，偏 1 字符会被吸附回最近的合法位点；
-      //    而用户实际场景（单个空分母）走的是上面那条、已通过。
-      //    下一轮要查的方向：`found` 里是否混进了长度不同的额外匹配，导致 shift 多算 1。
-      expect(renderToSourceOffset(marked, emptyAt + 2), 8, reason: '点空槽 → 分母偏移 8');
-    }, skip: '第二个占位存在 off-by-one（实测 7 vs 8），留待下一轮定位；'
-        '主场景（单个空槽）另有测试覆盖并通过');
+      // ★★ 2026-10-18 晚：这条 skip 已解开（原来报 7，应为 8）。
+      //   现在实测就是 8 —— 中间那批改动（占位串换成 `M` + 宽度垫、当前槽换 `#FEFEFE`）
+      //   把当年那个"多算 1 个 shift"的成因一起带走了。
+      expect(renderToSourceOffset(marked, emptyAt + 2), 8,
+          reason: '点空槽 → 分母偏移 8');
+    });
   });
 
   group('普通位置：映射不改变偏移（除了插入串之前的那点位移）', () {

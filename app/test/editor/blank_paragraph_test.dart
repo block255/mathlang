@@ -1,0 +1,167 @@
+// ★★ §11.46 真修 · 「真空段落」与文首空行（2026-10-18 晚，P5）
+//
+// 用户原话（2026-10-18）：「之前那一批遗留的关于**空行和 enter** …… 也别忘记了」。
+// 规格（《位点与结构导航》§11.46）：
+//   · **段距**：块之间**一个**空行（`A\n\nB`）⇒ 只是那一点 `gap`（不占整行）；
+//   · **真空段落**：**两个以上**空行（`A\n\n\nB`）⇒ 第一个仍是段距，**其余每个占一整行**；
+//   · 真空段落是**真单元**：点它能落光标（按第几行落）、能打字、退格能删、Enter 能再长出
+//     一行（Enter 在空行上只补一个 `\n`）；
+//   · **文首空行**（`\n甲`）以前是零高 —— 现在每个都占一整行（记账 #2）。
+
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:mathlang/core/doc_buffer.dart';
+import 'package:mathlang/editor/doc_view.dart';
+import 'package:mathlang/editor/edit_view.dart';
+
+final Finder _slots = find.byWidgetPredicate(
+    (Widget w) => w.runtimeType.toString() == '_BlankSlot');
+
+Future<DocBuffer> _pumpDocView(
+  WidgetTester tester,
+  String doc, {
+  int caret = 0,
+  void Function(int offset)? onTapOffset,
+}) async {
+  final DocBuffer buf = DocBuffer(doc)..setCaret(caret);
+  await tester.pumpWidget(MaterialApp(
+    home: Scaffold(
+      body: SingleChildScrollView(
+        child: DocView(buffer: buf, onTapOffset: onTapOffset),
+      ),
+    ),
+  ));
+  await tester.pumpAndSettle();
+  return buf;
+}
+
+Future<DocBuffer> _pumpEditView(WidgetTester tester, String doc,
+    {int caret = 0}) async {
+  final DocBuffer buf = DocBuffer(doc)..setCaret(caret);
+  await tester.pumpWidget(MaterialApp(
+    home: Scaffold(
+      body: SingleChildScrollView(child: EditView(buffer: buf)),
+    ),
+  ));
+  tester.state<EditViewState>(find.byType(EditView)).focusInput();
+  await tester.pumpAndSettle();
+  return buf;
+}
+
+/// 横线上有没有光标竖条（1.5 宽的那个 Container）
+bool _hasCaretBar(WidgetTester tester) => tester
+    .widgetList<Container>(find.byType(Container))
+    .where((Container c) => c.constraints?.maxWidth == 1.5)
+    .isNotEmpty;
+
+/// 两行正文之间的**纵向距离**（用几何量，不依赖私有 widget 的高度）
+double _vGap(WidgetTester tester, String a, String b) =>
+    tester.getTopLeft(find.textContaining(b).first).dy -
+    tester.getTopLeft(find.textContaining(a).first).dy;
+
+void main() {
+  group('① 真空段落要占一整行（改前：段距恒为一点，多按 Enter 不长高）', () {
+    testWidgets('★ 一个空行 = 段距；两个空行 = 段距 ＋ **一整行**', (WidgetTester tester) async {
+      await _pumpDocView(tester, '甲\n\n乙');
+      final double one = _vGap(tester, '甲', '乙');
+      await _pumpDocView(tester, '甲\n\n\n乙');
+      final double two = _vGap(tester, '甲', '乙');
+      // 多出来的应当≈一行高（正文 16 ⇒ textCaretHeight ≈ 20）
+      expect(two - one, greaterThan(12.0),
+          reason: '`甲\\n\\n\\n乙` 中间那行空行必须真占高（实测差 ${two - one}）');
+      expect(two - one, lessThan(30.0), reason: '只该多**一行**，不是两行');
+    });
+
+    testWidgets('★ 三个空行 ⇒ 两行高（每多一个空行就多一行）', (WidgetTester tester) async {
+      await _pumpDocView(tester, '甲\n\n\n乙');
+      final double two = _vGap(tester, '甲', '乙');
+      await _pumpDocView(tester, '甲\n\n\n\n乙');
+      final double three = _vGap(tester, '甲', '乙');
+      expect(three - two, greaterThan(12.0));
+    });
+
+    testWidgets('★ 空行上要有**光标竖条**（改前：真空段落根本没人画）',
+        (WidgetTester tester) async {
+      // `甲\n\n\n乙`：空行是 [2,3) 这一行，光标落在 2 = 那一行行首
+      await _pumpDocView(tester, '甲\n\n\n乙', caret: 2);
+      expect(_hasCaretBar(tester), isTrue, reason: '光标在真空段落里必须看得见');
+    });
+  });
+
+  group('② 点哪一行就落哪一行（一个槽覆盖多行）', () {
+    testWidgets('★ 点槽的下半部分 ⇒ 落到**第二行**空行（不是永远落第一行）',
+        (WidgetTester tester) async {
+      int? got;
+      // `甲\n\n\n\n乙`：空行有两行（偏移 2 与 3）
+      await _pumpDocView(tester, '甲\n\n\n\n乙',
+          caret: 0, onTapOffset: (int o) => got = o);
+      final Rect slot = tester.getRect(_slots.first);
+      // 往下 1.5 行 ⇒ 第二行
+      await tester.tapAt(Offset(slot.left + 40, slot.top + 30));
+      await tester.pumpAndSettle();
+      expect(got, 3, reason: '点在第二个空行上 ⇒ 光标落在第二个空行的行首（实际 $got）');
+    });
+
+    testWidgets('★ 点上半部分 ⇒ 第一行（偏移 2）', (WidgetTester tester) async {
+      int? got;
+      await _pumpDocView(tester, '甲\n\n\n\n乙',
+          caret: 0, onTapOffset: (int o) => got = o);
+      final Rect slot = tester.getRect(_slots.first);
+      await tester.tapAt(Offset(slot.left + 40, slot.top + 4));
+      await tester.pumpAndSettle();
+      expect(got, 2);
+    });
+  });
+
+  group('③ 文首空行（记账 #2：以前是零高、点不到）', () {
+    testWidgets('★ `\\n甲`：文首那一行要占高、并有一个可点的槽',
+        (WidgetTester tester) async {
+      await _pumpDocView(tester, '\n甲');
+      // 改前：文首没有 gap ⇒ 只有文末槽 1 个；现在应当有 **2 个**（文首 + 文末）
+      expect(_slots, findsNWidgets(2),
+          reason: '文首空行也必须是一个槽（否则点不到、光标没人画）');
+      expect(tester.getSize(_slots.first).height, greaterThan(12.0));
+    });
+
+    testWidgets('★ `\\n\\n甲`：两个空行 ⇒ 两行高', (WidgetTester tester) async {
+      await _pumpDocView(tester, '\n甲');
+      final double one = tester.getTopLeft(find.textContaining('甲').first).dy;
+      await _pumpDocView(tester, '\n\n甲');
+      final double two = tester.getTopLeft(find.textContaining('甲').first).dy;
+      expect(two - one, greaterThan(12.0),
+          reason: '文首多一个空行就多一整行（实测 ${two - one}）');
+    });
+  });
+
+  group('④ Enter 的口径：普通行开新段，空行只加一行', () {
+    testWidgets('★ 普通行按 Enter ⇒ `\\n\\n`（新段，口径不变）',
+        (WidgetTester tester) async {
+      final DocBuffer buf = await _pumpEditView(tester, '甲', caret: 1);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(buf.buf, '甲\n\n');
+      expect(buf.caret, 3);
+    });
+
+    testWidgets('★★ 空行上按 Enter ⇒ 只补一个 `\\n`（真空段落再长一行）',
+        (WidgetTester tester) async {
+      // `甲\n\n`：光标在 3 = 空行行首（正是"Enter 一次"之后的落点）
+      final DocBuffer buf = await _pumpEditView(tester, '甲\n\n', caret: 3);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(buf.buf, '甲\n\n\n', reason: '在空行上按 Enter = 再加一行空行，不是又开一段');
+      expect(buf.caret, 4);
+    });
+
+    testWidgets('★ 连按两次 Enter（从正文出发）⇒ `甲\\n\\n\\n`（段距 + 一行空行）',
+        (WidgetTester tester) async {
+      final DocBuffer buf = await _pumpEditView(tester, '甲', caret: 1);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(buf.buf, '甲\n\n\n');
+    });
+  });
+}

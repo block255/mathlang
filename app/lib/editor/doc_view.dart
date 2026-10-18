@@ -30,6 +30,7 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter_math_fork/flutter_math.dart';
 
 import '../core/block.dart';
+import 'blank_runs.dart';
 import '../core/doc_buffer.dart';
 import '../core/doc_settings.dart';
 import '../layout/page_metrics.dart';
@@ -69,6 +70,8 @@ class _BlankSlot extends StatefulWidget {
     required this.onTap,
     required this.onBox,
     this.topAligned = false,
+    this.lineOffsets = const <int>[],
+    this.caretDy,
   });
 
   final String id;
@@ -86,6 +89,16 @@ class _BlankSlot extends StatefulWidget {
 
   /// 竖条是否**贴顶**（末尾槽占整片剩余空白时，光标要紧贴最后一行下面，不浮在中间）
   final bool topAligned;
+
+  /// ★★ 2026-10-18 晚（§11.46 真修）：这个槽代表的**真空段落里有哪几行**（每行行首偏移）。
+  ///
+  /// 一个槽可能覆盖 **n 个空行**（用户连按 Enter 出来的）。有了这张表：
+  ///   · 点槽里第 k 行 ⇒ 光标落到第 k 行（而不是永远落第一行）；
+  ///   · 光标在第 k 行 ⇒ 竖条画在那个行高上（`caretDy`）。
+  final List<int> lineOffsets;
+
+  /// 光标在这一串空行里的**纵向偏移**（`null` ⇒ 光标不在这一段里）
+  final double? caretDy;
 
   @override
   State<_BlankSlot> createState() => _BlankSlotState();
@@ -117,32 +130,71 @@ class _BlankSlotState extends State<_BlankSlot> {
     return GestureDetector(
       // ★ `opaque`：这个盒子**没有孩子**（只有空行），必须靠 behavior 自己接住点击
       behavior: HitTestBehavior.opaque,
-      onTap: () => widget.onTap(widget.offset),
+      // ★★ 2026-10-18 晚：有"行表"时按**点在第几行**落点（一个槽可能是好几个空行）；
+      //   没有行表（文末槽、旧调用）就照旧落到 `offset`。
+      onTapDown: widget.lineOffsets.isEmpty
+          ? null
+          : (TapDownDetails d) {
+              final RenderBox? box = context.findRenderObject() as RenderBox?;
+              if (box == null || !box.hasSize) {
+                widget.onTap(widget.offset);
+                return;
+              }
+              final double dy = box.globalToLocal(d.globalPosition).dy;
+              final int k = (dy / widget.caretHeight).floor();
+              final int i = k.clamp(0, widget.lineOffsets.length - 1);
+              widget.onTap(widget.lineOffsets[i]);
+            },
+      onTap: widget.lineOffsets.isEmpty ? () => widget.onTap(widget.offset) : null,
       child: MouseRegion(
         cursor: SystemMouseCursors.text,
         child: SizedBox(
           height: widget.height,
           width: double.infinity,
           child: widget.caretHere
-              ? Align(
-                  alignment: widget.topAligned
-                      ? Alignment.topLeft
-                      : Alignment.centerLeft,
-                  child: OverflowBox(
-                    alignment: widget.topAligned
-                        ? Alignment.topLeft
-                        : Alignment.centerLeft,
-                    minWidth: 0,
-                    maxWidth: widget.caretWidth * 4,
-                    minHeight: 0,
-                    maxHeight: widget.caretHeight,
-                    child: Container(
-                      width: widget.caretWidth,
-                      height: widget.caretHeight,
-                      color: widget.caretColor,
-                    ),
-                  ),
-                )
+              ? (widget.caretDy != null
+                  // ★ 有明确的行内偏移（多个空行 / 文末槽）⇒ 贴左上 + 下移 dy
+                  ? Align(
+                      alignment: Alignment.topLeft,
+                      child: Padding(
+                        padding: EdgeInsets.only(top: widget.caretDy!),
+                        child: OverflowBox(
+                          alignment: Alignment.topLeft,
+                          minWidth: 0,
+                          maxWidth: widget.caretWidth * 4,
+                          minHeight: 0,
+                          maxHeight: widget.caretHeight,
+                          child: Align(
+                            alignment: Alignment.topLeft,
+                            child: Container(
+                              width: widget.caretWidth,
+                              height: widget.caretHeight,
+                              color: widget.caretColor,
+                            ),
+                          ),
+                        ),
+                      ),
+                    )
+                  // 单个空行（段距）：保持原样（贴顶 / 居中），一个像素都不动
+                  : Align(
+                      alignment: widget.topAligned
+                          ? Alignment.topLeft
+                          : Alignment.centerLeft,
+                      child: OverflowBox(
+                        alignment: widget.topAligned
+                            ? Alignment.topLeft
+                            : Alignment.centerLeft,
+                        minWidth: 0,
+                        maxWidth: widget.caretWidth * 4,
+                        minHeight: 0,
+                        maxHeight: widget.caretHeight,
+                        child: Container(
+                          width: widget.caretWidth,
+                          height: widget.caretHeight,
+                          color: widget.caretColor,
+                        ),
+                      ),
+                    ))
               : null,
         ),
       ),
@@ -391,6 +443,9 @@ class DocViewState extends State<DocView> {
   final UnitPool _renderPool = UnitPool();
 
   List<double> _heights = <double>[];
+
+  /// 上一次分页用的**正文**（判"要不要重排"的第二根尺子，见 `_scheduleMeasure`）
+  String? _layoutSource;
   PageLayout? _layout;
   bool _measureScheduled = false;
   int _blockCount = 0;
@@ -1364,6 +1419,14 @@ class DocViewState extends State<DocView> {
           }
         }
       }
+      // ★★★ 2026-10-18 晚（P5 探针抓到的**真缺陷**）：**正文变了就得重排**。
+      //   原来只比"单元高度"⇒ 有一种改动**高度完全不变、位置必须变**：
+      //     `甲\n\n乙` → `甲\n\n\n乙`（多一个空行：单元高度一个像素都没动，
+      //     变化全在**段距**里）⇒ `changed == false` ⇒ `_layout` 沿用旧的 ⇒
+      //     **连按 Enter 不长高**（用户报的"空行不占行"的现象之一）。
+      //   ⇒ 把"正文"也纳入判据：正文与上次分页时不同 ⇒ 重排。
+      final String bufNow = widget.buffer.buf;
+      if (!changed && bufNow != _layoutSource) changed = true;
       if (!changed && _layout != null) return;
       // ★★ 2026-10-18 晚：**零单元也必须分页一次**。
       //   空文档前 `hs` 与 `_units` 都是空 ⇒ `changed == false` ⇒ 这里原来直接 return
@@ -1374,7 +1437,16 @@ class DocViewState extends State<DocView> {
 
       setState(() {
         _heights = hs;
-        _layout = paginate(items: _itemsFrom(hs), bodyHeight: _m.bodyHeight);
+        _layoutSource = bufNow;
+        _layout = paginate(
+          items: _itemsFrom(hs),
+          bodyHeight: _m.bodyHeight,
+          // ★ 文首空行：挂在第一页顶部（不能挂 leadingGap —— 页首不留段前距）。
+          //   ★ 与"块之间"不同：文首**每一个**空行都占一整行（前面没有"上一段"要分隔，
+          //     所以不存在"第一个空行只是段距"这回事）。
+          topInset: leadingBlankHeight(_blankRunAtStart().length,
+              lineHeight: _blankLineHeight),
+        );
       });
       _emitStats();
     });
@@ -1385,12 +1457,52 @@ class DocViewState extends State<DocView> {
           FlowItem(
             id: _units[i].id,
             height: hs[i],
-            leadingGap:
-                _units[i].isFirstInBlock && i > 0 ? _gapBefore(_units[i].type) : 0,
+            // ★★ 2026-10-18 晚（§11.46 真修）：段距之外还要加上**真空段落**的高度。
+            //   规则：上一个单元之后有 n 个连续空行 ⇒
+            //     n <= 1 ⇒ 只是段距（一个空行 = 段落边界，视觉上是"一点段距"）
+            //     n >= 2 ⇒ 多出 (n-1) 个**整行**（用户连按 Enter 出来的那些空行要真占高）
+            leadingGap: _units[i].isFirstInBlock && i > 0
+                ? _gapBefore(_units[i].type) +
+                    extraBlankHeight(_blankRunAfter(_units[i - 1]).length,
+                        lineHeight: _blankLineHeight)
+                : 0,
             breakBefore: _units[i].breakBefore,
             label: _units[i].label,
           ),
       ];
+
+  /// 一行空行的**高度**（用正文字号算，与文本行盒同一把尺子）
+  double get _blankLineHeight => textCaretHeight(_s.bodyFontSize);
+
+  /// 从 [from]（**必须是行首**）起的连续**空行**，返回每个空行的行首偏移。
+  ///
+  /// ★ 判据本体在 `blank_runs.dart`（纯函数，可单测 —— 它决定"要不要占一整行高"）。
+  List<int> _blankRunFrom(int from) => blankRunFrom(widget.buffer.buf, from);
+
+  /// 上一个单元之后那串空行的**行首偏移**（没有 ⇒ 空表）
+  List<int> _blankRunAfter(_Unit prev) =>
+      blankRunAfter(widget.buffer.buf, prev.acceptTo);
+
+  /// 文档**开头**那串空行（文首空行，记账 #2）
+  List<int> _blankRunAtStart() {
+    final String s = widget.buffer.buf;
+    if (s.isEmpty) return const <int>[];
+    return _blankRunFrom(0);
+  }
+
+  /// 光标落在 [run] 的**第几个空行**上（不在这一段里 ⇒ null）
+  int? _caretLineIndexInRun(List<int> run) {
+    final int? c = _caret;
+    if (c == null || run.isEmpty) return null;
+    final String s = widget.buffer.buf;
+    for (var i = 0; i < run.length; i++) {
+      final int start = run[i];
+      final int nl = s.indexOf('\n', start);
+      final int end = nl < 0 ? s.length : nl;
+      if (c >= start && c <= end) return i;
+    }
+    return null;
+  }
 
   // ---------------- 渲染 ----------------
 
@@ -1412,13 +1524,25 @@ class DocViewState extends State<DocView> {
       //     · 点它能落到**空行的位点**（`caret = 空行起点`）；
       //     · 光标在空行上时，它自己画那根竖条（文本层标准，可溢出空隙、不撑版面）。
       if (gap > 0.5) {
-        final int blankOffset = prevUnit == null ? -1 : _blankOffsetAfter(prevUnit);
-        if (blankOffset >= 0) {
+        // ★★ 2026-10-18 晚（§11.46 真修）：这段空隙可能覆盖**多个空行**
+        //   （用户连按 Enter 出来的"真空段落"）⇒ 用行表，不用单个 offset。
+        //   · 第一个单元之前（`prevUnit == null`）⇒ 那是**文首空行**（记账 #2），
+        //     它在第 1 页顶部（`paginate(topInset:)` 给它留了高）；
+        final List<int> run = prevUnit != null
+            ? _blankRunAfter(prevUnit)
+            : (p == 0 ? _blankRunAtStart() : const <int>[]);
+        if (run.isNotEmpty) {
+          final int? idx = _caretLineIndexInRun(run);
           children.add(_BlankSlot(
-            id: 'blank@$blankOffset',
+            id: 'blank@${run.first}',
             height: gap,
-            offset: blankOffset,
-            caretHere: !widget.hideCaretAndSelection && _caret == blankOffset,
+            offset: run.first,
+            lineOffsets: run,
+            caretHere: !widget.hideCaretAndSelection &&
+                widget.caretVisible &&
+                idx != null,
+            // 多个空行 ⇒ 竖条画在**光标所在的那一行**上；单行（段距）⇒ 保持原来的贴顶/居中
+            caretDy: (run.length > 1 && idx != null) ? idx * _blankLineHeight : null,
             caretHeight: textCaretHeight(_s.bodyFontSize),
             caretWidth: 1.5,
             caretColor: const Color(kCaretColorValue),

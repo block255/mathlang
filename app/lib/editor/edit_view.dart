@@ -271,6 +271,32 @@ class EditViewState extends State<EditView> {
 
   // ---------------- 平台文本 → 缓冲区 ----------------
 
+  /// ★★ 2026-10-18 晚（§11.46 真修）：**Enter 该插什么**。
+  ///
+  /// | 光标在哪 | 插什么 | 为什么 |
+  /// |---|---|---|
+  /// | **普通行**（本行有字） | `\n\n` | 新段（md 的段落边界） |
+  /// | **空行**（本行一个字都没有） | `\n` | 用户要的是"**再加一行空行**"（真空段落），不是又开一段 |
+  ///
+  /// 这条是"空行是一等公民"的最后一块：`A` + Enter + Enter 现在得到
+  /// `A\n\n\n`（= 段距 + **一整行**空行，看得见、能落光标、能再按 Enter 接着长），
+  /// 而不是以前那种 `A\n\n\n\n`（多出一段"看不见的段距"）。
+  /// ★ `Shift+Enter` 不走这里（它是"段内硬换行"）。
+  String _enterPayload() {
+    final String s = _buf.buf;
+    final int c = _buf.caret.clamp(0, s.length);
+    var ls = c;
+    while (ls > 0 && s[ls - 1] != '\n') {
+      ls--;
+    }
+    var le = c;
+    while (le < s.length && s[le] != '\n') {
+      le++;
+    }
+    final bool lineBlank = s.substring(ls, le).trim().isEmpty;
+    return lineBlank ? '\n' : '\n\n';
+  }
+
   /// 平台（含 IME 提交）的一段文本 → **一次**编辑写进缓冲区。
   ///
   /// ★ 这里**不碰输入设备**（不再有"回写镜像框"这一步）：
@@ -836,7 +862,7 @@ class EditViewState extends State<EditView> {
     //   而这里返回 `ignored` ⇒ 冒泡给祖先 ⇒ **Flutter 默认的焦点遍历把焦点移走** ⇒ 失焦 ⇒ 光标消失。
     //   ⇒ 自己插换行（与 formatter 同一条规则：`Enter` = 新块 ⇒ `\n\n`；`Shift+Enter` = 块内软换行）。
     if (k == LogicalKeyboardKey.enter || k == LogicalKeyboardKey.numpadEnter) {
-      _commitText(shift ? '  \n' : '\n\n');
+      _commitText(shift ? '  \n' : _enterPayload());
       _pokeBlink();
       return KeyEventResult.handled;
     }
