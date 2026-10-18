@@ -78,6 +78,10 @@ class DocSettings {
     double? heading3Size,
     double? headerFontSize,
     String? headerText,
+
+    /// ★ 把 `displayFontSize` **显式清回 null**（"跟随正文"）——
+    /// `copyWith` 的 `??` 语义下传 null 等于"不改"，所以另开一个开关。
+    bool clearDisplayFontSize = false,
   }) {
     return DocSettings(
       pageWidthMm: pageWidthMm ?? this.pageWidthMm,
@@ -88,7 +92,8 @@ class DocSettings {
       marginRightMm: marginRightMm ?? this.marginRightMm,
       bodyFontSize: bodyFontSize ?? this.bodyFontSize,
       lineHeight: lineHeight ?? this.lineHeight,
-      displayFontSize: displayFontSize ?? this.displayFontSize,
+      displayFontSize:
+          clearDisplayFontSize ? null : (displayFontSize ?? this.displayFontSize),
       heading1Size: heading1Size ?? this.heading1Size,
       heading2Size: heading2Size ?? this.heading2Size,
       heading3Size: heading3Size ?? this.heading3Size,

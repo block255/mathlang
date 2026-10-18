@@ -151,11 +151,17 @@ class SymbolLibrary {
     ];
   }
 
-  /// 某分类下出现过的子类（去重保序）；没有子类返回空表
-  List<String> subgroupsOf(String group) => <String>[
-        for (final SymbolItem i in items)
-          if (i.group == group && i.subgroup.isNotEmpty) i.subgroup,
-      ];
+  /// 某分类下出现过的子类（**去重保序**）；没有子类返回空表
+  ///
+  /// ★ 2026-10-17 修：原实现忘了去重 ⇒ 下拉里会出现 `希腊 · 希腊 · 运算 · 运算 · 关系`。
+  List<String> subgroupsOf(String group) {
+    final List<String> out = <String>[];
+    for (final SymbolItem i in items) {
+      if (i.group != group || i.subgroup.isEmpty) continue;
+      if (!out.contains(i.subgroup)) out.add(i.subgroup);
+    }
+    return out;
+  }
 
   SymbolItem? byId(String id) {
     for (final SymbolItem i in items) {

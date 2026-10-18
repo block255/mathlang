@@ -119,4 +119,71 @@ void main() {
       expect(find.byKey(const Key('status-text')), findsOneWidget);
     });
   });
+
+  group('⑤ ★ pageXDock（横条滑块）：只平移，不改宽', () {
+    test('pageLeft 纯函数：贴左 / 居中 / 贴右 / 放不下', () {
+      // 1400 窗口 − 右栏 418 = 文档列的可用宽
+      const double avail = 1400 - 418;
+      const double span = avail - 2 * LayoutMetrics.pageOuterMargin - _pageWidth;
+      expect(span, greaterThan(0), reason: '这组数字要真的有活动空间');
+      expect(
+          LayoutMetrics.pageLeft(
+              availableWidth: avail, pageWidth: _pageWidth, dock: 0),
+          closeTo(LayoutMetrics.pageOuterMargin, 0.01));
+      expect(
+          LayoutMetrics.pageLeft(
+              availableWidth: avail, pageWidth: _pageWidth, dock: 0.5),
+          closeTo(LayoutMetrics.pageOuterMargin + span * 0.5, 0.01));
+      expect(
+          LayoutMetrics.pageLeft(
+              availableWidth: avail, pageWidth: _pageWidth, dock: 1),
+          closeTo(LayoutMetrics.pageOuterMargin + span, 0.01));
+      // 窗口太窄 ⇒ 贴左（配合 fit-width 缩放，不硬挤）
+      expect(
+          LayoutMetrics.pageLeft(
+              availableWidth: 800, pageWidth: _pageWidth, dock: 0.5),
+          LayoutMetrics.pageOuterMargin);
+      // ★ 默认 dock = 0 = 老的"偏左"（语义等价迁移）
+      expect(const AppSettings().pageXDock, 0);
+    });
+
+    testWidgets('★ 任何 dock 值下正文宽不变（变的只有 x）', (WidgetTester tester) async {
+      final EditorPageState st =
+          await _pump(tester, window: const Size(1400, 1000));
+      final double w0 = _editWidth(tester);
+      final double x0 = tester.getTopLeft(find.byType(EditView).first).dx;
+      for (final double dock in <double>[0.25, 0.5, 0.75, 1.0]) {
+        st.settings = st.settings.copyWith(pageXDock: dock);
+        await tester.pumpAndSettle();
+        expect(_editWidth(tester), closeTo(w0, 0.5),
+            reason: 'dock=$dock 时正文宽必须不变');
+        expect(tester.getTopLeft(find.byType(EditView).first).dx,
+            greaterThanOrEqualTo(x0 - 0.5));
+      }
+      expect(tester.getTopLeft(find.byType(EditView).first).dx,
+          greaterThan(x0), reason: '贴右必须真的往右挪');
+    });
+  });
+
+  group('⑥ 快捷栏 / 面板两个开关的四种组合：正文宽恒不变', () {
+    testWidgets('★ 版面中性对"任意开关组合"成立', (WidgetTester tester) async {
+      final EditorPageState st =
+          await _pump(tester, window: const Size(1400, 1000));
+      final double w0 = _editWidth(tester);
+      for (final List<bool> combo in <List<bool>>[
+        <bool>[true, false],
+        <bool>[false, true],
+        <bool>[true, true],
+        <bool>[false, false],
+      ]) {
+        st.toggleQuickBar(open: combo[0]);
+        st.togglePanel(open: combo[1]);
+        await tester.pumpAndSettle();
+        expect(_editWidth(tester), closeTo(w0, 0.5),
+            reason: '快捷栏=${combo[0]} 面板=${combo[1]} 时正文宽必须不变');
+      }
+      // 都收起 ⇒ 右栏消失
+      expect(find.byKey(const Key('right-column')), findsNothing);
+    });
+  });
 }

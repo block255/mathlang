@@ -41,6 +41,7 @@ class EditViewStats {
     required this.composing,
     required this.composingText,
     this.autoWrapped = 0,
+    this.pages = 0,
   });
 
   final int length;
@@ -57,6 +58,9 @@ class EditViewStats {
   /// 走状态栏 = **不进正文流**（不触发重排/分页）；同时它也是 S4-a A4「诊断清单」的数据来源。
   final int autoWrapped;
 
+  /// ★ 排完版后**实际页数**（由 `DocView` 的 `DocViewStats.pages` 回传；状态栏「页号」用它）。
+  final int pages;
+
   @override
   bool operator ==(Object other) =>
       other is EditViewStats &&
@@ -65,14 +69,16 @@ class EditViewStats {
       other.edits == edits &&
       other.composing == composing &&
       other.composingText == composingText &&
-      other.autoWrapped == autoWrapped;
+      other.autoWrapped == autoWrapped &&
+      other.pages == pages;
 
   @override
-  int get hashCode =>
-      Object.hash(length, caret, edits, composing, composingText, autoWrapped);
+  int get hashCode => Object.hash(
+      length, caret, edits, composing, composingText, autoWrapped, pages);
 
   @override
   String toString() => '$length 字符 · 光标 $caret · $edits 次编辑'
+      '${pages > 0 ? ' · 第 $pages 页' : ''}'
       '${composing ? ' · 组合中「$composingText」' : ''}'
       '${autoWrapped > 0 ? ' · 自动包裹 $autoWrapped 处' : ''}';
 }
@@ -167,6 +173,8 @@ class EditViewState extends State<EditView> {
   /// ★ S4-a A2：最近一次**粘贴**里智能包裹了几处（0 = 没包裹 / 已被后续编辑清掉）
   int _autoWrapped = 0;
 
+  /// ★ S4-b②：`DocView` 回传的**实际页数**（状态栏「页号」读它）
+  int _pages = 0;
   EditViewStats? _lastStats;
 
   /// `false` = 已经开始 dispose（此时一律不再 setState —— `mounted` 在 dispose 期间仍为 true）
@@ -596,6 +604,7 @@ class EditViewState extends State<EditView> {
       composing: _input.isComposing,
       composingText: _input.composingText,
       autoWrapped: _autoWrapped,
+      pages: _pages,
     );
     if (_lastStats == s) return;
     _lastStats = s;
@@ -825,6 +834,12 @@ class EditViewState extends State<EditView> {
                 _onPressHit(offset);
               },
               onCaretRect: _onCaretRect,
+              // ★ 页数回传：状态栏「页号」与设置页的"后果可见"都读这一条
+              onStats: (DocViewStats s) {
+                if (s.pages == _pages) return;
+                _pages = s.pages;
+                if (_alive && mounted) _emitStats();
+              },
               // ★ 组合串接进排版 → 后面的字被真的推开（只在文字类单元里；公式块见 _caretInMathBlock）
               composingText: _caretInMathBlock ? '' : _input.composingText,
               // ★ ⑤ 失焦不画光标与选区；聚焦时按 530 ms 闪烁
