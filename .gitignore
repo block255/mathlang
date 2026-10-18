@@ -11,6 +11,7 @@
 # ── 运行时 / 临时文件（脚本用，不入库）──
 scripts/cmd.txt
 scripts/run.log
+scripts/state.json
 
 # ── 发布产物（目录保留、内容不入库）──
 dist/*

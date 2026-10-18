@@ -33,6 +33,16 @@
 
 ## 二、准备：拿到两个东西
 
+### 2.0 先把应用跑起来（三种入口，都不需要管理员）
+
+| 想要 | 怎么做 |
+|---|---|
+| **开发实例（可热重载）** | 双击 `scripts\dev.cmd`（= `dev_windows.ps1`）；窗口留着看日志。起来后 `run.log` / `state.json` 就绪 |
+| 同上，但用 Web 预览 | `powershell -ExecutionPolicy Bypass -File scripts\dev_windows.ps1 -Device web` |
+| **正式形态（双击即开）** | `scripts\build_exe.ps1` 打包 → `scripts\make_shortcut.ps1 -Dev` 建快捷方式 |
+
+`state.json` 里 `phase` 会是 `building` → `running`，`vmService` 就是下面要用的地址。
+
 ### 2.1 窗口句柄与客户区
 
 ```
@@ -45,7 +55,11 @@ computer_find {handle:<hwnd>, depth:4}
 
 ### 2.2 VM service 地址
 
-从 `scripts\run.log` 里抓这一行：
+**首选从 `scripts\state.json` 读**（桥会把它写好）：
+```json
+{ "phase": "running", "vmService": "http://127.0.0.1:<port>/<auth>=/" }
+```
+兜底：在 `scripts\run.log` 里搜这一行
 ```
 A Dart VM Service on Windows is available at: http://127.0.0.1:<port>/<auth>=/
 ```

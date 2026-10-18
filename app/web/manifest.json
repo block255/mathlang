@@ -1,11 +1,11 @@
 {
-    "name": "mathlang",
-    "short_name": "mathlang",
+    "name": "数语引擎",
+    "short_name": "数语引擎",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#4D6BFE",
+    "theme_color": "#4D6BFE",
+    "description": "看不见数学编码的数学文档编辑器：符号点选、A4 分页、导出 PDF 与图片集。",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [
