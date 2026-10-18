@@ -198,21 +198,23 @@ class SymbolPanelState extends State<SymbolPanel> {
               message: _group == null ? '先选分类' : '「$_group」没有子类',
               child: _filterChip('子类', '全部', enabled: false),
             ),
-          const Spacer(),
-          // ★★ 2026-10-18（用户拍板）：**行间公式是排版动作，不是符号** ⇒ 从网格里撤掉，
-          //   改成筛选行右侧的**文字按钮**（与 🔍 分类/子类同一行，永远可达）。
-          TextButton(
+          const SizedBox(width: 6),
+          // ★★ 2026-10-18（用户复验）：**跟筛选按钮并排靠左**、字号大一点、带**边框**。
+          //   它是筛选行里的一个"动作"，不是右侧的统计文字。
+          OutlinedButton(
             key: const Key('panel-insert-display'),
             onPressed: widget.onInsertDisplay,
-            style: TextButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-              minimumSize: const Size(0, 26),
+            style: OutlinedButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              minimumSize: const Size(0, 28),
               tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              side: const BorderSide(color: Color(0xFFCBD5E0)),
+              foregroundColor: const Color(0xFF2D3748),
             ),
             child: const Text('行间公式',
-                style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600)),
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
           ),
-          const SizedBox(width: 8),
+          const Spacer(),
           Text(
             searching ? '搜索 $count 项' : '共 $count 项',
             key: const Key('panel-count'),
