@@ -335,6 +335,7 @@ class DocView extends StatefulWidget {
     this.settings = DocSettings.defaults,
     this.onStats,
     this.onTapOffset,
+    this.onEnvResizeRequest,
     this.onCaretRect,
     this.composingText = '',
     this.hideCaretAndSelection = false,
@@ -351,6 +352,9 @@ class DocView extends StatefulWidget {
   /// 文字走 `RenderParagraph.getPositionForOffset` + 段落↔源坐标换算；
   /// 行内公式与行间公式走 S1 验证过的 `hitTestMathTex`（叶盒 ↔ 可见原子）再做位点吸附。
   final void Function(int offset)? onTapOffset;
+
+  /// 行间块上**右键**时回调（参数 = 该块的源偏移）；多行环境才会被接住（PC-5）
+  final void Function(int offset)? onEnvResizeRequest;
 
   /// ★ S3-2：**光标处**的盒子（DocView 局部坐标）—— 给平台文本输入面定位用。
   ///
@@ -1181,8 +1185,15 @@ class DocViewState extends State<DocView> {
           );
         }
         return Center(
-          child: MathWithCaret(
-            tex: tex,
+          // ★★ 2026-10-18（PC-5 右键入口）：行间块上**右键** ⇒ 请求改尺寸。
+          //   只有多行环境（矩阵/行列式）会被 EditView 接住；其它公式右键什么都不发生。
+          child: GestureDetector(
+            onSecondaryTapDown: widget.onEnvResizeRequest == null
+                ? null
+                : (TapDownDetails _) =>
+                    widget.onEnvResizeRequest!(u.renderBase),
+            child: MathWithCaret(
+              tex: tex,
             // ★ ⑤ 选区：行间公式整块是一个对象（用户拍板）—— 被选中就铺整块
             selFrom: selFrom,
             selTo: selTo,
@@ -1201,6 +1212,7 @@ class DocViewState extends State<DocView> {
                 '［公式不完整］',
                 style: TextStyle(color: Color(0xFFB08968), fontSize: 13),
               ),
+            ),
             ),
           ),
         );

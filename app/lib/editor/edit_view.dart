@@ -31,6 +31,8 @@ import '../render/caret_sites.dart'
     show kCaretColorValue, CaretSiteTable, SlotSpan, buildCaretSites;
 import '../render/delete_reclaim.dart';
 import '../render/insert_guard.dart';
+import '../lang/env_resize.dart';
+import '../ui/env_size_dialog.dart';
 import '../render/math_nav.dart';
 import '../render/site_adjacency.dart';
 import '../render/normalize.dart';
@@ -569,6 +571,49 @@ class EditViewState extends State<EditView> {
     return true;
   }
 
+  /// **右键改尺寸**（PC-5）：只对多行环境（矩阵/行列式）生效。
+  ///
+  /// 流程：定位数学段 ⇒ 认环境族与当前行列 ⇒ 弹面板（带当前值）⇒ `resizeEnvironment` 就地重写。
+  /// 语义：既有内容左上对齐保留；缩小的内容进**一次撤销**（`_mutate` 记一步）。
+  Future<void> _resizeEnvAt(int offset) async {
+    if (!_alive) return;
+    final MathRegion? r = mathRegionAt(_buf.buf, offset);
+    if (r == null) return;
+    final EnvStyle? style = envStyleOf(r.tex);
+    if (style == null) return; // 不是多行环境 ⇒ 右键不做事
+    final bool det = style == EnvStyle.det;
+    final List<List<String>> cells = splitEnvCells(_envBody(r.tex, style));
+    final int rows = cells.isEmpty ? 2 : cells.length;
+    final int cols = cells.isEmpty ? 2 : cells.first.length;
+    final EnvSizeChoice? choice = await showEnvSizeDialog(
+      context,
+      style: style,
+      rows: rows < 1 ? 2 : rows,
+      cols: cols < 1 ? 2 : cols,
+      determinant: det,
+      title: det ? '行列式' : '矩阵',
+    );
+    if (choice == null || !mounted) return;
+    final String next = resizeEnvironment(r.tex,
+        rows: choice.rows, cols: choice.cols, style: choice.style);
+    if (next == r.tex) return;
+    _mutate(() => _buf.replace(r.contentStart, r.contentEnd, next));
+    _buf.setCaret(r.contentStart);
+  }
+
+  String _envBody(String tex, EnvStyle style) {
+    final String name = switch (style) {
+      EnvStyle.bracket => 'bmatrix',
+      EnvStyle.paren => 'pmatrix',
+      EnvStyle.det => 'vmatrix',
+    };
+    final String begin = '\\begin{$name}';
+    final String end = '\\end{$name}';
+    final int i = tex.indexOf(begin);
+    final int j = tex.indexOf(end);
+    if (i < 0 || j <= i) return '';
+    return tex.substring(i + begin.length, j);
+  }
   void _mutate(void Function() op) {    final String before = _buf.buf;
     op();
     if (identical(before, _buf.buf)) return;
@@ -1155,6 +1200,8 @@ class EditViewState extends State<EditView> {
                 focusInput(); // 必须在用户手势里拿焦点，浏览器才肯把 IME 接上
                 _onPressHit(offset);
               },
+              // ★★ 2026-10-18（PC-5）：行间块上右键 ⇒ 改尺寸（只有多行环境接得住）
+              onEnvResizeRequest: _resizeEnvAt,
               onCaretRect: _onCaretRect,
               // ★ 页数回传：状态栏「页号」与设置页的"后果可见"都读这一条
               onStats: (DocViewStats s) {
