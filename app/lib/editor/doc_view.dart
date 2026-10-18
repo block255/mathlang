@@ -609,10 +609,15 @@ class DocViewState extends State<DocView> {
 
     // ① 行间公式块：整块就是一个数学段
     if (u.type == BlockType.math) {
+      final String rawTex = _renderParts(u.type, u.source).text;
+      // ★★ §6.1.1（2026-10-18）：**空的公式块没有字形盒** ⇒ 命中表用不了
+      //   （`_mathBlockKeys` 那个 Math 盒根本不存在 —— 我们画的是 `EmptyMathMark`）。
+      //   但它是**看得见的对象** ⇒ 点这块里的任何地方都落进块内
+      //   （空块唯一的内容位点 = `renderBase`）。
+      if (rawTex.trim().isEmpty) return u.renderBase;
       final RenderObject? mr =
           _mathBlockKeys[u.id]?.currentContext?.findRenderObject();
       if (mr is! RenderBox || !mr.hasSize) return null;
-      final String rawTex = _renderParts(u.type, u.source).text;
       final int? caretRel = _caret == null ? null : u.relFor(_caret);
       final int? texRel = _mathTapTexOffset(
         tex: rawTex,

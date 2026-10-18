@@ -44,8 +44,13 @@ class SymbolInsertResult {
       'caret=$caret, inserted="${inserted.replaceAll('\n', r'\n')}")';
 }
 
-/// tex 里**第一个空槽**的偏移（空槽 = 一对空的 `{}` 或 `[]`）。
+/// 建壳：行内 `$…$` / 行间 `$$\n…\n$$`（围栏必须**独占一行**，否则不是围栏）。
 ///
+/// ★ 行间的前缀固定 3 个字符（`$$\n`）—— 光标定位要按它算（见 `shellPrefix`）。
+String _shell(String tex, {required bool display}) =>
+    display ? '\$\$\n$tex\n\$\$' : '\$$tex\$';
+
+/// tex 里**第一个空槽**的偏移（空槽 = 一对空的 `{}` 或 `[]`）。///
 /// ★ 为什么不用位点表的第一个位点：位点表包含"tex 之前/之后"这类**边界位点**，
 ///   而这里要的是"**空槽内部**的第一个落点"（模板插入后光标就该停在那个空格里）。
 ///   判据就是源码里的空组 —— 与 `slot_marks` 认空槽的口径一致（空 `{}` / 空 `[]`）。
@@ -59,6 +64,11 @@ int firstSlotOffset(String tex) {
 }
 
 /// 把 [tex] 插到光标处（或替换选区），返回新文档与新光标。
+///
+/// [display] = 插成**行间公式段**（`$$\n<tex>\n$$`，围栏独占一行）。
+/// ★ 2026-10-18：`行间` 与 `行内` 是**两种排版意图**，混不进去 ⇒
+///   display 请求**不并入**已有的行内公式；而载荷里带 `\n` 走 `insert_guard` 规则 ①，
+///   会被**推出**行内公式（推到 `closeEnd` 之后），所以不会把 `$…$` 劈开。
 SymbolInsertResult applySymbolInsert({
   required String doc,
   required int caret,
@@ -66,6 +76,7 @@ SymbolInsertResult applySymbolInsert({
   required int selEnd,
   required String tex,
   required bool template,
+  bool display = false,
 }) {
   final int c = caret.clamp(0, doc.length);
   final int s = selStart.clamp(0, doc.length);
@@ -79,19 +90,19 @@ SymbolInsertResult applySymbolInsert({
   if (e > s) {
     // ③ 替换选区
     mode = SymbolInsertMode.replaceSelection;
-    wrapped = !_touchesMath(doc, s, e);
-    text = wrapped ? '\$$tex\$' : tex;
-  } else if (_mergeRegion(doc, c) != null) {
+    wrapped = display || !_touchesMath(doc, s, e);
+    text = wrapped ? _shell(tex, display: display) : tex;
+  } else if (!display && _mergeRegion(doc, c) != null) {
     // ① 并入数学段（★ 落点要**挪进段内**：段边界那一格在 `mathRegionAt` 里算"段外"）
     mode = SymbolInsertMode.mergeIntoMath;
     wrapped = false;
     text = tex;
     mergeAt = _mergeRegion(doc, c)!.at;
   } else {
-    // ② 在文字里 ⇒ 自动建壳
+    // ② 在文字里 ⇒ 自动建壳（display ⇒ 建的是**行间**的壳）
     mode = SymbolInsertMode.wrapNewInlineMath;
     wrapped = true;
-    text = '\$$tex\$';
+    text = _shell(tex, display: display);
   }
 
   // ★ 走同一条守门人链（含行边界 ③④⑤、粘合处挪位 ②、裸参数补花括号）
@@ -123,7 +134,8 @@ SymbolInsertResult applySymbolInsert({
 
   // 新光标：模板 ⇒ 第一个空槽；符号 ⇒ 插入内容之后
   final int padPrefix = plan.padding.prefixNewline ? 1 : 0;
-  final int shellPrefix = wrapped ? 1 : 0;
+  // ★ 行间壳的前缀是 `$$\n`（3 个字符），行内壳是 `$`（1 个）
+  final int shellPrefix = wrapped ? (display ? 3 : 1) : 0;
   final int texStart = at + padPrefix + shellPrefix + sepPrefix;
   final int caretOut = template
       ? (texStart + firstSlotOffset(tex)).clamp(0, newDoc.length)

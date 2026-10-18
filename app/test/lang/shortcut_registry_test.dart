@@ -9,11 +9,11 @@ import 'package:mathlang/lang/shortcut_registry.dart';
 
 void main() {
   group('① 表本身', () {
-    test('43 条动作，其中 42 条已接入（只剩源码视图等 S5）', () {
-      expect(kShortcutActions.length, 43);
-      expect(ShortcutSettings.total, 43);
+    test('44 条动作，其中 43 条已接入（只剩源码视图等 S5）', () {
+      expect(kShortcutActions.length, 44);
+      expect(ShortcutSettings.total, 44);
       // ★ 2026-10-18 S4-c：整套 Ctrl+Alt+* / Ctrl+↑↓ / Ctrl+1..3 接线完成
-      expect(ShortcutSettings.wiredCount, 42);
+      expect(ShortcutSettings.wiredCount, 43);
       final List<ShortcutAction> planned = <ShortcutAction>[
         for (final ShortcutAction a in kShortcutActions)
           if (!a.wired) a,

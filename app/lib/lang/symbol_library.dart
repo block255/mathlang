@@ -16,6 +16,14 @@ import 'package:flutter/services.dart' show AssetBundle, rootBundle;
 /// 一个可插入的东西：**符号**（插一个 tex）或**结构模板**（插一个带空槽的 tex）
 enum SymbolKind { symbol, template }
 
+/// 插成什么形态（★ 2026-10-18：`行间公式段` 与多行环境模板走 display，其余一律 inline）
+///
+/// ★ 口径（用户拍板）：**行内依然是主要地位** —— 用户的话是
+/// "打行间加途径并不意味着走公式块思路，我们的行内依然是主要地位"。
+/// 所以 `display` 只给**少数"天生就是一段"的东西**：`cases` / `aligned`（多行环境）
+/// 与"行间公式段"本身。**绝大多数项仍然是 inline**（守卫会盯这个比例）。
+enum SymbolInsertAs { inline, display }
+
 class SymbolItem {
   const SymbolItem({
     required this.id,
@@ -29,6 +37,7 @@ class SymbolItem {
     this.keywords = const <String>[],
     this.alsoIn = const <String>[],
     this.preview = '',
+    this.insertAs = SymbolInsertAs.inline,
   });
 
   final String id;
@@ -57,6 +66,21 @@ class SymbolItem {
   /// 用户根本认不出这是"分段"。所以给一份**预览专用**的填充式
   /// （**插入的仍是空槽 tex**，两者不混）。
   final String preview;
+
+  /// ★★ 插成**行内**还是**行间段**（默认行内 —— 行内是主要地位）
+  ///
+  /// `display` ⇒ 插入时包成
+  /// ```
+  /// $$
+  /// <tex>
+  /// $$
+  /// ```
+  /// （围栏独占一行，走 `insert_guard` 的规则 ③④）。
+  /// `tex` 为空 ⇒ 插入一个**空的行间公式段**，光标落在围栏之间的空行上；
+  /// 空段由 `render/empty_math_mark.dart` 画成淡虚线小框 ⇒ 看得见、点得到。
+  final SymbolInsertAs insertAs;
+
+  bool get isDisplay => insertAs == SymbolInsertAs.display;
 
   /// 预览该用哪份 tex
   String get previewTex => preview.isEmpty ? tex : preview;
@@ -128,6 +152,9 @@ class SymbolLibrary {
             a as String,
         ],
         preview: (m['preview'] as String?) ?? '',
+        insertAs: (m['insertAs'] as String?) == 'display'
+            ? SymbolInsertAs.display
+            : SymbolInsertAs.inline,
       ));
     }
     return SymbolLibrary(out);

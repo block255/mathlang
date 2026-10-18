@@ -12,8 +12,9 @@
     { "id": "overline", "kind": "template", "tex": "\\overline{}", "label": "上划线", "alias": ["overline", "bar"], "pinyin": "shx", "keywords": ["共轭", "平均值"], "group": "结构" },
     { "id": "hat", "kind": "template", "tex": "\\hat{}", "label": "帽子", "alias": ["hat"], "pinyin": "mz", "keywords": ["估计量", "单位向量"], "group": "结构" },
     { "id": "vec", "kind": "template", "tex": "\\vec{}", "label": "向量", "alias": ["vec", "vector"], "pinyin": "xl", "keywords": ["箭头", "矢量"], "group": "结构" },
-    { "id": "cases", "kind": "template", "tex": "\\begin{cases}&\\\\&\\end{cases}", "preview": "\\begin{cases}x&x\\ge 0\\\\-x&x<0\\end{cases}", "label": "分段", "alias": ["cases", "piecewise"], "pinyin": "fd", "keywords": ["分段函数", "大括号", "多行"], "group": "结构" },
-    { "id": "aligned", "kind": "template", "tex": "\\begin{aligned}&=\\\\&=\\end{aligned}", "preview": "\\begin{aligned}a&=b+c\\\\&=d\\end{aligned}", "label": "对齐推导", "alias": ["aligned", "align"], "pinyin": "dqtd", "keywords": ["多行", "等号对齐", "推导"], "group": "结构" },
+    { "id": "cases", "kind": "template", "insertAs": "display", "tex": "\\begin{cases}&\\\\&\\end{cases}", "preview": "\\begin{cases}x&x\\ge 0\\\\-x&x<0\\end{cases}", "label": "分段", "alias": ["cases", "piecewise"], "pinyin": "fd", "keywords": ["分段函数", "大括号", "多行"], "group": "结构" },
+    { "id": "aligned", "kind": "template", "insertAs": "display", "tex": "\\begin{aligned}&=\\\\&=\\end{aligned}", "preview": "\\begin{aligned}a&=b+c\\\\&=d\\end{aligned}", "label": "对齐推导", "alias": ["aligned", "align"], "pinyin": "dqtd", "keywords": ["多行", "等号对齐", "推导"], "group": "结构" },
+    { "id": "displaymath", "kind": "template", "insertAs": "display", "tex": "", "preview": "x=\\frac{-b\\pm\\sqrt{b^2-4ac}}{2a}", "label": "行间公式", "alias": ["display", "equation", "block"], "pinyin": "hjgs", "keywords": ["行间", "居中", "独立公式", "公式段"], "group": "结构" },
 
     { "id": "alpha", "kind": "symbol", "tex": "\\alpha", "label": "阿尔法", "alias": ["alpha"], "pinyin": "aef", "keywords": ["希腊"], "group": "符号", "subgroup": "希腊" },
     { "id": "beta", "kind": "symbol", "tex": "\\beta", "label": "贝塔", "alias": ["beta"], "pinyin": "bt", "keywords": ["希腊"], "group": "符号", "subgroup": "希腊" },

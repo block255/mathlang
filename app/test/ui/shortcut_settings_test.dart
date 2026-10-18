@@ -53,9 +53,9 @@ Future<void> _capture(WidgetTester tester, String actionId, int index,
 
 void main() {
   group('① 这张表说实话', () {
-    testWidgets('顶部报 已接入 42 / 共 43', (WidgetTester tester) async {
+    testWidgets('顶部报 已接入 43 / 共 44', (WidgetTester tester) async {
       await _pump(tester);
-      expect(find.text('已接入 42 / 共 43'), findsOneWidget);
+      expect(find.text('已接入 43 / 共 44'), findsOneWidget);
     });
 
     testWidgets('已接入的（撤销）与未接入的（源码视图）徽标不同',

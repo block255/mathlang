@@ -361,15 +361,17 @@ class EditViewState extends State<EditView> {
   ///
   /// 三选一的语义（并入数学段 / 自动建壳 / 替换选区）在 `lang/symbol_insert.dart` 里，
   /// 这里只做"一次编辑"的落盘与光标定位（模板 ⇒ 第一个空槽）。
-  void insertSymbolTex(String tex, {required bool template}) {
-    _insertTexViaSymbolPath(tex, template: template);
+  void insertSymbolTex(String tex,
+      {required bool template, bool display = false}) {
+    _insertTexViaSymbolPath(tex, template: template, display: display);
   }
 
   /// 所有"插一段 tex"的入口共用的落盘逻辑（面板 / 快捷栏 / 快捷键 / 自动展开 / 上下标）。
   ///
   /// ★ 一次 `replace(0, len, …)` ⇒ **一步撤销**（`DocBuffer` 的撤销粒度是"每次 replace"，
   ///   所以"删掉触发的词 + 插入模板"必须合成**一次**写入，否则要按两下 `Ctrl+Z`）。
-  void _insertTexViaSymbolPath(String tex, {required bool template}) {
+  void _insertTexViaSymbolPath(String tex,
+      {required bool template, bool display = false}) {
     final SymbolInsertResult r = applySymbolInsert(
       doc: _buf.buf,
       caret: _buf.caret,
@@ -377,6 +379,7 @@ class EditViewState extends State<EditView> {
       selEnd: _buf.selectionEnd,
       tex: tex,
       template: template,
+      display: display,
     );
     _mutate(() {
       _buf.replace(0, _buf.length, r.doc);

@@ -64,7 +64,7 @@ const Map<String, String> kShortcutSymbolIds = <String, String>{
 const Set<String> kShellActions = <String>{
   'newdoc', 'open', 'save', 'saveAs', 'settings', 'panelToggle', 'quickSlot',
   'h1', 'h2', 'h3', 'ol', 'ul', 'quote', 'codeblock', 'pagebreak', //
-  'frac', 'sqrt', 'sup', 'sub', 'integral',
+  'mathDisplay', 'frac', 'sqrt', 'sup', 'sub', 'integral',
   'summ', 'limit', 'aligned', 'cases', 'pmatrix', 'binom',
 };
 
@@ -223,7 +223,8 @@ class EditorPageState extends State<EditorPage> {
 
   /// 面板插入（也供测试直接调）
   void insertSymbol(SymbolItem item) {
-    _editKey.currentState?.insertSymbolTex(item.tex, template: item.isTemplate);
+    _editKey.currentState?.insertSymbolTex(item.tex,
+        template: item.isTemplate, display: item.isDisplay);
   }
 
   /// 赋值模式：**选一个符号 ⇒ 只放进那一格，不插入正文**（用户拍的流程）
@@ -742,6 +743,14 @@ class EditorPageState extends State<EditorPage> {
         return _blockOp(BlockOp.codeblock);
       case 'pagebreak':
         return _blockOp(BlockOp.pagebreak);
+      case 'mathDisplay':
+        // ★ 2026-10-18：`Ctrl+Alt+E` 回来了，但语义**不再是造空壳** ——
+        //   它是「**插入一个行间公式段**」（块级排版单位；空态有淡虚线小框 ⇒ 看得见、点得到）。
+        //   与"行内空壳"的区别（用户论证过）：行间段是**块**，不写内容也成立；
+        //   行内公式必须**由内容产生**（平权）。
+        _editKey.currentState
+            ?.insertSymbolTex('', template: true, display: true);
+        return true;
       case 'sup':
         _editKey.currentState?.insertScript(sup: true);
         return true;

@@ -107,7 +107,7 @@ void realLibraryTests() {
       final Set<String> ids = <String>{};
       for (final SymbolItem i in lib.items) {
         expect(ids.add(i.id), isTrue, reason: '重复 id: ${i.id}');
-        expect(i.tex.trim(), isNotEmpty, reason: i.id);
+        // ★ 2026-10-18：「行间公式段」是一个**空的行间块**（tex 本来就是空的，它的可见性由\n        //   EmptyMathMark 负责）⇒ 只有这一类允许空 tex\n        if (i.isDisplay) continue;\n        expect(i.tex.trim(), isNotEmpty, reason: i.id);
       }
     });
 

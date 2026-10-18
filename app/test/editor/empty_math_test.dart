@@ -45,18 +45,20 @@ bool _hasEmptyMath(String doc) {
 }
 
 void main() {
-  group('① 没有任何入口能造出空公式（平权）', () {
-    test('登记表里已经没有「行内公式 / 行间公式」两条动作', () {
+  group('① 没有入口能造出**行内**空公式（平权）', () {
+    test('登记表里没有「行内公式」；`Ctrl+Alt+E` 回来但语义是**行间段**', () {
       final Set<String> ids = <String>{
         for (final ShortcutAction a in kShortcutActions) a.id,
       };
+      // ★ 行内空壳没有任何入口（用户口径：不接受"行内多项式当成一个整体"）
       expect(ids.contains('mathInline'), isFalse,
-          reason: '`Alt+=` 造空壳 = 方程域思路，与平权冲突，已撤掉');
-      expect(ids.contains('mathDisplay'), isFalse);
-      expect(kShortcutActions.length, 43);
+          reason: '`Alt+=` 造行内空壳 = 方程域思路，与平权冲突，已撤掉');
+      // ★ 行间**段**是一个块：不写内容也成立（空态由 EmptyMathMark 画出来）
+      expect(ids.contains('mathDisplay'), isTrue);
+      expect(kShortcutActions.length, 44);
     });
 
-    test('★ 符号库每一项插进去，都不产生空数学段（全域）', () {
+    test('★ 符号库每一项（行内插法）都不产生空数学段（全域）', () {
       // 与真实符号库同构的一小组（覆盖符号 / 模板 / 环境 / 上下标）
       const List<String> texes = <String>[
         r'\alpha',
@@ -173,6 +175,28 @@ void main() {
       ));
       await tester.pump();
       expect(find.byType(EmptyMathMark), findsNothing);
+    });
+  });
+
+  group('④ 行间公式段（空段）同样看得见、点得到', () {
+    testWidgets('★ 空的围栏块画成占位框', (WidgetTester tester) async {
+      await _pump(tester, '\$\$\n\n\$\$\n');
+      expect(find.byType(EmptyMathMark), findsOneWidget);
+      final Size size = tester.getSize(find.byType(EmptyMathMark));
+      expect(size.width, greaterThan(8));
+      expect(size.height, greaterThan(8));
+    });
+
+    testWidgets('★ 点空块 ⇒ 光标落进块里（不是"点了没反应"）',
+        (WidgetTester tester) async {
+      final DocBuffer buf = await _pump(tester, '\$\$\n\n\$\$\n');
+      buf.setCaret(0);
+      await tester.pump();
+      final Rect r = tester.getRect(find.byType(EmptyMathMark));
+      await tester.tapAt(r.center);
+      await tester.pump();
+      // 块的内容起点 = 第一道围栏之后那一格（`$$\n` 之后 = 3）
+      expect(buf.caret, 3, reason: '空块唯一的内容位点 = renderBase');
     });
   });
 }

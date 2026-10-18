@@ -183,11 +183,12 @@ const List<ShortcutAction> kShortcutActions = <ShortcutAction>[
   ShortcutAction(id: 'pagebreak', name: '插入分页符', group: '结构类', combo: 'Ctrl+Enter', status: ShortcutStatus.wired),
 
   // ---------------- 数学类 ----------------
-  // ★★ 2026-10-18（用户拍板）：**`Alt+=`（行内公式）与 `Ctrl+Alt+E`（行间公式）已撤掉**。
-  //   理由（平权）：数学**不是一种模式** —— 对象由**内容**产生（面板插符号会自动建壳、
-  //   `/` 成分式、词触发成模板、粘贴 LaTeX 走智能包裹）。
-  //   而"先造一个空公式壳、再往里写"是 Word 的**方程域**思路（进入公式态），与平权冲突。
-  //   要"整体感"走**行间**：粘贴整行式子会自动升格成 `$$…$$`（B′），模板也可以走面板。
+  // ★★ 2026-10-18（用户拍板）：**`Alt+=`（行内公式）撤掉**，但 **`Ctrl+Alt+E` 回来了** ——
+  //   语义变成「**插入一个行间公式段**」（块级排版单位，**不是**"进入公式态"）。
+  //   判据（用户原话归纳）：行间是一个**段/块**，"不写内容也成立"（空态由 `EmptyMathMark`
+  //   画成淡虚线小框 ⇒ 看得见、点得到）；而**行内公式必须由内容产生** ——
+  //   平权不接受"行内多项式当成一个整体"，所以行内没有"先造空壳再写"这条路。
+  ShortcutAction(id: 'mathDisplay', name: '插入行间公式段', group: '数学类', combo: 'Ctrl+Alt+E', status: ShortcutStatus.wired),
   ShortcutAction(id: 'frac', name: '分式', group: '数学类', combo: 'Ctrl+Alt+F', status: ShortcutStatus.wired),
   ShortcutAction(id: 'sqrt', name: '根号', group: '数学类', combo: 'Ctrl+Alt+R', status: ShortcutStatus.wired),
   ShortcutAction(id: 'sup', name: '上标', group: '数学类', combo: 'Ctrl+ArrowUp', status: ShortcutStatus.wired),

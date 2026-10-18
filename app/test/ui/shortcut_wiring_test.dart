@@ -154,11 +154,15 @@ void main() {
       expect(buf.buf, '甲乙丙', reason: '按下去必须什么都不发生');
     });
 
-    testWidgets('★ `Ctrl+Alt+E`（原行间公式）也已撤掉',
+    testWidgets('★ `Ctrl+Alt+E` 回来，语义是「插入行间公式段」',
         (WidgetTester tester) async {
+      // 用户拍板（2026-10-18）：行间是**块**，不写内容也成立（空态有淡虚线小框）；
+      // 而行内必须由内容产生（`Alt+=` 保持撤掉）。
       final (_, DocBuffer buf) = await _pump(tester, atEnd: true);
       await _combo(tester, kCtrlAlt, LogicalKeyboardKey.keyE);
-      expect(buf.buf, '甲乙丙');
+      expect(buf.buf.contains(r'$$'), isTrue, reason: buf.buf);
+      expect(buf.buf.split('\n').where((String l) => l == r'$$').length, 2,
+          reason: '两道围栏各占一行：${buf.buf}');
     });
 
     testWidgets('Ctrl+ArrowUp ⇒ 上标模板（正文里自动建壳）',
@@ -205,9 +209,9 @@ void main() {
       expect(buf.buf, '甲乙丙');
     });
 
-    test('登记表口径：43 条里 42 条已接入（只剩源码视图等 S5）', () {
-      expect(kShortcutActions.length, 43);
-      expect(ShortcutSettings.wiredCount, 42);
+    test('登记表口径：44 条里 43 条已接入（只剩源码视图等 S5）', () {
+      expect(kShortcutActions.length, 44);
+      expect(ShortcutSettings.wiredCount, 43);
       final List<String> planned = <String>[
         for (final ShortcutAction a in kShortcutActions)
           if (!a.wired) a.id,
