@@ -26,6 +26,7 @@ import '../core/document_file.dart';
 import '../editor/edit_view.dart';
 import '../lang/math_spans.dart';
 import '../lang/shortcut_registry.dart';
+import '../lang/smart_wrap.dart';
 import '../lang/symbol_library.dart';
 import '../lang/word_triggers.dart';
 import '../io/file_gateway.dart';
@@ -329,6 +330,66 @@ class EditorPageState extends State<EditorPage> {
     return true;
   }
 
+  /// ★★ S4-d②：**导入**（`.md` 原样、`.txt` 走智能包裹）。
+  ///
+  /// 语义：导入 = **新建一份内容**（不是"打开那个文件"）⇒ `path = null`、标题取文件名。
+  /// 为什么不能把 path 设成源文件：`.txt` 导入会**被包裹改写**，保存回去等于覆盖用户的原件。
+  Future<void> importDocument() async {
+    if (!await _confirmDiscard('导入')) return;
+    OpenedFile? f;
+    try {
+      f = await _file.openText(
+          extensions: const <String>['md', 'txt', 'markdown']);
+    } catch (e) {
+      await _showFileError('导入', e);
+      return;
+    }
+    if (f == null) return;
+
+    final String ext = DocumentFile.extensionOf(f.name);
+    final String raw = f.text;
+    var text = raw;
+    var wrapped = 0;
+    if (ext == 'txt') {
+      // 纯文本 ≈ "用户手上的一段话" ⇒ 与粘贴同一条口径（A2 智能包裹）
+      final SmartWrapPlan plan = planSmartWrap(raw);
+      wrapped = plan.runs.length;
+      if (plan.runs.isNotEmpty) text = applySmartWrap(raw, plan);
+    }
+    _buf.loadDocument(text);
+    _savedText = _buf.buf;
+    final DocumentFile df =
+        DocumentFile(title: DocumentFile.titleFromPath(f.name));
+    setState(() {
+      _docFile = df; // path 故意留空：这是一份**新文档**
+      _title = df.title;
+    });
+    _editKey.currentState?.focusInput();
+    _snack(wrapped > 0
+        ? '已导入 ${f.name}（智能包裹 $wrapped 处，可在状态栏查看）'
+        : '已导入 ${f.name}');
+  }
+
+  /// ★★ S4-d②：**导出**（`md` / `txt`）。
+  ///
+  /// ★ **两者内容逐字节相同**（2026-10-17 用户拍板：txt 追求"不丢信息、能再导入"，
+  ///   不为"给人看"去掉 `$`）——差别只有扩展名。
+  /// ★ 导出**不改**当前文档的身份与 dirty：它是"另存一份出去"，不是"保存"。
+  Future<void> exportDocument(String ext) async {
+    SaveOutcome out;
+    try {
+      out = await _file.saveText(
+        text: _buf.buf,
+        suggestedName: _docFile.suggestedFileName(ext: ext),
+        extension: ext,
+      );
+    } catch (e) {
+      await _showFileError('导出', e);
+      return;
+    }
+    if (!out.ok) return;
+    _snack('已导出 ${DocumentFile.fileNameOf(out.path!)}');
+  }
   /// 有未保存改动时先确认（`true` = 可以继续）
   Future<bool> _confirmDiscard(String action) async {
     if (!dirty) return true;
@@ -457,7 +518,12 @@ class EditorPageState extends State<EditorPage> {
         return KeyEventResult.handled;
       }
       if (k == LogicalKeyboardKey.keyO) {
-        openDocument();
+        // Ctrl+Shift+O = 导入（与"打开"区分：导入是**新建一份内容**）
+        if (kb.isShiftPressed) {
+          importDocument();
+        } else {
+          openDocument();
+        }
         return KeyEventResult.handled;
       }
       if (k == LogicalKeyboardKey.keyS) {
@@ -603,7 +669,7 @@ class EditorPageState extends State<EditorPage> {
             _saveDot(),
             const SizedBox(width: 12),
             _textButton('导入', const Key('import-button'),
-                tip: 'S4-d 第二阶段接入', onTap: null),
+                tip: '导入 .md / .txt（Ctrl+Shift+O）', onTap: importDocument),
             _textButton('保存', const Key('save-button'),
                 tip: '保存（Ctrl+S）', onTap: () => saveDocument()),
             _exportMenu(),
@@ -649,6 +715,8 @@ class EditorPageState extends State<EditorPage> {
             saveDocument();
           case 'saveAs':
             saveDocument(saveAs: true);
+          case 'import':
+            importDocument();
           case 'settings':
             openSettings(group: 1);
           case 'about':
@@ -665,7 +733,7 @@ class EditorPageState extends State<EditorPage> {
         _fileItem('保存', 'Ctrl+S', value: 'save'),
         _fileItem('另存为…', 'Ctrl+Shift+S', value: 'saveAs'),
         const PopupMenuDivider(),
-        _fileItem('导入…', '', batch: 'S4-d②'),
+        _fileItem('导入…', '', value: 'import'),
         _fileItem('导出', '', batch: 'S4-d②'),
         const PopupMenuDivider(),
         const PopupMenuItem<String>(
@@ -815,11 +883,14 @@ class EditorPageState extends State<EditorPage> {
       key: const Key('export-menu'),
       tooltip: '导出（S4-d 接入）',
       itemBuilder: (BuildContext c) => <PopupMenuEntry<String>>[
-        _fileItem('Markdown', '', batch: 'S4-d②'),
-        _fileItem('纯文本', '', batch: 'S4-d②'),
+        _fileItem('Markdown (.md)', '', value: 'export:md'),
+        _fileItem('纯文本 (.txt)', '', value: 'export:txt'),
         _fileItem('图片集', '', batch: 'S4-d③'),
         _fileItem('PDF', '', batch: 'S4-d③'),
       ],
+      onSelected: (String v) {
+        if (v.startsWith('export:')) exportDocument(v.substring(7));
+      },
       child: const Padding(
         padding: EdgeInsets.symmetric(horizontal: 8, vertical: 6),
         child: Row(

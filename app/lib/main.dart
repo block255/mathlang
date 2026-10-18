@@ -30,9 +30,13 @@ void main() {
   //   · 只在**非 Web**（Web 上开语义树会切换文本输入策略，测输入层时是禁忌）；
   //   · 只在**调试构建**（release 不开：语义树有额外开销，且正式用户走真·无障碍时才需要）；
   //   · **不影响测试**：widget 测试直接 pump 组件，不经过 `main()`。
+  WidgetsFlutterBinding.ensureInitialized();
   if (!kIsWeb && !kReleaseMode) {
-    WidgetsFlutterBinding.ensureInitialized();
-    SemanticsBinding.instance.ensureSemantics();
+    // ★ 放在**首帧之后**再开（2026-10-17 第二次尝试）：`runApp` 之前开有可能被
+    //   后续的视图/管道初始化覆盖掉（实测：非管理员实例上 UIA 仍只看到窗口外壳）。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      SemanticsBinding.instance.ensureSemantics();
+    });
   }
   runApp(const MathlangApp());
 }
