@@ -64,6 +64,9 @@ class SettingsOverlay extends StatefulWidget {
     this.onShortcuts,
     this.onTriggers,
     this.pageSpace,
+    this.sessionPath = '',
+    this.sessionSavedAt,
+    this.onClearSession,
   });
 
   final AppSettings settings;
@@ -85,6 +88,13 @@ class SettingsOverlay extends StatefulWidget {
   final TriggerSettings? triggers;
   final ValueChanged<ShortcutSettings>? onShortcuts;
   final ValueChanged<TriggerSettings>? onTriggers;
+
+  /// ★ S4-e-①：本地暂存的落点与上次写入时间（「高级」组里显示 —— 让"存到哪了"可见）
+  final String sessionPath;
+  final DateTime? sessionSavedAt;
+
+  /// 「清除本地暂存」
+  final VoidCallback? onClearSession;
 
   /// 从"文件 ▾ → 设置"或"关于"进来时直接落到某一组
   final int initialGroup;
@@ -347,13 +357,64 @@ class SettingsOverlayState extends State<SettingsOverlay> {
         4 => _statusGroup(),
         5 => <Widget>[_shortcutGroup()],
         6 => _triggerGroup(),
-        7 => <Widget>[
-            _pending('高级',
-                '源码视图（S5）· 清空本地缓存（S4-e）。\n★ 诊断清单已经做好了：在**状态栏**点「自动包裹 N 处 · 查看清单 ›」。')
-          ],
+        7 => _advancedGroup(),
         _ => _aboutGroup(),
       },
     );
+  }
+
+  /// ⑦ 高级：**本地暂存**的可见性 + 清除（S4-e-①）
+  ///
+  /// 为什么放在这里：暂存是"看不见的基础设施"，但用户有权知道**它存在、存在哪、什么时候存的**，
+  /// 也需要一个"我不想让它留着"的按钮（原则 5：可疑要可见）。
+  List<Widget> _advancedGroup() {
+    final DateTime? at = widget.sessionSavedAt;
+    final String when = at == null
+        ? '还没有暂存过'
+        : '上次暂存 ${at.hour.toString().padLeft(2, '0')}:'
+            '${at.minute.toString().padLeft(2, '0')}:'
+            '${at.second.toString().padLeft(2, '0')}';
+    return <Widget>[
+      const SettingSection(title: '本地暂存（刷新 / 崩溃不丢）'),
+      SettingRow(
+        title: '暂存位置',
+        subtitle: '每次改动后约 0.8 秒写一次；超过 30 天没用、或已保存且超过 7 天，会自动清掉。',
+        dense: true,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            SelectableText(
+              widget.sessionPath.isEmpty ? '（尚未确定）' : widget.sessionPath,
+              key: const Key('session-path'),
+              style: const TextStyle(
+                  fontSize: 11, fontFamily: 'monospace', color: Color(0xFF2D3748)),
+            ),
+            const SizedBox(height: 4),
+            Text(when,
+                key: const Key('session-when'),
+                style: const TextStyle(fontSize: 11, color: Color(0xFF718096))),
+          ],
+        ),
+      ),
+      SettingRow(
+        title: '清除本地暂存',
+        subtitle: '清掉之后，下次启动不会再恢复这份内容（当前页面里的东西不受影响）。',
+        dense: true,
+        child: Align(
+          alignment: Alignment.centerLeft,
+          child: OutlinedButton(
+            key: const Key('session-clear'),
+            onPressed: widget.onClearSession == null
+                ? null
+                : () => widget.onClearSession!(),
+            child: const Text('清除', style: TextStyle(fontSize: 12)),
+          ),
+        ),
+      ),
+      const SettingSection(title: '其它'),
+      _pending('高级',
+          '源码视图（S5）· 诊断清单：在**状态栏**点「自动包裹 N 处 · 查看清单 ›」。'),
+    ];
   }
 
   /// ⑤ 快捷键（★ **会说实话的表**：39 条里真正接上的 17 条带徽标）

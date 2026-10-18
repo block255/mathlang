@@ -155,6 +155,9 @@ class EditView extends StatefulWidget {
   State<EditView> createState() => EditViewState();
 }
 
+/// 撤销分组用的"编辑类别"（只有同类才会合并成一步）
+enum _EditKind { typing, deleting }
+
 class EditViewState extends State<EditView> {
   final FocusNode _focus = FocusNode(debugLabel: 'edit-input');
   late final TextInputSurfaceController _input =
@@ -321,6 +324,15 @@ class EditViewState extends State<EditView> {
       return;
     }
     final InsertPlan plan = planInsert(_buf.buf, _buf.caret, text);
+    // ★★ S4-e-①（2026-10-18）**撤销分组**：只有"裸打一个字符、没有被守门人挪位/补换行"
+    //   才算"打字型"编辑 ⇒ 500ms 内连打会合成**一步**撤销。粘贴/IME 整词/补行边界一律各算一步。
+    final String paddedText = plan.padText(text);
+    final bool typing = text.length == 1 &&
+        !plan.padding.any &&
+        plan.wrapBareArg == null &&
+        plan.offset == _buf.caret &&
+        paddedText == text;
+    final bool coalesce = typing && _coalesceFor(_EditKind.typing);
     // ★ 诊断清单要"在哪"：裸参数被补花括号时落点会右移 2 格
     final int wrapShift = plan.wrapBareArg == null ? 0 : 2;
     final int from = plan.offset + wrapShift;
@@ -333,7 +345,7 @@ class EditViewState extends State<EditView> {
         _buf.replace(wrap.start, wrap.end, '{$arg}');
       }
       if (_buf.caret != plan.offset) _buf.setCaret(plan.offset);
-      _buf.insertText(plan.padText(text));
+      _buf.replace(_buf.caret, _buf.caret, paddedText, coalesce: coalesce);
     });
     _stampWrapped(autoWrapped, spans: _spansAround(from, to));
   }
@@ -373,6 +385,7 @@ class EditViewState extends State<EditView> {
   ///   所以"删掉触发的词 + 插入模板"必须合成**一次**写入，否则要按两下 `Ctrl+Z`）。
   void _insertTexViaSymbolPath(String tex,
       {required bool template, bool display = false}) {
+    _breakUndoGroup(); // 模板/符号插入独占一步
     final SymbolInsertResult r = applySymbolInsert(
       doc: _buf.buf,
       caret: _buf.caret,
@@ -406,6 +419,7 @@ class EditViewState extends State<EditView> {
   ///
   /// 两步合成**一次**写入：① 删掉被吃掉的触发内容；② 在原位插入展开出来的 tex。
   void _applyAutoExpand(AutoExpand ex) {
+    _breakUndoGroup(); // 自动展开独占一步
     final String trimmed = _buf.buf.replaceRange(ex.from, ex.caret, '');
     final SymbolInsertResult r = applySymbolInsert(
       doc: trimmed,
@@ -459,6 +473,7 @@ class EditViewState extends State<EditView> {
   ///
   /// 只做"一次区间替换"（`lang/block_ops.dart` 已算出范围）⇒ **一步撤销**。
   void insertBlockOp(BlockOp op) {
+    _breakUndoGroup(); // 块类型键独占一步
     final BlockOpResult? r = planBlockOp(_buf.buf, _buf.caret, op);
     if (r == null || r.isNoop) return;
     final String out = applyBlockOpTo(_buf.buf, r);
@@ -760,7 +775,12 @@ class EditViewState extends State<EditView> {
       //   口径：`删空留壳` **只针对结构里的子位点**（``\frac{□}{□}`` 的槽）；
       //   "把整个数学语言删掉"**没有留壳回打的义务**（用户原话）。
       final SmartEdit ed = reclaimEmptiedMath(_buf.buf, e);
-      _mutate(() => _buf.replace(ed.from!, ed.to!, ''));
+      // ★ S4-e-① 撤销分组：只有"删掉一个字符、且没被扩成整段删"才算删除型编辑
+      final bool single = (ed.to! - ed.from!) == 1 &&
+          ed.from == e.from &&
+          ed.to == e.to;
+      final bool coalesce = single && _coalesceFor(_EditKind.deleting);
+      _mutate(() => _buf.replace(ed.from!, ed.to!, '', coalesce: coalesce));
       // `replace` 会把光标放到删除点之后；扩成整段删之后要落回起点
       if (_buf.caret != ed.caret) _buf.setCaret(ed.caret);
       return;
@@ -768,8 +788,30 @@ class EditViewState extends State<EditView> {
     _buf.setCaret(e.caret);
   }
 
+  // ---------------- 撤销分组（S4-e-①）----------------
+
+  /// 上一次"同类编辑"的时间：`null` = 没有可接续的分组
+  ({_EditKind kind, DateTime at})? _lastEdit;
+
+  /// 要不要把这次编辑并进上一步？**同类 + 500ms 内**才并。
+  ///
+  /// ★ 只有"打字 / 删一个字符"这两类会走到这里；粘贴、模板、自动展开、整段删一律不并
+  ///   （它们是"一次语义操作"，本来就该独占一步）。
+  bool _coalesceFor(_EditKind kind) {
+    final DateTime now = DateTime.now();
+    final bool merge = _lastEdit != null &&
+        _lastEdit!.kind == kind &&
+        now.difference(_lastEdit!.at) < const Duration(milliseconds: 500);
+    _lastEdit = (kind: kind, at: now);
+    return merge;
+  }
+
+  /// 显式打断分组（插入模板 / 粘贴 / 整段删之后调用）
+  void _breakUndoGroup() => _lastEdit = null;
+
   /// 删一个区间（内部走「删空数学段 ⇒ 连定界符」那条判据）—— 选区删除 / 剪切共用。
   void _deleteRange(int from, int to) {
+    _breakUndoGroup(); // 选区删除/剪切独占一步
     final SmartEdit ed =
         reclaimEmptiedMath(_buf.buf, SmartEdit.remove(from, to, from));
     _mutate(() => _buf.replace(ed.from!, ed.to!, ''));

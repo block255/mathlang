@@ -84,8 +84,15 @@ class DocBuffer {
   // ---------- 编辑 ----------
 
   /// 把 `[start, end)` 换成 [inserted]；光标落到插入内容之后。
-  void replace(int start, int end, String inserted) {
-    if (_replaceInternal(start, end, inserted)) _notify();
+  ///
+  /// ★★ [coalesce]（S4-e-①，2026-10-18）：**连续打字合并成一步撤销**。
+  ///   `true` 时若这次编辑与栈顶那条"接得上"，就**并进那一条**（撤销栈长度不变）：
+  ///     · 连续**打字**：新插入点 == 上一条的插入末尾 ⇒ 把字符接上去；
+  ///     · 连续**退格**：新删除的右端 == 上一条的左端 ⇒ 把删掉的字符接到前面。
+  ///   ★ 只由**编辑层**按"时间窗口 + 动作类型"决定要不要传 `true` —— `DocBuffer` 保持纯逻辑
+  ///     （不读系统时钟、不认识"打字"是什么），这样"合并规则"可以单独测。
+  void replace(int start, int end, String inserted, {bool coalesce = false}) {
+    if (_replaceInternal(start, end, inserted, coalesce: coalesce)) _notify();
   }
 
   void insertText(String text) {
@@ -208,16 +215,46 @@ class DocBuffer {
     _notify();
   }
 
-  bool _replaceInternal(int start, int end, String inserted) {
+  bool _replaceInternal(int start, int end, String inserted,
+      {bool coalesce = false}) {
     final s = start.clamp(0, _buf.length);
     final e = end.clamp(s, _buf.length);
     final removed = _buf.substring(s, e);
     if (removed.isEmpty && inserted.isEmpty) return false;
     final edit = Edit(s, e, removed, inserted);
     _applyForward(edit);
-    _undoStack.add(edit);
+    // ★ 撤销分组：能并就并进栈顶那一条（栈长度不变 ⇒ Ctrl+Z 一步回一大段）
+    final Edit? merged =
+        coalesce && _undoStack.isNotEmpty ? _tryMerge(_undoStack.last, edit) : null;
+    if (merged != null) {
+      _undoStack[_undoStack.length - 1] = merged;
+    } else {
+      _undoStack.add(edit);
+    }
     _redoStack.clear();
     return true;
+  }
+
+  /// 两条 Edit 能不能并成一条（并规则见 [replace] 的注释）
+  static Edit? _tryMerge(Edit top, Edit next) {
+    // ① 连续打字：上一条插进去的东西末尾正好是这次插入的位置
+    if (top.inserted.isNotEmpty &&
+        next.inserted.isNotEmpty &&
+        top.removed.isEmpty &&
+        next.removed.isEmpty &&
+        next.start == top.start + top.inserted.length &&
+        next.end == next.start) {
+      return Edit(top.start, top.end, top.removed, top.inserted + next.inserted);
+    }
+    // ② 连续退格：这次删的范围正好紧贴在上一条的左端
+    if (top.removed.isNotEmpty &&
+        next.removed.isNotEmpty &&
+        top.inserted.isEmpty &&
+        next.inserted.isEmpty &&
+        next.end == top.start) {
+      return Edit(next.start, top.end, next.removed + top.removed, '');
+    }
+    return null;
   }
 
   void _applyForward(Edit e) {

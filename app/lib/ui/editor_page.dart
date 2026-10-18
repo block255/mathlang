@@ -14,6 +14,7 @@
 //      分页一个像素都不变（任何 dock 值、任何右栏开关组合下都必须成立）；
 //   ② 面板 / 快捷栏 / 状态栏 / 设置页**都不进 `DocView` 的排版树** ⇒ 开合不改变分页。
 
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart' show kReleaseMode;
@@ -33,6 +34,9 @@ import '../lang/symbol_library.dart';
 import '../lang/word_triggers.dart';
 import '../io/file_gateway.dart';
 import '../io/file_gateway_platform.dart';
+import '../io/session_data.dart';
+import '../io/session_store.dart';
+import '../io/session_store_platform.dart';
 import '../layout/page_metrics.dart';
 import '../spike/s3_edit/s3_edit_page.dart' show kEditSample;
 import 'app_settings.dart';
@@ -76,6 +80,7 @@ class EditorPage extends StatefulWidget {
     this.doc,
     this.buffer,
     this.gateway,
+    this.session,
   });
 
   /// 测试注入（不传则从 `assets/symbols.json` 加载）
@@ -87,12 +92,18 @@ class EditorPage extends StatefulWidget {
   /// 测试注入的文件后端（不传就用当前平台的真实现）
   final FileGateway? gateway;
 
+  /// ★ S4-e-①：本地暂存后端（不传就用当前平台的真实现 —— 桌面写 exe 同目录的 JSON）
+  final SessionStore? session;
+
   @override
   State<EditorPage> createState() => EditorPageState();
 }
 
 class EditorPageState extends State<EditorPage> {
   late final DocBuffer _buf = widget.buffer ?? DocBuffer(kEditSample);
+
+  /// 进页面时缓冲区里的内容 —— 只有"还没人动过"时才允许被暂存覆盖
+  late final String _initialBuffer = _buf.buf;
   final GlobalKey<EditViewState> _editKey = GlobalKey<EditViewState>();
   final FocusNode _searchFocus = FocusNode();
   final FocusNode _shellFocus = FocusNode(debugLabel: 'shell-keys');
@@ -122,6 +133,29 @@ class EditorPageState extends State<EditorPage> {
 
   late final FileGateway _file = widget.gateway ?? platformFileGateway();
 
+  // ---------------- ★ S4-e-① 本地暂存 ----------------
+
+  /// 桌面 = exe 同目录的 JSON；Web = 不落盘（开发预览而已）
+  late final SessionStore _session = widget.session ?? platformSessionStore();
+
+  /// 节流保存：最后一次改动后 [kSessionSaveDelay] 落一次盘（不是每键写）
+  Timer? _saveTimer;
+  static const Duration kSessionSaveDelay = Duration(milliseconds: 800);
+
+  /// 暂存落点与上次写入时间（设置页「高级」里显示 —— 让「存到哪了」可见）
+  String _sessionPath = '';
+  DateTime? _sessionSavedAt;
+
+  /// 启动时是否从暂存里恢复过（顶栏提示用）
+  bool _restored = false;
+
+  /// 已经 dispose 了（异步落盘回来时不许再 setState —— 否则撞 defunct 断言）
+  bool _disposed = false;
+
+  /// 页面纵向滚动位置（恢复时回到原地）
+  double _scrollOffset = 0;
+  final ScrollController _pageScroll = ScrollController();
+
   String _title = DocumentFile.kUntitled;
   bool _editingTitle = false;
 
@@ -134,7 +168,10 @@ class EditorPageState extends State<EditorPage> {
 
   /// 测试注入（守"用户改键即刻生效"这条：界面说的话必须是真的）
   @visibleForTesting
-  set shortcuts(ShortcutSettings v) => setState(() => _shortcuts = v);
+  set shortcuts(ShortcutSettings v) {
+    setState(() => _shortcuts = v);
+    _schedulePersist();
+  }
 
   TriggerSettings get triggers => _triggers;
 
@@ -155,23 +192,139 @@ class EditorPageState extends State<EditorPage> {
         if (mounted) setState(() => _lib = lib);
       });
     }
+    // ★ S4-e-①：先尝试恢复上次会话（**同步入口、异步等待**，恢复完再挂监听去存）
+    _buf.addListener(_onBufferEdited);
+    _restoreSession();
   }
 
   @override
   void dispose() {
+    _disposed = true;
+    _saveTimer?.cancel();
+    // ★ 关闭前补一次（用户误关窗口不该丢内容）。`dispose` 里不能 await，所以 fire-and-forget。
+    _buf.removeListener(_onBufferEdited);
+    _persistNow();
+    _pageScroll.dispose();
     _searchFocus.dispose();
     _shellFocus.dispose();
     _titleCtl.dispose();
     super.dispose();
   }
 
+  // ---------------- ★ S4-e-①：本地暂存 ----------------
+
+  /// 启动恢复（静默；成功后挂一条可关掉的提示）
+  Future<void> _restoreSession() async {
+    SessionData? d;
+    try {
+      d = await _session.load();
+      _sessionPath = await _session.describe();
+    } catch (_) {
+      d = null;
+    }
+    // ★ 只有"还没人动过缓冲区"时才覆盖 —— 测试/外部注入的缓冲区不许被暂存悄悄顶掉
+    final bool untouched = _buf.buf == _initialBuffer;
+    if (d != null && untouched) {
+      _buf.loadDocument(d.text);
+      _buf.setSelection(d.anchor.clamp(0, d.text.length),
+          d.caret.clamp(0, d.text.length));
+      _savedText = d.savedText;
+      _scrollOffset = d.scrollOffset;
+      final DocumentFile df = DocumentFile(
+        title: d.title.isEmpty ? DocumentFile.kUntitled : d.title,
+        path: d.path,
+      );
+      if (!mounted) return;
+      setState(() {
+        _docFile = df;
+        _title = df.title;
+        if (d!.app != null) _s = d.app!;
+        if (d.doc != null) _doc = d.doc!;
+        if (d.shortcuts != null) _shortcuts = d.shortcuts!;
+        if (d.triggers != null) _triggers = d.triggers!;
+        _restored = true;
+        _sessionSavedAt = d.savedAt;
+      });
+      // 回到上次的滚动位置（等这一帧建完）
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        if (_pageScroll.hasClients) {
+          final double max = _pageScroll.position.maxScrollExtent;
+          _pageScroll.jumpTo(_scrollOffset.clamp(0.0, max));
+        }
+      });
+    } else {
+      if (mounted) setState(() {});
+    }
+  }
+
+  /// 缓冲区变了 ⇒ 排一次落盘（**节流**：连续打字只写最后一次）
+  void _onBufferEdited() => _schedulePersist();
+
+  void _schedulePersist() {
+    _saveTimer?.cancel();
+    _saveTimer = Timer(kSessionSaveDelay, _persistNow);
+  }
+
+  /// 真正写一次快照（失败安静返回，绝不打断编辑）
+  Future<void> _persistNow() async {
+    _saveTimer?.cancel();
+    _saveTimer = null;
+    if (_pageScroll.hasClients) _scrollOffset = _pageScroll.offset;
+    final SessionData data = SessionData(
+      text: _buf.buf,
+      title: _title,
+      path: _docFile.path,
+      savedText: _savedText,
+      caret: _buf.caret,
+      anchor: _buf.anchor,
+      scrollOffset: _scrollOffset,
+      app: _s,
+      doc: _doc,
+      shortcuts: _shortcuts,
+      triggers: _triggers,
+      savedAt: DateTime.now(),
+    );
+    final bool ok = await _session.save(data);
+    if (!ok) return;
+    _sessionSavedAt = data.savedAt;
+    try {
+      _sessionPath = await _session.describe();
+    } catch (_) {
+      // 描述只是给人看，失败不影响暂存
+    }
+    if (!_disposed && mounted) setState(() {});
+  }
+
+  /// 设置页「高级 → 清除本地暂存」
+  Future<void> clearSession() async {
+    await _session.clear();
+    _sessionSavedAt = null;
+    if (mounted) {
+      setState(() {});
+      _snack('已清除本地暂存（下次启动不会恢复这份内容）');
+    }
+  }
+
+  /// 诊断/测试用：暂存落点与上次写入时间
+  String get sessionPath => _sessionPath;
+  DateTime? get sessionSavedAt => _sessionSavedAt;
+  bool get sessionRestored => _restored;
+  SessionStore get sessionStore => _session;
+
   // ---------------- 对外（测试 / 诊断） ----------------
 
   AppSettings get settings => _s;
-  set settings(AppSettings v) => setState(() => _s = v);
+  set settings(AppSettings v) {
+    setState(() => _s = v);
+    _schedulePersist();
+  }
 
   DocSettings get doc => _doc;
-  set doc(DocSettings v) => setState(() => _doc = v);
+  set doc(DocSettings v) {
+    setState(() => _doc = v);
+    _schedulePersist();
+  }
 
   bool get panelOpen => _panelOpen;
   bool get quickOpen => _quickOpen;
@@ -307,6 +460,7 @@ class EditorPageState extends State<EditorPage> {
       _title = DocumentFile.kUntitled;
     });
     _editKey.currentState?.focusInput();
+    _persistNow(); // 新建 ⇒ 立刻覆盖暂存（别让下次启动恢复上一份）
   }
 
   /// 打开：从磁盘读一份 md/txt（整篇换掉，并清空撤销栈）
@@ -332,6 +486,7 @@ class EditorPageState extends State<EditorPage> {
       _title = df.title;
     });
     _editKey.currentState?.focusInput();
+    _persistNow(); // 打开 ⇒ 立刻覆盖暂存
     _snack(f.lossy
         ? '已打开 ${f.name}（该文件可能不是 UTF-8，已按容错方式读入）'
         : '已打开 ${f.name}');
@@ -360,6 +515,7 @@ class EditorPageState extends State<EditorPage> {
       _docFile = df;
       _title = df.title;
     });
+    _persistNow(); // 保存 ⇒ 立刻把 savedText 写进暂存
     _snack('已保存到 ${DocumentFile.fileNameOf(out.path!)}');
     return true;
   }
@@ -869,10 +1025,20 @@ class EditorPageState extends State<EditorPage> {
                     library: _lib,
                     // ★ 页面横向可用宽 ⇒ 设置页横条旁边那行"可移动 N px"（诚实读数）
                     pageSpace: pageAvail,
-                    onSettings: (AppSettings v) => setState(() => _s = v),
-                    onDoc: (DocSettings v) => setState(() => _doc = v),
+                    onSettings: (AppSettings v) {
+                      setState(() => _s = v);
+                      _schedulePersist();
+                    },
+                    onDoc: (DocSettings v) {
+                      setState(() => _doc = v);
+                      _schedulePersist();
+                    },
                     shortcuts: _shortcuts,
                     triggers: _triggers,
+                    // ★ S4-e-①：本地暂存的可见性（「高级」组）
+                    sessionPath: _sessionPath,
+                    sessionSavedAt: _sessionSavedAt,
+                    onClearSession: clearSession,
                     onShortcuts: (ShortcutSettings v) =>
                         setState(() => _shortcuts = v),
                     onTriggers: (TriggerSettings v) =>
@@ -904,6 +1070,10 @@ class EditorPageState extends State<EditorPage> {
             _titleWidget(),
             const SizedBox(width: 4),
             _saveDot(),
+            if (_restored) ...<Widget>[
+              const SizedBox(width: 8),
+              _restoredBadge(),
+            ],
             const SizedBox(width: 12),
             _textButton('导入', const Key('import-button'),
                 tip: '导入 .md / .txt（Ctrl+Shift+O）', onTap: importDocument),
@@ -1079,8 +1249,38 @@ class EditorPageState extends State<EditorPage> {
   }
 
   /// ★ 保存状态点：`●` 未保存 / `○` 已保存（S4-b 先放标题旁，S4-d 接真文件）
-  Widget _saveDot() {
-    final bool d = dirty;
+  /// ★ S4-e-①：从暂存恢复了内容 ⇒ 顶栏给一条**可关掉**的提示
+  ///
+  /// 为什么不弹窗：恢复是"常态"，弹窗会把每次启动变成一次审问。
+  /// 为什么必须有：用户有权知道"这份内容不是新文档，而是上次没关干净的那份"（原则 5）。
+  Widget _restoredBadge() {
+    return Tooltip(
+      message: '已从本地暂存恢复上次的编辑（点掉这条提示不会丢内容）',
+      child: InkWell(
+        key: const Key('session-restored'),
+        onTap: () => setState(() => _restored = false),
+        borderRadius: BorderRadius.circular(4),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+          decoration: BoxDecoration(
+            color: const Color(0xFFEBF4FF),
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: const Row(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              Text('已恢复上次编辑',
+                  style: TextStyle(fontSize: 10, color: Color(0xFF2B6CB0))),
+              SizedBox(width: 4),
+              Text('×', style: TextStyle(fontSize: 11, color: Color(0xFF2B6CB0))),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _saveDot() {    final bool d = dirty;
     return Tooltip(
       message: d ? '有未保存的改动' : '已保存',
       child: Text(
@@ -1183,6 +1383,8 @@ class EditorPageState extends State<EditorPage> {
       );
       return SingleChildScrollView(
         key: const Key('page-scroll'),
+        // ★ S4-e-①：用一个 controller，重启后能把滚动位置也恢复回去
+        controller: _pageScroll,
         // ★ Align 不是装饰：`SingleChildScrollView` 会把父级的**紧**宽度往下传，
         //   不套一个 Align 放成 loose constraint，`SizedBox(width: 页宽)` 就会被
         //   "minWidth = 可用宽"顶掉 ⇒ EditView 变成整栏宽（正文宽变了 = 版面不中性）。
