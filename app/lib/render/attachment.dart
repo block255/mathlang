@@ -40,3 +40,13 @@ bool isAttachmentCommand(String? cmd) =>
 /// 槽路径的最后一步是不是挂件（`slot_marks` 判"挂件槽不画占位框"用它）
 bool isAttachmentSlot(SlotSpan s) =>
     s.path.isNotEmpty && isAttachmentCommand(s.path.last.command);
+
+/// ★ 这个槽是不是**脚本槽**（`^` / `_`）—— 与 accent 参数**分开**判。
+///
+/// 2026-10-18 晚：用户报「组合数 C / 排列数 A 没给子位点，打出来就是裸的大写字母」。
+/// 脚本与 accent 虽然同为"挂件"，但**空着的可见性**不一样：
+///   · accent 空着时**那顶帽子还在**（有落点）；`\hat{}` 画框反而把帽子变成"域"。
+///   · 脚本空着时**什么都不画** ⇒ 面板插入的 `\mathrm{C}_{}^{}` 在屏幕上只是一个 C。
+/// ⇒ 脚本槽改判"光标在这一段里就画"（可选槽口径）；accent 保持"不画"。
+bool isScriptSlot(SlotSpan s) =>
+    s.path.isNotEmpty && kScriptMarks.contains(s.path.last.command);

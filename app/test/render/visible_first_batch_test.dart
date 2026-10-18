@@ -76,9 +76,13 @@ void main() {
     test(r'★ 必填槽**恒可见**（分式、被开方数）—— 不管光标在不在这一段里', () {
       expect(_marks(renderMathTex(r'\frac{}{}', caretRel: -1)), 2);
       expect(_marks(renderMathTex(r'\sqrt{}', caretRel: -1)), 1);
-      // ★ 2026-10-15 晚改口径：普通上下标是**挂件槽**（§4.8 第三类）⇒ **不画**（见下面第四组）
+      // ★★★ 2026-10-18 晚**改口径**：脚本槽从"挂件"里分出来 ——
+      //   它是"可选槽"那一类：**光标在这段里就画**（不常驻）。
+      //   起因：面板插入的 `\mathrm{C}_{}^{}` 在屏幕上只是一个 C（用户报"没给子位点"）。
       expect(_marks(renderMathTex(r'x^{}', caretRel: -1)), 0,
-          reason: '挂件槽不画占位框（用户的模型：挂件挂在基座上，不是结构）');
+          reason: '光标不在这一段里 ⇒ 不画（不常驻）');
+      expect(_marks(renderMathTex(r'x^{}', caretRel: 3)), 1,
+          reason: '光标在空脚本里 ⇒ 画出落点（否则又一个"看不见的槽"）');
     });
   });
 
@@ -137,18 +141,32 @@ void main() {
   //   用户模型：**挂件是挂在/套在基座上的，不是结构** —— 文本里的一个字旁边没有格子；
   //   空挂件已经有可见落点（基座字符 / 那顶帽子），光标进去时竖条自己会画出来
   //   ⇒ 不必再造一个方框（"占位框"这个念头本身就有公式块味道）。
-  //   ★ 连"当前槽"也不画。结构类槽（分式/根号/算子内容）与可选槽**照旧**。
+  //   ★★ **2026-10-18 晚收窄**：脚本槽（`^`/`_`）改成"**光标在这一段里就画**"，
+  //      理由见 `slot_marks.dart` 里那段注释（C/A 模板空脚本 ⇒ 屏幕上一个 C）。
+  //      **定宽 accent 的参数槽仍然不画**（帽子就是落点）。
   // ─────────────────────────────────────────────────────────────
   group(r'§4.8 第三类：挂件槽不画占位框（脚本 + 定宽 accent）', () {
-    test(r'空脚本：`x^{}` / `x_{}` ⇒ 一个占位都不画（光标在里面也不画）', () {
+    test(r'空脚本：光标不在这一段 ⇒ 不画；光标在里面 ⇒ **画**（2026-10-18 收窄）', () {
       for (final String tex in <String>[r'x^{}', r'x_{}']) {
         expect(_marks(renderMathTex(tex, caretRel: -1)), 0, reason: tex);
-        expect(_marks(renderMathTex(tex, caretRel: 3)), 0,
-            reason: '$tex：光标在空脚本里 —— 由竖条指出位置，不画框');
+        expect(_marks(renderMathTex(tex, caretRel: 3)), 1,
+            reason: '$tex：光标在空脚本里 ⇒ 必须看得见落点');
       }
     });
 
-    test(r'空 accent：`\hat{}` / `\bar{}` / `\vec{}` ⇒ 不画', () {
+    test(r'★★ C/A 模板（组合数 / 排列数）：两个空脚本**都画**（用户报"没给子位点"）', () {
+      const String c = r'\mathrm{C}_{}^{}';
+      // 光标在下标槽（`firstSlotOffset` 就是 12）
+      final String inside = renderMathTex(c, caretRel: 12);
+      expect(_marks(inside), 2,
+          reason: '下标 ＋ 上标两个空槽都要画出来（否则只是"一个裸 C"）');
+      expect(inside.contains(kCurrentSlotTex), isTrue,
+          reason: '光标所在的那一个用"当前槽"样式（淡蓝底 + 蓝框）');
+      // 光标不在这一段 ⇒ 不常驻
+      expect(_marks(renderMathTex(c, caretRel: -1)), 0);
+    });
+
+    test(r'空 accent：`\hat{}` / `\bar{}` / `\vec{}` ⇒ 不画（帽子就是落点）', () {
       for (final String tex in <String>[r'\hat{}', r'\bar{}', r'\vec{}']) {
         expect(_marks(renderMathTex(tex, caretRel: -1)), 0, reason: tex);
         expect(_marks(renderMathTex(tex, caretRel: 5)), 0, reason: tex);
