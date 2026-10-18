@@ -47,7 +47,9 @@ void main() {
         for (final SymbolItem i in lib.items)
           if (i.isDisplay) i.id,
       ];
-      expect(display.toSet(), <String>{'cases', 'aligned', 'displaymath'});
+      expect(display.toSet(), <String>{'cases', 'aligned'},
+          reason: '2026-10-18：`displaymath` 已从网格撤掉 —— 行间公式是**排版动作**，'
+              '改由符号面板筛选行的文字按钮提供（用户拍板）');
     });
 
     test('★ 绝大多数项仍是 inline（display 占比 < 5%）', () {
@@ -58,16 +60,11 @@ void main() {
       expect(d, lessThan(n * 0.05), reason: '行内是主要地位（用户口径）');
     });
 
-    test('`结构` 分类里能找到「行间公式」这一项（面板上的按钮就是它）', () {
+    test('「行间公式」**不再占网格**（2026-10-18 起是筛选行的文字按钮）', () {
       final SymbolLibrary lib = _realLibrary();
       final List<SymbolItem> items = lib.inCategory(group: '结构');
-      final SymbolItem? dm =
-          items.where((SymbolItem i) => i.id == 'displaymath').firstOrNull;
-      expect(dm, isNotNull);
-      expect(dm!.label, '行间公式');
-      expect(dm.isDisplay, isTrue);
-      expect(dm.tex, isEmpty, reason: '行间段本来就没有内容；可见性由 EmptyMathMark 负责');
-      expect(dm.previewTex, isNotEmpty, reason: '面板格子里要画得出代表式');
+      expect(items.where((SymbolItem i) => i.id == 'displaymath'), isEmpty,
+          reason: '行间公式是**排版动作**，不是符号；入口是面板筛选行右侧的按钮（Key: panel-insert-display）');
     });
   });
 

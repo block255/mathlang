@@ -1440,6 +1440,8 @@ class EditorPageState extends State<EditorPage> {
             assignSlot: _assignSlot,
             onAssign: assignSymbol,
             onInsert: insertSymbol,
+            onInsertDisplay: () => _editKey.currentState
+                ?.insertSymbolTex('', template: true, display: true),
           )
         : null;
 
