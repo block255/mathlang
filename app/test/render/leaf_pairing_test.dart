@@ -260,29 +260,34 @@ void main() {
 
   testWidgets('★ 记账：这几类目前整份判为不完整 ⇒ 退回结构层落点（不许点 A 落 B）',
       (WidgetTester tester) async {
-    // 分段函数：大括号是一个**字形盒**、`cases` 还有列间距盒 ⇒ 还没进配对规则
-    // （env 名已不再当原子，见 visible_atoms 的 `begin`/`end`）
+    // ★★ 2026-10-18 晚：**分段函数 / `\binom` 已经进金表了**（不再是记账）。
+    //   原因：它们的"外框"（`{` `(` `)`）是**源码里没有的盒** ⇒ 新的重试规则会把它们
+    //   标记为"外框盒"跳过 ⇒ 剩下的字正常配对（见 `leaf_pairing_env_test.dart`）。
     final _Probe cases = await _pump(tester, r'\begin{cases}a&b\\c&d\end{cases}');
-    expect(cases.plan.complete, isFalse,
-        reason: '若这条变绿 ⇒ 分段函数已经支持，请把它挪进上面的金表并删掉这条记账');
+    expect(cases.plan.complete, isTrue,
+        reason: '2026-10-18：外框 `{` 被跳过 ⇒ cases 现在配对完整');
 
-    // `\binom{n}{k}`：引擎画 `( n k )` **四盒**，而源码里没有 `(`/`)` 这两个字
-    // ⇒ 原子只有 2 个 ⇒ 需要"给结构自带的括号补合成原子"（还没做）
     final _Probe binom = await _pump(tester, r'\binom{n}{k}');
-    expect(binom.plan.complete, isFalse,
-        reason: '若这条变绿 ⇒ binom 的括号已经补上合成原子，请挪进金表');
+    expect(binom.plan.complete, isTrue,
+        reason: r'2026-10-18：`\binom` 自带括号被跳过 ⇒ 只剩 n/k 两原子');
 
     // ⚠️ 已修（2026-10-17）：`\overbrace` 的标注画在内容之前 ⇒ 现在进金表了
     //   （若这里还留旧断言，说明有人在"顺手统一"时把它改回去了）。
     final _Probe brace = await _pump(tester, r'\overbrace{AB}^{n}');
     expect(brace.plan.complete, isTrue,
         reason: r'`\overbrace` 的脚本先画（规则 3b）—— 这条现在是金表的一部分');
+
+    // ★ 仍然不完整：`\overbracket` 的盒**文本为空**（4 原子 / 2 盒），
+    //   连"画的是什么字"都读不到 ⇒ 只能退回结构层（换个判据之前别动它）
+    final _Probe bracket = await _pump(tester, r'\overbracket{a+b}^{n}');
+    expect(bracket.plan.complete, isFalse,
+        reason: '若这条变绿 ⇒ overbracket 的盒扫描已经能给出字形，请挪进金表');
   });
 
   testWidgets('★ 不完整时 `hitTestMathTex` 必须给 null（调用方才知道要退回结构层）',
       (WidgetTester tester) async {
-    final _Probe r = await _pump(tester, r'\begin{cases}a&b\\c&d\end{cases}');
-    final LeafBox b = r.scan.eligible.firstWhere((LeafBox x) => x.isGlyph);
+    final _Probe r = await _pump(tester, r'\overbracket{a+b}^{n}');
+    final LeafBox b = r.scan.eligible.first;
     final MathHit hit = hitTestMathTex(
       root: r.root,
       localPos: b.rect.center,

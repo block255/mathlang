@@ -104,6 +104,36 @@ void main() {
     expect(bands.length, greaterThanOrEqualTo(2), reason: '整块 = 所有原子的底块');
   });
 
+  testWidgets('★★ 矩阵：整块选中 ⇒ **每个格子里的字都有底**（改前：一块也没有）',
+      (WidgetTester tester) async {
+    // 用户 2026-10-18 晚报「拖选时部分数学没被蓝底覆盖，但确实选中了」：
+    // 根因之一是环境的叶盒配对整份失败 ⇒ `pairing.groups` 空 ⇒ 一块底都铺不出来。
+    const String doc = '\$\$\\begin{pmatrix} a & b \\\\ c & d \\end{pmatrix}\$\$';
+    await _pump(tester, doc, a: 0, b: doc.length);
+    final List<Rect> bands = _bands(tester);
+    expect(bands.length, greaterThanOrEqualTo(4),
+        reason: '矩阵四个字母各有一块底（去掉括号那两个"源码里没有的盒"后应当 ≥4）');
+    // 两行 ⇒ 底块至少跨两个不同的纵向区间
+    final Set<int> rows = <int>{
+      for (final Rect r in bands) (r.center.dy / 8).round(),
+    };
+    expect(rows.length, greaterThanOrEqualTo(2), reason: '两行的字各在自己的行带上');
+  });
+
+  testWidgets('★★ 上下标：`x^{2}_{1}` 整段选中 ⇒ 上标/下标**各自有底**',
+      (WidgetTester tester) async {
+    const String doc = r'$x^{2}_{1}$';
+    await _pump(tester, doc, a: 0, b: doc.length);
+    final List<Rect> bands = _bands(tester);
+    // x / 2 / 1 三个字 ⇒ 三块（如果被并成一个外框，就只有一块）
+    expect(bands.length, greaterThanOrEqualTo(3),
+        reason: '上下标是"字符"，必须各有自己的底（不能只铺主行那个外框）');
+    final Set<int> rows = <int>{
+      for (final Rect r in bands) (r.center.dy / 6).round(),
+    };
+    expect(rows.length, greaterThanOrEqualTo(2), reason: '上标与主行不在同一条行带上');
+  });
+
   testWidgets('★★ 版面中性：有没有选区，文档高度完全一样', (WidgetTester tester) async {
     final DocBuffer b1 = await _pump(tester, r'甲$x+y$乙');
     final double h1 = tester.getSize(find.byType(EditView)).height;

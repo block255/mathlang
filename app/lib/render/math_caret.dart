@@ -40,7 +40,9 @@ import 'package:flutter_math_fork/flutter_math.dart';
 import 'caret_ownership.dart';
 import 'caret_sites.dart';
 import 'leaf_boxes.dart';
+import 'leaf_pairing.dart';
 import 'slot_pad.dart';
+import 'visible_atoms.dart';
 
 /// 包一层：给 `Math` 画上我们自己的光标条（**不影响布局**）。
 class MathWithCaret extends StatefulWidget {
@@ -102,6 +104,21 @@ class _MathWithCaretState extends State<MathWithCaret> {
   /// 选区底色块（⑤）：按原子铺，纯绘制
   List<Rect> _bands = const <Rect>[];
 
+  /// ★★ 2026-10-18 晚（性能）：**按渲染顺序排好的原子表，按 tex 缓存**。
+  ///   `renderOrderAtoms` 每次要建位点表（实测 90 原子 **≈137 µs**），而拖选时
+  ///   `_measure` 会被反复调用 ⇒ 不缓存的话"大面积拖选"每帧都在重建同一张表。
+  List<VisibleAtom>? _selAtoms;
+  String? _selAtomsKey;
+
+  List<VisibleAtom> _atomsForSelection() {
+    final String key = '${widget.mathStyle.name}\u0000${widget.tex}';
+    if (_selAtomsKey == key && _selAtoms != null) return _selAtoms!;
+    _selAtoms = renderOrderAtoms(widget.tex,
+        displayStyle: widget.mathStyle == MathStyle.display);
+    _selAtomsKey = key;
+    return _selAtoms!;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -140,6 +157,7 @@ class _MathWithCaretState extends State<MathWithCaret> {
             tex: widget.tex,
             from: sf,
             to: st,
+            atoms: _atomsForSelection(),
             displayStyle: widget.mathStyle == MathStyle.display,
           );
 

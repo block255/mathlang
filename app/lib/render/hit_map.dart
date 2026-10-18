@@ -360,7 +360,7 @@ MathHit hitTestMathTex({
   );
 }
 
-/// **选区高亮**：把源区间 `[from, to)` 映射成**按原子铺底的矩形**（§⑤ 高亮）。
+/// **选区高亮**：把源区间 `[from, to)` 映射成**按叶盒铺底的矩形**（§⑤ 高亮）。
 ///
 /// 为什么按原子铺、而不是给整段公式套一个框：
 ///   "同权"的意思是**行内公式就是一串字符**，所以拖选时高亮应当跟着**被选中的那几个字符**走
@@ -368,7 +368,12 @@ MathHit hitTestMathTex({
 ///   相邻原子的盒是紧挨着的 ⇒ 看起来就是一条连续的底；下标/上限那个原子会稍微凸出来 ——
 ///   那正是"公式里的字符"该有的样子。
 ///
-/// ★ 纯几何：不改任何尺寸 ⇒ 不影响排版与分页。
+/// ★★ 2026-10-18 晚（用户报「拖选时部分数学没被蓝底覆盖，但确实选中了」）：
+///   旧做法是"**每个原子取一次外框**"（`PairGroup.hull`）—— 于是**主行之外的一切**
+///   （上限 / 下标 / 环境格子里的字）都被并进主行那个外框里、或者干脆没被铺到。
+///   ⇒ 改成**一个叶盒一块**：盒是墨迹的最小单位，上下限、上下标、矩阵格子天然各归各位。
+///   ⇒ 顺带的好处：不再需要为每个原子做一次 hull 循环（**线性扫一遍盒**）。
+///   ★ 仍然**纯几何**：不改任何尺寸 ⇒ 不影响排版与分页。
 List<Rect> selectionBands({
   required RenderObject root,
   required String tex,
@@ -389,11 +394,25 @@ List<Rect> selectionBands({
   //   否则一旦这段公式里有空槽/光标注入，整条区间就**错位**（用户实测："复杂结构的
   //   数学语言有的子层级被漏掉"）。`renderToSourceOffset` 就是点击定位用的那个映射。
   final List<Rect> out = <Rect>[];
+  // ★ 盒 → 组 的直查表：`groupOfBox` 是线性扫，盒多、组多时是 O(盒×组)；
+  //   拖选每帧都要算一次 ⇒ 这里先铺一张 O(盒) 的表（`PairGroup.boxFrom/boxTo` 是区间）。
+  final List<PairGroup?> owner = List<PairGroup?>.filled(boxes.length, null);
   for (final PairGroup g in pairing.groups) {
+    for (var i = g.boxFrom; i < g.boxTo && i < owner.length; i++) {
+      owner[i] = g;
+    }
+  }
+  for (var i = 0; i < boxes.length; i++) {
+    final LeafBox b = boxes[i];
+    // 垫子 / 空字盒没有墨迹 ⇒ 不铺（它们不是"字符"）
+    if (b.kind == LeafBoxKind.pad) continue;
+    if ((b.text ?? '').isEmpty) continue;
+    final PairGroup? g = owner[i];
+    if (g == null) continue;
     final int a = renderToSourceOffset(tex, g.srcStart);
-    final int b = renderToSourceOffset(tex, g.srcEnd);
-    if (b <= from || a >= to) continue;
-    out.add(g.hull(boxes));
+    final int bb = renderToSourceOffset(tex, g.srcEnd);
+    if (bb <= from || a >= to) continue;
+    out.add(b.rect);
   }
   return out;
 }

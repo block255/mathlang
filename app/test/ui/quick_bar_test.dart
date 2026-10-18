@@ -9,6 +9,7 @@
 //   ② 快捷栏与面板**各有自己的开关**（互不牵连）；
 //   ③ `Alt+N` 在面板关着时也能用（外壳层快捷键，不走面板）。
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -166,6 +167,46 @@ void main() {
       await tester.longPress(find.byKey(const Key('quick-slot-0')));
       await tester.pumpAndSettle();
       expect(st.settings.favoriteAt(0), isNull);
+    });
+
+    testWidgets('★★ 右键已有格 ⇒ **换掉**这一格（不插入、面板自动打开）',
+        (WidgetTester tester) async {
+      // 用户 2026-10-18 晚：「左键已占的格就是打出这个东西；之前设计稿里还有个选中功能，
+      //   我觉得可以右键……选中时再点面板里一个符号，可以进行替换」
+      final (EditorPageState st, DocBuffer buf) = await _pump(
+        tester,
+        settings: const AppSettings(favorites: <String?>['plus', null, null, null]),
+      );
+      await tester.pumpAndSettle();
+      // 先把面板关掉，验"右键会顺手把它打开"
+      st.togglePanel(open: false);
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('quick-slot-0')),
+          buttons: kSecondaryButton);
+      await tester.pumpAndSettle();
+
+      expect(st.assignSlot, 0, reason: '右键 = 选中这一格（进赋值模式）');
+      expect(st.panelOpen, isTrue, reason: '下一步必然要点面板符号 ⇒ 顺手打开');
+      expect(find.byKey(const Key('quick-assign-hint')), findsOneWidget);
+      expect(buf.buf, 'abc', reason: '右键本身**不插入**任何东西');
+
+      // 换掉：点面板里的分式
+      await tester.tap(find.byKey(const Key('symbol-frac')));
+      await tester.pumpAndSettle();
+      expect(st.settings.favoriteAt(0), 'frac', reason: '第 1 格被换成 `\\frac`');
+      expect(st.assignSlot, isNull);
+      expect(buf.buf, 'abc', reason: '★ 赋值不是插入');
+    });
+
+    testWidgets('★ 右键**空格**也进赋值模式（统一成"右键 = 编辑这一格"）',
+        (WidgetTester tester) async {
+      final (EditorPageState st, DocBuffer _) = await _pump(tester);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('quick-slot-5')),
+          buttons: kSecondaryButton);
+      await tester.pumpAndSettle();
+      expect(st.assignSlot, 5);
     });
   });
 

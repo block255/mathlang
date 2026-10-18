@@ -458,6 +458,19 @@ class EditorPageState extends State<EditorPage> {
     }
   }
 
+  /// ★★ 2026-10-18 晚（用户提出）：**右键快捷栏格子 ⇒ 换掉这一格**。
+  ///
+  /// 为什么需要：左键在"有内容的格"上是**插入**（每天最常用的动作，不能动），
+  /// 于是"我想把第 3 格换成 `\int`"原来只有"先长按清空、再左键进赋值"这条绕路。
+  /// ⇒ 右键直接进赋值模式（空位也一样：统一成"右键 = 我要编辑这一格"）。
+  /// ★ 顺手把**面板打开**：下一步必然要点面板里的符号，不打开等于让用户再点一次顶栏。
+  void reassignSlot(int i) {
+    setState(() {
+      _assignSlot = i;
+      _panelOpen = true;
+    });
+  }
+
   /// ★ 诊断清单：点状态栏「自动包裹 N 处」⇒ 列出那几处，点一条跳过去并高亮
   void openDiagnostics() {
     final List<MathSpan> spans = _stats.autoWrappedSpans;
@@ -1183,7 +1196,8 @@ class EditorPageState extends State<EditorPage> {
       itemBuilder: (BuildContext c) => <PopupMenuEntry<String>>[
         _fileItem('新建', 'Ctrl+N', value: 'new'),
         _fileItem('打开…', 'Ctrl+O', value: 'open'),
-        _fileItem('最近打开', '', batch: 'S4-e'),
+        // ★ 2026-10-18 晚（用户）：**「最近打开」不做**（原 S4-e）——
+        //   "留一条永远点不动的灰显菜单项，比没有更糟"⇒ 整条删掉，不再占位。
         const PopupMenuDivider(),
         _fileItem('保存', 'Ctrl+S', value: 'save'),
         _fileItem('另存为…', 'Ctrl+Shift+S', value: 'saveAs'),
@@ -1474,6 +1488,7 @@ class EditorPageState extends State<EditorPage> {
             placement: _s.quickBarPlacement,
             onTapSlot: tapQuickSlot,
             onClearSlot: clearFavorite,
+            onAssignSlot: reassignSlot,
           )
         : null;
     final Widget? panel = showPanel

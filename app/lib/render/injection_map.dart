@@ -62,8 +62,46 @@ List<_Marker> get _kMarkers => <_Marker>[
 ///
 /// 点在被注入的串内部（占位方框、光标条、**结构尾垫**）时返回**该插入点** —— 于是
 /// "点空槽的方框"会落到空槽的偏移上、"点尾垫"会落到**结构末尾**，再经位点吸附就是合法落点 ✓
+///
+/// ★★ 2026-10-18 晚（性能实测）：**插入点表按 tex 缓存**。
+///   原来每次调用都要对 5 个注入串各跑一遍 `indexOf`（全串扫描）、再过滤、排序
+///   —— 实测**每次约 2.5 µs**；而选区铺底对**每个叶盒**都要换两次（90 个盒 = 180 次）
+///   ⇒ 单段公式一次拖选就要 **0.45 ms**，一页几十段就上百毫秒（"大面积拖选卡"的元凶之一）。
+///   它是个**纯函数**、只依赖 tex ⇒ 缓存最后一条 tex 的插入点表，重复调用降到 O(插入点数)。
 int renderToSourceOffset(String renderTex, int renderOffset) {
   if (renderOffset <= 0) return 0;
+  final List<({int at, int len, bool tail})> ins = _insertionsOf(renderTex);
+
+  var shift = 0;
+  for (final ({int at, int len, bool tail}) e in ins) {
+    if (renderOffset <= e.at) break;
+    // ★ 尾垫（§11.18）：**严格越过起点**才算"结构末尾"——
+    //   起点那一格是 `2` 的右边界（点式子的右半边必须仍落到"内容末尾"，
+    //   否则用户再也点不到内容末尾）；与其它原子一致：左半取左边界、右半取右边界。
+    final bool inside = e.tail
+        ? renderOffset <= e.at + e.len // 尾垫：连它的**末端**也算结构末尾
+        : renderOffset < e.at + e.len; // 其它注入串：严格内部（保持原语义）
+    if (inside) {
+      return e.tail
+          ? _tailSourceOffset(renderTex, e.at, e.len, e.at - shift)
+          : e.at - shift; // 点在注入串内部 → 插入点
+    }
+    shift += e.len;
+  }
+  return renderOffset - shift;
+}
+
+/// 上一条 tex 的插入点表（缓存；纯函数 ⇒ 安全）
+String? _cachedTex;
+List<({int at, int len, bool tail})>? _cachedIns;
+
+/// 找出这条渲染 tex 里**真正生效**的注入串（去掉被更长匹配完全包住的那些，按位置排序）
+List<({int at, int len, bool tail})> _insertionsOf(String renderTex) {
+  // ★ 用 `==`（值相等）而不是 `identical`：`renderMathTex` 每次构建都会给出**新的**
+  //   String 实例，内容一样 ⇒ 只看实例就会一直不命中（等于没缓存）。
+  if (_cachedTex == renderTex && _cachedIns != null) {
+    return _cachedIns!;
+  }
   final List<({int at, int len, bool tail})> found =
       <({int at, int len, bool tail})>[];
   for (final _Marker m in _kMarkers) {
@@ -84,24 +122,9 @@ int renderToSourceOffset(String renderTex, int renderOffset) {
   ]..sort((({int at, int len, bool tail}) a,
           ({int at, int len, bool tail}) b) =>
       a.at.compareTo(b.at));
-
-  var shift = 0;
-  for (final ({int at, int len, bool tail}) e in ins) {
-    if (renderOffset <= e.at) break;
-    // ★ 尾垫（§11.18）：**严格越过起点**才算"结构末尾"——
-    //   起点那一格是 `2` 的右边界（点式子的右半边必须仍落到"内容末尾"，
-    //   否则用户再也点不到内容末尾）；与其它原子一致：左半取左边界、右半取右边界。
-    final bool inside = e.tail
-        ? renderOffset <= e.at + e.len // 尾垫：连它的**末端**也算结构末尾
-        : renderOffset < e.at + e.len; // 其它注入串：严格内部（保持原语义）
-    if (inside) {
-      return e.tail
-          ? _tailSourceOffset(renderTex, e.at, e.len, e.at - shift)
-          : e.at - shift; // 点在注入串内部 → 插入点
-    }
-    shift += e.len;
-  }
-  return renderOffset - shift;
+  _cachedTex = renderTex;
+  _cachedIns = ins;
+  return ins;
 }
 
 /// 尾垫的源偏移 = **插入点 + 收尾 `}`**（若紧跟着一个 `}`）。

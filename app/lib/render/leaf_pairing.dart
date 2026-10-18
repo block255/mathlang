@@ -134,9 +134,21 @@ String? expectedGlyphFor(String tex, VisibleAtom a) {
 bool isPadAtom(VisibleAtom a) => a.kind == 'tail' || a.kind == 'slotpad';
 
 /// 这个原子**有墨迹**吗？（`\,` 这类间距命令没有 ⇒ 不进配对）
+///
+/// ★★ 2026-10-18 晚（探针 P2 逼出来的）：**`\ `（空格命令）必须算"有墨迹"**。
+///   引擎给 `\ ` 画的是一个**文本为空格的字形盒**（不是零高垫子），
+///   而 `expectedGlyphFor` 对空格返回 `null`（"不必对账"）—— 旧代码把这个 `null`
+///   当成了"没有墨迹"⇒ 丢掉这个原子 ⇒ **它后面每个原子都往前错一格**
+///   ⇒ 整份配对不完整 ⇒ 含 `\ ` 的公式点击整体退化（实测：`\Rightarrow…\square`
+///   命令形式 16 原子/16 盒，却报"还剩字形盒 □ 没配上原子"）。
+///   ⇒ 判据改成"**源码里那一个字符本身是不是空白**"：是 ⇒ 它有盒、要吃一个盒（只是不校验字形）。
 bool hasInk(String tex, VisibleAtom a) {
   if (isPadAtom(a)) return true;
-  if (a.kind == 'esc') return expectedGlyphFor(tex, a) != null;
+  if (a.kind == 'esc') {
+    if (expectedGlyphFor(tex, a) != null) return true;
+    // `\ `：源码是反斜杠＋空格 ⇒ 引擎画得出一个空格盒
+    return a.start + 1 < tex.length && tex[a.start + 1] == ' ';
+  }
   return true;
 }
 
@@ -382,10 +394,75 @@ class LeafPairing {
 ///
 /// [atoms] 必须是**渲染顺序**（[renderOrderAtoms] 的产物），不是词法源序。
 /// [tex] 是渲染用的 tex（要它来认"这个原子画的是什么字"）。
+///
+/// ★★ 2026-10-18 晚（探针 P3/P4/P5 逼出来的）：**环境（矩阵 / cases）自带外框字符**。
+///   `\begin{pmatrix} a & b \\ c & d \end{pmatrix}` 只写了 4 个原子，
+///   但引擎画了 **6 个字形盒**（`(` `a` `b` `c` `d` `)`）—— 那两个括号**源码里没有**，
+///   于是第一遍配对在"原子 `a` 期望 `a`、实际盒是 `(`"处直接判死 ⇒ 整份退化
+///   ⇒ 点矩阵里任何一个格子都落到"结构之前/之后"（用户实测："矩阵那一行点不进去"）。
+///   ⇒ 两遍走：
+///     · 第一遍照旧（**任何现在能过的公式都不受影响**）；
+///     · 只有第一遍失败时，才把"**没有任何原子认领的定界符盒**"标记为 `skip`
+///       （定界符 ＋ 没有原子期望画这个字 ⇒ 它是外框，不是字符）再走一遍；
+///       重试成功才采用 —— 否则照样返回第一遍的失败结果（**不掩盖**）。
 LeafPairing buildLeafPairing({
   required String tex,
   required List<LeafBox> boxes,
   required List<VisibleAtom> atoms,
+}) {
+  final LeafPairing first =
+      _pairOnce(tex: tex, boxes: boxes, atoms: atoms);
+  if (first.complete) return first;
+
+  final Set<int> frame = unclaimedDelimiterBoxes(
+      tex: tex, boxes: boxes, atoms: atoms);
+  if (frame.isEmpty) return first;
+
+  final LeafPairing again =
+      _pairOnce(tex: tex, boxes: boxes, atoms: atoms, skip: frame);
+  if (!again.complete) return first;
+  return LeafPairing(
+    groups: again.groups,
+    complete: true,
+    reason: null,
+  );
+}
+
+/// 环境外框那类"**源码里没有的盒**"：字形是定界符，且**没有原子期望画它**。
+///
+/// ★ 只在第一遍配对失败时才用（见 [buildLeafPairing]）——
+///   `\left(…\right)` 里的括号**有**原子认领（源码里真的有两个字符），不会被误跳。
+Set<int> unclaimedDelimiterBoxes({
+  required String tex,
+  required List<LeafBox> boxes,
+  required List<VisibleAtom> atoms,
+}) {
+  final Set<String> expected = <String>{
+    for (final VisibleAtom a in atoms)
+      if (expectedGlyphFor(tex, a) != null) expectedGlyphFor(tex, a)!,
+  };
+  final Set<int> out = <int>{};
+  for (var i = 0; i < boxes.length; i++) {
+    final LeafBox b = boxes[i];
+    if (b.kind != LeafBoxKind.glyph) continue;
+    final String t = b.text ?? '';
+    if (!kFrameDelimiters.contains(t)) continue;
+    if (expected.contains(t)) continue;
+    out.add(i);
+  }
+  return out;
+}
+
+/// 可能由"环境外框"画出来的定界符字形
+const Set<String> kFrameDelimiters = <String>{
+  '(', ')', '[', ']', '{', '}', '|', '∣', '‖', '∥', '⌈', '⌉', '⌊', '⌋', '⟨', '⟩',
+};
+
+LeafPairing _pairOnce({
+  required String tex,
+  required List<LeafBox> boxes,
+  required List<VisibleAtom> atoms,
+  Set<int> skip = const <int>{},
 }) {
   final List<PairGroup> groups = <PairGroup>[];
   var bi = 0;
@@ -396,7 +473,7 @@ LeafPairing buildLeafPairing({
     return null;
   }
 
-  /// 从 [from] 起"跳过垫子 / 空字盒"后数 [span] 个字形盒；不够返回 null
+  /// 从 [from] 起"跳过垫子 / 空字盒 / 外框盒"后数 [span] 个字形盒；不够返回 null
   ///
   /// ★ **只跳"中间"的垫子，不吞"后面"的垫子**：尾垫（`\rule{3pt}{0pt}`）本身就是一个
   ///   **垫子原子**，它紧跟在内容末尾 —— 若这里把尾随垫子也并进组里，
@@ -405,6 +482,10 @@ LeafPairing buildLeafPairing({
     final List<String> texts = <String>[];
     var k = from;
     while (k < boxes.length && texts.length < span) {
+      if (skip.contains(k)) {
+        k++; // 环境外框（源码里没有这个字符）
+        continue;
+      }
       final LeafBox b = boxes[k];
       if (b.kind == LeafBoxKind.pad) {
         k++;
@@ -424,6 +505,9 @@ LeafPairing buildLeafPairing({
 
   for (final VisibleAtom a in atoms) {
     if (!hasInk(tex, a)) continue; // `\,` 这类间距命令：没有墨迹，不进配对
+    while (bi < boxes.length && skip.contains(bi)) {
+      bi++; // 外框盒：直接越过
+    }
     if (isPadAtom(a)) {
       // 垫子原子必须落在一个**垫子盒**上（字形盒 ⇒ 说明两列已经错位了）
       while (bi < boxes.length &&
@@ -491,12 +575,18 @@ LeafPairing buildLeafPairing({
   }
 
   if (reason == null) {
-    // 剩下没被吃掉的**字形盒** ⇒ 一定错位了（垫子/空字盒无害，允许剩下）
+    // 剩下没被吃掉的**字形盒** ⇒ 一定错位了（垫子/空字盒/外框盒无害，允许剩下）
     for (var k = bi; k < boxes.length; k++) {
-      if (boxes[k].kind == LeafBoxKind.glyph && (boxes[k].text ?? '').isNotEmpty) {
-        reason = '还剩字形盒 "${boxes[k].text}"（第 $k 个）没配上原子';
-        break;
-      }
+      if (skip.contains(k)) continue;
+      if (boxes[k].kind != LeafBoxKind.glyph) continue;
+      final String t = boxes[k].text ?? '';
+      if (t.isEmpty) continue;
+      // ★ 2026-10-18 晚：**纯空白的字形盒不算"剩盒"**。
+      //   `\ ` `\;` 这类间距命令在不同引擎版本里有时画垫子、有时画空格字形盒；
+      //   它们没有墨迹、也不对应可点的字符 ⇒ 留在末尾不该让整份配对判死。
+      if (t.trim().isEmpty) continue;
+      reason = '还剩字形盒 "$t"（第 $k 个）没配上原子';
+      break;
     }
   }
   if (reason == null && groups.isEmpty && boxes.isNotEmpty) {

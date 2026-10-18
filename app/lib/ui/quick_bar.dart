@@ -7,6 +7,10 @@
 // 五条规矩：
 //   ① **8 格**（= 面板一排的格数，同一常量可调）；**不随筛选变化**，永远是这 8 格；
 //   ② **赋值**：先点某个栏位"选中" ⇒ 再点面板里任意符号 ⇒ 放进该格；`Esc` 取消；**长按清空**；
+//      ★★ 2026-10-18 晚（用户提出）：**右键 = 编辑这一格（换掉）**。
+//      左键在"有内容的格"上是**插入**（每天最常用的动作，不能动），
+//      于是"想换掉第 3 格"原来只有"先长按清空、再左键进赋值"这一条绕路
+//      ⇒ 右键直接进赋值模式（空位也一样：统一成"右键 = 我要编辑这一格"）。
 //   ③ **使用**：点格子插入，或 `Alt+1..8`（不管面板开没开）；
 //   ④ 与面板**各有自己的收起/拉出按钮**（开关在顶栏，见 `editor_page.dart`）；
 //   ⑤ 数据 = `AppSettings.favorites`（`null` = 空格，**空位就是快捷栏的空格**）。
@@ -24,6 +28,7 @@ class QuickBar extends StatelessWidget {
     required this.settings,
     required this.onTapSlot,
     required this.onClearSlot,
+    required this.onAssignSlot,
     this.assignSlot,
     this.placement = QuickBarPlacement.abovePanel,
   });
@@ -36,6 +41,9 @@ class QuickBar extends StatelessWidget {
 
   /// 长按清空
   final void Function(int index) onClearSlot;
+
+  /// ★ 右键 ⇒ **换掉**这一格（进赋值模式；空位/有内容都一样）
+  final void Function(int index) onAssignSlot;
 
   /// 赋值模式的目标格（`null` = 不在赋值模式）
   final int? assignSlot;
@@ -99,12 +107,14 @@ class QuickBar extends StatelessWidget {
     return Tooltip(
       message: item == null
           ? '第 ${i + 1} 格（空）· 点一下再选符号'
-          : '${item.label} · Alt+${i + 1} 插入 · 长按清空',
+          : '${item.label} · Alt+${i + 1} 插入 · 右键换掉 · 长按清空',
       waitDuration: const Duration(milliseconds: 400),
       child: InkWell(
         key: Key('quick-slot-$i'),
         borderRadius: BorderRadius.circular(8),
         onTap: () => onTapSlot(i),
+        // ★ 右键 = 编辑这一格（换掉）；工具提示里也写了
+        onSecondaryTap: () => onAssignSlot(i),
         onLongPress: item == null ? null : () => onClearSlot(i),
         child: Container(
           width: cell,
