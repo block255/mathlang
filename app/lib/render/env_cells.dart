@@ -86,6 +86,41 @@ EnvCellHit? envCellHitAt({
   });
   if (rows.isEmpty) return null;
 
+  // ★★ 2026-10-18 晚（用户实测："如果那一行没有数的话，我鼠标根本点不到那一行"）：
+  //   行带原来只由**有墨迹**的格子并出来 ⇒ **整行都空**的那一行没有带 ⇒ 永远点不到。
+  //   ⇒ 给缺的行按"上一行的底 + 行高"补出一条带（行高取现有带的中位数）。
+  final int maxRow =
+      cells.map(rowOf).reduce((int a, int b) => a > b ? a : b);
+  final double rowH = estimateRowHeight(rows.values.toList());
+  for (var r = 0; r <= maxRow; r++) {
+    if (rows.containsKey(r)) continue;
+    // 找**下面最近**的有墨迹行当锚，往上/下推
+    Rect? anchor;
+    var anchorRow = -1;
+    for (var q = r + 1; q <= maxRow; q++) {
+      if (rows.containsKey(q)) {
+        anchor = rows[q];
+        anchorRow = q;
+        break;
+      }
+    }
+    if (anchor == null) {
+      for (var q = r - 1; q >= 0; q--) {
+        if (rows.containsKey(q)) {
+          anchor = rows[q];
+          anchorRow = q;
+          break;
+        }
+      }
+    }
+    if (anchor == null) continue;
+    final double h = rowH > 0 ? rowH : anchor.height;
+    final double top = anchorRow > r
+        ? anchor.top - (anchorRow - r) * h
+        : anchor.bottom + (r - anchorRow - 1) * h;
+    rows[r] = Rect.fromLTRB(anchor.left, top, anchor.right, top + h);
+  }
+
   // ② 认行：先找"竖直含点击点"的带，再退到最近的带
   int? row;
   for (final MapEntry<int, Rect> e in rows.entries) {
@@ -161,13 +196,28 @@ double? _columnAnchor(Map<String, Rect?> hulls, int col, Rect rowBand) {
 }
 
 /// 把格子坐标换成**源空间**偏移（用于点击落点）。
+///
+/// ★★ 2026-10-18 晚（用户实测"点矩阵里面一定落在括号外面 / 落在格子之间的 `&` 上"）：
+///   格子的槽区间**含两边的填充空格**（`\begin{pmatrix} A & B …` 里第一格是 `[16,18)`，
+///   而 18 正好是 `&`）⇒ 旧代码 `atEnd` 直接返回 `s.end`，光标就停在**分隔符**上，
+///   视觉上像"落在格子外面"。
+///   ⇒ 返回**去掉首尾空白后的内容边界**：`atEnd` 给内容末尾（`A` 之后那一格），
+///     `!atEnd` 给内容开头。空格子（没有内容）⇒ 首=尾=那个空位置本身。
 int? envCellOffset(String sourceTex, EnvCellHit hit) {
   final CaretSiteTable t = buildCaretSites(sourceTex);
   for (final SlotSpan s in t.slots) {
     final int? row = s.path.last.row;
     final int? col = s.path.last.col;
     if (row != hit.row || col != hit.col) continue;
-    return hit.atEnd ? s.end : s.start;
+    var a = s.start;
+    while (a < s.end && (sourceTex[a] == ' ' || sourceTex[a] == '\t')) {
+      a++;
+    }
+    var b = s.end;
+    while (b > a && (sourceTex[b - 1] == ' ' || sourceTex[b - 1] == '\t')) {
+      b--;
+    }
+    return hit.atEnd ? b : a;
   }
   return null;
 }

@@ -1260,7 +1260,12 @@ class DocViewState extends State<DocView> {
         return Center(
           // ★★ 2026-10-18（PC-5 右键入口）：行间块上**右键** ⇒ 请求改尺寸。
           //   只有多行环境（矩阵/行列式）会被 EditView 接住；其它公式右键什么都不发生。
+          //   ★★ 2026-10-18 晚（用户实测"右键矩阵内部没反应，只有点到括号上才认"）：
+          //   默认 `deferToChild` 时，**两个格子之间的空白**没有子节点认领 ⇒ 这个手势
+          //   根本不在命中路径上 ⇒ 右键落在空白处什么都不发生。
+          //   ⇒ `HitTestBehavior.opaque`：整块公式（含内部空白）都归它接次级点击。
           child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
             onSecondaryTapDown: widget.onEnvResizeRequest == null
                 ? null
                 : (TapDownDetails _) =>
