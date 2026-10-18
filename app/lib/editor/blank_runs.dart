@@ -13,7 +13,10 @@
 List<int> blankRunFrom(String buf, int from) {
   final List<int> out = <int>[];
   var o = from.clamp(0, buf.length);
-  while (o <= buf.length) {
+  // ★ 只数**真有行盒**的空行：`o == buf.length` 那个位置是"最后一个换行之后"，
+  //   它没有行（`甲\n` 的第二个"行"在渲染上是文末那片空白，不是一行空行）。
+  //   把它算进来会让"按一次 Enter 后的段距"被当成两行（用户实测的"高度不对"）。
+  while (o < buf.length) {
     final int nl = buf.indexOf('\n', o);
     final int end = nl < 0 ? buf.length : nl;
     if (buf.substring(o, end).trim().isNotEmpty) break;

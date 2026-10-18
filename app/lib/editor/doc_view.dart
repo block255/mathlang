@@ -72,6 +72,8 @@ class _BlankSlot extends StatefulWidget {
     this.topAligned = false,
     this.lineOffsets = const <int>[],
     this.caretDy,
+    this.gapBefore = 0,
+    this.lineHeight = 20,
   });
 
   final String id;
@@ -99,6 +101,18 @@ class _BlankSlot extends StatefulWidget {
 
   /// 光标在这一串空行里的**纵向偏移**（`null` ⇒ 光标不在这一段里）
   final double? caretDy;
+
+  /// ★★ 2026-10-18 晚：这段空隙里**属于"段距"的那一截**（下面的部分才是真空段落的一行行）。
+  ///
+  /// 为什么要有它：`甲` 按 Enter 得到 `甲\n\n`，光标停在**新段的行首**，
+  /// 而新段真正落脚的位置是 `甲` 底下**再让开一个段距**。
+  /// 原来竖条画在空隙最顶上（`dy = 0`）⇒ 用户看到"光标在这儿、打出来的字却在下面"
+  /// （用户实测原话：「字符进入的行跟刚才 enter 后光标到的位置不是一个高度」）。
+  /// ⇒ 空行的行盒从 `gapBefore` 起算：**第 k 个空行 = gapBefore + k × lineHeight**。
+  final double gapBefore;
+
+  /// 一行的高（点哪一行 ⇒ 按这个换算）
+  final double lineHeight;
 
   @override
   State<_BlankSlot> createState() => _BlankSlotState();
@@ -141,7 +155,11 @@ class _BlankSlotState extends State<_BlankSlot> {
                 return;
               }
               final double dy = box.globalToLocal(d.globalPosition).dy;
-              final int k = (dy / widget.caretHeight).floor();
+              // ★ 空行的行盒从 `gapBefore` 起算（上面那截是段距，不算"某一行"）
+              final double rel = dy - widget.gapBefore;
+              final int k = rel <= 0
+                  ? 0
+                  : (rel / widget.lineHeight).floor();
               final int i = k.clamp(0, widget.lineOffsets.length - 1);
               widget.onTap(widget.lineOffsets[i]);
             },
@@ -1533,16 +1551,21 @@ class DocViewState extends State<DocView> {
             : (p == 0 ? _blankRunAtStart() : const <int>[]);
         if (run.isNotEmpty) {
           final int? idx = _caretLineIndexInRun(run);
+          // ★ 段距那一截：空隙里除了"真空段落的行"之外，前面还有一段**段距**
+          final double gapBefore =
+              (prevUnit == null || u == null) ? 0.0 : _gapBefore(u.type);
           children.add(_BlankSlot(
             id: 'blank@${run.first}',
             height: gap,
             offset: run.first,
             lineOffsets: run,
+            gapBefore: gapBefore,
+            lineHeight: _blankLineHeight,
             caretHere: !widget.hideCaretAndSelection &&
                 widget.caretVisible &&
                 idx != null,
-            // 多个空行 ⇒ 竖条画在**光标所在的那一行**上；单行（段距）⇒ 保持原来的贴顶/居中
-            caretDy: (run.length > 1 && idx != null) ? idx * _blankLineHeight : null,
+            // 空行的行盒从 gapBefore 起算 ⇒ 光标落在"它真正会落脚"的那一行上
+            caretDy: idx == null ? null : gapBefore + idx * _blankLineHeight,
             caretHeight: textCaretHeight(_s.bodyFontSize),
             caretWidth: 1.5,
             caretColor: const Color(kCaretColorValue),
@@ -1592,10 +1615,15 @@ class DocViewState extends State<DocView> {
         //   插入 `\n\n` 之后缓冲区是 `…\n\n`，**光标落在 after + 1**（末尾那行空行的行首），
         //   而空行的**起点**是 `after` ⇒ 原来 `_caret == after` 永远不成立 ⇒ 一根竖条都不画。
         //   ⇒ 文末槽只要是"光标停在末尾那片空白里"就画。
+        // ★★ 2026-10-18 晚：**竖条要画在"新段落真正会落脚"的位置**。
+        //   用户实测：「enter 之后光标在这儿，但打出来的字符比它低一截」——
+        //   差的就是这一截**段距**（新段落在上一段底下再让开 `gapBefore`）。
         caretHere: !widget.hideCaretAndSelection &&
             widget.caretVisible &&
             after >= 0 &&
             (_caret ?? -1) >= after,
+        // 文末的空行 = 下一个段落的行首 ⇒ 从段距处起画
+        caretDy: after >= 0 ? _gapBefore(BlockType.paragraph) : null,
         caretHeight: textCaretHeight(_s.bodyFontSize),
         caretWidth: 1.5,
         caretColor: const Color(kCaretColorValue),

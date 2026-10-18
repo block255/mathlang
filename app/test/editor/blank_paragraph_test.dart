@@ -97,8 +97,9 @@ void main() {
       await _pumpDocView(tester, '甲\n\n\n\n乙',
           caret: 0, onTapOffset: (int o) => got = o);
       final Rect slot = tester.getRect(_slots.first);
-      // 往下 1.5 行 ⇒ 第二行
-      await tester.tapAt(Offset(slot.left + 40, slot.top + 30));
+      // ★ 空行的行盒**从段距之后**起算（`gapBefore ≈ 11.2`，行高 ≈ 20）
+      //   ⇒ 第二行落在 ~31..51 这段里
+      await tester.tapAt(Offset(slot.left + 40, slot.top + 40));
       await tester.pumpAndSettle();
       expect(got, 3, reason: '点在第二个空行上 ⇒ 光标落在第二个空行的行首（实际 $got）');
     });
@@ -131,6 +132,43 @@ void main() {
       final double two = tester.getTopLeft(find.textContaining('甲').first).dy;
       expect(two - one, greaterThan(12.0),
           reason: '文首多一个空行就多一整行（实测 ${two - one}）');
+    });
+  });
+
+  group('⑤ 用户实测的两条（2026-10-18 晚第二批）', () {
+    testWidgets('★★ Enter 之后竖条要落在**新段落会落脚**的位置（差一个段距）',
+        (WidgetTester tester) async {
+      // 用户原话：「enter 之后光标在这儿，但打出文本时字符比它低一截」
+      // 根因：`甲` 按 Enter ⇒ `甲\n\n`，新段落要落在 `甲` 底下**再让开一个段距**，
+      //       而竖条原来画在空隙最顶上（dy = 0）。
+      await _pumpDocView(tester, '甲\n\n', caret: 3);
+      final Rect slot = tester.getRect(_slots.first);
+      final Rect bar = tester.getRect(find
+          .byWidgetPredicate((Widget w) =>
+              w is Container && w.constraints?.maxWidth == 1.5)
+          .first);
+      final double dy = bar.top - slot.top;
+      expect(dy, greaterThan(6.0),
+          reason: '竖条要往下让开一个段距（实测 dy=${dy.toStringAsFixed(1)}）');
+      expect(dy, lessThan(18.0), reason: '只让开一个段距，不是一整行');
+    });
+
+    testWidgets('★★ 段落边界**一次退格整个删掉**（Enter 插了两个 `\\n`）',
+        (WidgetTester tester) async {
+      // 用户原话：「点一次删除没还原，点两次才还原」
+      final DocBuffer buf = await _pumpEditView(tester, '一\n\n行', caret: 3);
+      await tester.sendKeyEvent(LogicalKeyboardKey.backspace);
+      await tester.pumpAndSettle();
+      expect(buf.buf, '一行', reason: '一次退格 = 撤销那一次 Enter（不是删一个字符）');
+      expect(buf.caret, 1);
+    });
+
+    testWidgets('★ `Delete` 镜像：段落边界也一次删光', (WidgetTester tester) async {
+      final DocBuffer buf = await _pumpEditView(tester, '一\n\n行', caret: 1);
+      await tester.sendKeyEvent(LogicalKeyboardKey.delete);
+      await tester.pumpAndSettle();
+      expect(buf.buf, '一行');
+      expect(buf.caret, 1);
     });
   });
 

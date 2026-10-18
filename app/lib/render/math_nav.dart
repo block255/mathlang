@@ -235,12 +235,52 @@ int? verticalStopAt(String source, int offset, {required bool up}) {
 
 // ---------------------------------------------------------------- 退格 / 删除
 
+/// 光标紧邻的那一段连续 `\n` 里，**一次删除该吃掉几个**（`null` = 不归这条管）。
+///
+/// 与 Enter 的插入规则**镜像**（`EditView._enterPayload`）：
+///
+/// | 紧邻的 `\n` 个数 | 一次删除吃掉 | 为什么 |
+/// |---|---|---|
+/// | `k == 0` / `k == 1` | 不归这条管（交给文字层删 1 个字符 / 软换行） | 软换行就是一个字符 |
+/// | `k == 2` | **2** | 一个**段落边界**（Enter 从正文里插的正是 `\n\n`） |
+/// | `k >= 3` | **1** | 真空段落里"在空行上按 Enter"只补了 1 个 ⇒ 退格也还 1 个 |
+///
+/// ★ 判据只看**光标紧邻**的那一段，不看整篇：`一\n\n\n行` 从左到右退格会
+///   先吃掉真空段落那一行（k=3 ⇒ 删 1），再吃掉段落边界（k=2 ⇒ 删 2）。
+SmartEdit? _paragraphBreakDelete(String source, int o, {required bool forward}) {
+  var k = 0;
+  if (forward) {
+    while (o + k < source.length && source[o + k] == '\n') {
+      k++;
+    }
+  } else {
+    while (o - 1 - k >= 0 && source[o - 1 - k] == '\n') {
+      k++;
+    }
+  }
+  if (k < 2) return null;
+  final int n = k == 2 ? 2 : 1;
+  if (forward) {
+    if (o + n > source.length) return null;
+    return SmartEdit.remove(o, o + n, o);
+  }
+  return SmartEdit.remove(o - n, o, o - n);
+}
+
 /// 文档级 `Backspace` / `Delete` 的处置（**绝对偏移**）。
 ///
 /// 不在数学段里 → 字节级；在段里 → 交给 [smartBackspace] / [smartDelete]，
 /// 段内已无可删时处理**公式首/公式尾的边界语义**（§3.3）。
 SmartEdit smartEditAt(String source, int offset, {required bool forward}) {
   final int o = offset.clamp(0, source.length);
+
+  // ★★★ 2026-10-18 晚（用户实测）：**段落边界是一个对象**。
+  //   现象：「`一|行` 按 Enter ⇒ `一\n\n行`（新段），**按一次删除没还原、要按两次**」。
+  //   根因：Enter 插的是 `\n\n`**两个**字符，而退格一次只删一个。
+  //   口径与 §4.6「删除要干脆」一致：**Enter 造出来的结构，一次退格整个撤销**。
+  final SmartEdit? brk = _paragraphBreakDelete(source, o, forward: forward);
+  if (brk != null) return brk;
+
   final MathRegion? r = mathRegionAt(source, o);
 
   // ① 不在公式里（含"紧贴公式**外侧**"）→ 交给文字层：
