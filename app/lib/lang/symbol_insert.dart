@@ -95,8 +95,22 @@ SymbolInsertResult applySymbolInsert({
   }
 
   // ★ 走同一条守门人链（含行边界 ③④⑤、粘合处挪位 ②、裸参数补花括号）
-  final int at0 = e > s ? s : (mergeAt ?? c);
-  final InsertPlan plan = planInsert(doc, at0, text);
+  int at0 = e > s ? s : (mergeAt ?? c);
+  // ★★ 2026-10-17（用户手验抓到的真缺陷）：**落点必须在"参数安全位"**。
+  //   两个坑（全域扫 146/804 个落点会产出**解析失败**的文档）：
+  //     ① 落在**控制词中间**：`\f|rac` 里插 `\forall` ⇒ `\f\forallrac`（命令当场散架）；
+  //     ② 与**字母粘连**：`\forall` + `x^2` ⇒ `\forallx^2`（TeX 只按字母读词 ⇒ 未知命令）。
+  //   ⇒ ① 挪到控制词**之前**（`\frac` 在视觉上是一个原子，"插在它前面"才有意义）；
+  //     ② 两边都补一个空格（TeX 里空格只是分隔符，不占版面）。
+  if (e == s) at0 = _intoArgGroupIfAfterCommand(doc, _safeMathOffset(doc, at0));
+  // 两趟：`planInsert` 自己也会挪落点（粘合处规则 ②）⇒ 分隔符必须按**最终落点**判邻居。
+  InsertPlan plan = planInsert(doc, at0, text);
+  if (plan.offset != at0) at0 = plan.offset;
+  final ({String text, int prefix}) safe =
+      _withCommandSeparators(doc, at0, text);
+  text = safe.text;
+  final int sepPrefix = safe.prefix;
+  if (plan.offset != at0) plan = planInsert(doc, at0, text);
   var d = doc;
   if (plan.wrapBareArg != null) {
     final ({int start, int end}) w = plan.wrapBareArg!;
@@ -110,7 +124,7 @@ SymbolInsertResult applySymbolInsert({
   // 新光标：模板 ⇒ 第一个空槽；符号 ⇒ 插入内容之后
   final int padPrefix = plan.padding.prefixNewline ? 1 : 0;
   final int shellPrefix = wrapped ? 1 : 0;
-  final int texStart = at + padPrefix + shellPrefix;
+  final int texStart = at + padPrefix + shellPrefix + sepPrefix;
   final int caretOut = template
       ? (texStart + firstSlotOffset(tex)).clamp(0, newDoc.length)
       : (at + payload.length).clamp(0, newDoc.length);
@@ -153,4 +167,77 @@ bool _touchesMath(String doc, int from, int to) {
     if (mathRegionAt(doc, o) != null) return true;
   }
   return false;
+}
+
+// ---------------------------------------------------------------------------
+// 落点的"参数安全"两条（2026-10-17，用户手验后全域扫出来的）
+// ---------------------------------------------------------------------------
+
+bool _isLetter(String ch) {
+  final int c = ch.codeUnitAt(0);
+  return (c >= 0x41 && c <= 0x5A) || (c >= 0x61 && c <= 0x7A);
+}
+
+/// 包含 [at] 的那个**控制词**（`\frac` 的 `[反斜杠, 词尾)`）；不在控制词里返回 `null`。
+///
+/// 判据：`at` 两侧的字母串 + 串前必须是 `\`。注意 `at` 可以正好等于词首/词尾
+/// （那两个位置是**合法**落点，本函数照样返回区间，由调用方判"是不是真落在中间"）。
+({int start, int end})? controlWordSpanAt(String doc, int at) {
+  final int o = at.clamp(0, doc.length);
+  var s = o, e = o;
+  while (s > 0 && _isLetter(doc[s - 1])) {
+    s--;
+  }
+  while (e < doc.length && _isLetter(doc[e])) {
+    e++;
+  }
+  if (s == e) return null;
+  if (s == 0 || doc[s - 1] != r'\') return null;
+  return (start: s - 1, end: e);
+}
+
+/// 把落在**控制词中间**的落点挪到那个控制词**之前**。
+int _safeMathOffset(String doc, int at) {
+  final ({int start, int end})? span = controlWordSpanAt(doc, at);
+  if (span == null) return at;
+  if (at <= span.start || at >= span.end) return at; // 词前 / 词后都是合法位
+  return span.start;
+}
+
+/// ★★ 第三个坑：落点**紧贴控制词之后、而下一个字符正好是 `{`**。
+///
+/// 例：`\frac|-b \pm …` 插模板 ⇒ `\frac\frac{}{}{-b…}` —— 老的 `\frac` 会把**新模板**
+/// 当成自己的第一个参数，于是多出一个 `{}` ⇒ 整段解析失败（实测可达、也实测红）。
+/// 处置：把落点**挪进那个 `{` 里面**（= 那个参数的开头）⇒ `\frac{\frac{}{}}{-b…}`，
+/// 语义上正好是"把模板放进分子的位置"，与用户点在那儿的心智一致。
+int _intoArgGroupIfAfterCommand(String doc, int at) {
+  if (at <= 0 || at >= doc.length) return at;
+  if (doc[at] != '{') return at;
+  final ({int start, int end})? span = controlWordSpanAt(doc, at);
+  // ① 紧贴"命令名 + `{`"（`\frac|{-b…` / `\sqrt|{…`）
+  if (span != null && at == span.end) return at + 1;
+  // ② 紧贴"上一个参数的 `}` + 下一个参数的 `{`"（`…}|{2a}`）——同样是"新模板会被外层命令
+  //    当成参数吃掉"的情形。挪进下一个参数的开头，语义上也最接近用户点的位置。
+  if (doc[at - 1] == '}') return at + 1;
+  return at;
+}
+
+/// 载荷与相邻字母之间补**空格分隔符**（TeX 里空格只是分隔，不占版面）。
+///
+/// 返回 `(text, prefix)`：`prefix` = 前面补了几个字符（光标定位要用）。
+({String text, int prefix}) _withCommandSeparators(
+    String doc, int at, String text) {
+  if (text.isEmpty) return (text: text, prefix: 0);
+  var out = text;
+  var prefix = 0;
+  final bool startLetter = _isLetter(text[0]);
+  final bool endLetter = _isLetter(text[text.length - 1]);
+  if (startLetter && at > 0 && _isLetter(doc[at - 1])) {
+    out = ' $out';
+    prefix = 1;
+  }
+  if (endLetter && at < doc.length && _isLetter(doc[at])) {
+    out = '$out ';
+  }
+  return (text: out, prefix: prefix);
 }

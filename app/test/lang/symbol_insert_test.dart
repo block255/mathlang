@@ -69,7 +69,9 @@ void main() {
           doc: doc, caret: 0, selStart: 2, selEnd: 3, tex: r'\beta', template: false);
       expect(r.mode, SymbolInsertMode.replaceSelection);
       expect(r.wrapped, isFalse);
-      expect(r.doc, r'$a\betac$', reason: '不该重复包壳（选区已在公式里）');
+      // ★ 2026-10-17 改：\betac 是**坏 TeX**（TeX 只按字母读命令名）⇒ 后面跟字母必须补分隔空格。
+      expect(r.doc, r'$a\beta c$',
+          reason: '不该重复包壳（选区已在公式里），但命令与后面字母之间必须留分隔');
     });
   });
 
