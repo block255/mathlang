@@ -739,7 +739,17 @@ class EditViewState extends State<EditView> {
       _buf.setCaret(_lineEnd(_buf.caret), extend: shift);
       return KeyEventResult.handled;
     }
-    // `Enter` **不在这里处理**：它走文本通道（textarea 自己插 `\n` → formatter 变成 `\n\n`）。
+    // ★★ 2026-10-18：**Enter 必须在键事件里处理**（改旧注释"走文本通道"的结论）。
+    //   用户实测：行中/行末按 Enter ⇒ **文本不变、光标消失**。
+    //   根因：Windows 上 Enter 到不了文本通道（不产生 `\n`、也不发 `TextInputAction`），
+    //   而这里返回 `ignored` ⇒ 冒泡给祖先 ⇒ **Flutter 默认的焦点遍历把焦点移走** ⇒ 失焦 ⇒ 光标消失。
+    //   ⇒ 自己插换行（与 formatter 同一条规则：`Enter` = 新块 ⇒ `\n\n`；`Shift+Enter` = 块内软换行）。
+    if (k == LogicalKeyboardKey.enter || k == LogicalKeyboardKey.numpadEnter) {
+      _commitText(shift ? '  \n' : '\n\n');
+      _pokeBlink();
+      return KeyEventResult.handled;
+    }
+    // `Shift+Enter` = 块内硬换行（行尾两个空格，任何环节都不许 trim）——见上面那条。
     //
     // ★★ 2026-10-17 用户实测："按空格时**文本区自己往下滚**一小块"（标题栏不动 ⇒ 是 Flutter 侧滚动）。
     //   根因：这里对"可打印键"返回了 `ignored` ⇒ 键事件继续**冒泡给祖先 `Scrollable`**，

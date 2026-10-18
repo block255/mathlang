@@ -81,6 +81,10 @@ class TextInputSurfaceController extends ChangeNotifier with TextInputClient {
 
   TextInputConnection? _conn;
 
+  /// 最近一次走 `performAction(newline)` 插入换行的时间（微秒）；0 = 没处理过。
+  /// 用来**去重**：平台会同时通过"动作"和"文本通道"各报一次 Enter（见 updateEditingValue）。
+  int _newlineHandledAtMicros = 0;
+
   /// 平台元素里**当前装着**的文本（我们最后推过去的 / 最后看到的）
   String _platformText = '';
 
@@ -237,6 +241,17 @@ class TextInputSurfaceController extends ChangeNotifier with TextInputClient {
     // ② 组合结束（或本来就没有组合）：只取「新出现的那段文本」
     final PlatformEdit? edit = diffPlatformText(_platformText, v.text);
     String inserted = edit?.inserted ?? '';
+    // ★★ 2026-10-18：**Enter 去重**。平台会走两条路各报一次换行：
+    //   ① `performAction(TextInputAction.newline)`（我们在那里插了 `\n`）
+    //   ② 文本通道的 value 里再多一个 `\n`
+    //   两条都插 ⇒ 一次 Enter 变两个换行（用户实测"多出一个空行 / 文本看着没变"）。
+    //   判据：刚处理过换行动作的 200ms 内、且这次要插的正好是单个 `\n` ⇒ 跳过。
+    if (inserted == '\n' &&
+        _newlineHandledAtMicros != 0 &&
+        DateTime.now().microsecondsSinceEpoch - _newlineHandledAtMicros < 200000) {
+      _newlineHandledAtMicros = 0;
+      inserted = '';
+    }
     // ★★ 2026-10-18：平台有**两套投递模型**，这里必须同时伺候：
     //   · **累积式**（真机、元素不清空时的 IME）：value = 元素里的全文 ⇒ 取新增后缀；
     //   · **单字符式**（测试替身 `testTextInput`、以及元素被清空时的硬件键）：
@@ -274,6 +289,8 @@ class TextInputSurfaceController extends ChangeNotifier with TextInputClient {
     if (action == TextInputAction.newline) {
       // Shift+Enter = 块内硬换行（R8：行尾两个空格，任何环节都不许 trim）
       final bool soft = HardwareKeyboard.instance.isShiftPressed;
+      // ★★ 打时间戳：文本通道可能紧跟着再送一个 `\n`（去重见 updateEditingValue）
+      _newlineHandledAtMicros = DateTime.now().microsecondsSinceEpoch;
       _commitThroughFormatters(soft ? '  \n' : '\n');
     }
   }
