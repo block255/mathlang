@@ -133,43 +133,65 @@ class _EnvSizeDialogState extends State<_EnvSizeDialog> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: <Widget>[
-                  Row(
-                    children: <Widget>[
-                      const SizedBox(width: 56, child: Text('行数')),
-                      SizedBox(
-                        width: 72,
-                        child: TextField(
-                          key: const Key('env-size-rows'),
-                          controller: _rows,
-                          keyboardType: TextInputType.number,
-                          inputFormatters: <TextInputFormatter>[
-                            FilteringTextInputFormatter.digitsOnly,
-                          ],
-                          onChanged: (_) => setState(() => _error = null),
-                        ),
-                      ),
-                      const SizedBox(width: 16),
-                      const SizedBox(width: 56, child: Text('列数')),
-                      SizedBox(
-                        width: 72,
-                        child: TextField(
-                          key: const Key('env-size-cols'),
-                          controller: _cols,
-                          enabled: !widget.determinant,
-                          keyboardType: TextInputType.number,
-                          inputFormatters: <TextInputFormatter>[
-                            FilteringTextInputFormatter.digitsOnly,
-                          ],
-                          onChanged: (_) => setState(() => _error = null),
-                        ),
-                      ),
-                    ],
-                  ),
                   if (widget.determinant)
-                    const Padding(
-                      padding: EdgeInsets.only(top: 6),
-                      child: Text('行列式必须是方阵：列数跟随行数',
-                          style: TextStyle(fontSize: 11, color: Color(0xFF718096))),
+                    // ★★ 2026-10-18 晚（用户）：**行列式只给一栏「尺寸」**。
+                    //   原来给"行数 / 列数"两栏、列数置灰 ⇒ 用户改了行数看不到列数跟着动
+                    //   （虽然生成出来的确实是 n×n），一眼像是没生效。
+                    //   方阵只有一个自由度 ⇒ 界面上也只该有一个框。
+                    Row(
+                      children: <Widget>[
+                        const SizedBox(width: 56, child: Text('尺寸')),
+                        SizedBox(
+                          width: 72,
+                          child: TextField(
+                            key: const Key('env-size-rows'),
+                            controller: _rows,
+                            keyboardType: TextInputType.number,
+                            inputFormatters: <TextInputFormatter>[
+                              FilteringTextInputFormatter.digitsOnly,
+                            ],
+                            onChanged: (_) => setState(() => _error = null),
+                          ),
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.only(left: 8),
+                          child: Text('× $r（方阵）',
+                              style: const TextStyle(
+                                  fontSize: 11, color: Color(0xFF718096))),
+                        ),
+                      ],
+                    )
+                  else
+                    Row(
+                      children: <Widget>[
+                        const SizedBox(width: 56, child: Text('行数')),
+                        SizedBox(
+                          width: 72,
+                          child: TextField(
+                            key: const Key('env-size-rows'),
+                            controller: _rows,
+                            keyboardType: TextInputType.number,
+                            inputFormatters: <TextInputFormatter>[
+                              FilteringTextInputFormatter.digitsOnly,
+                            ],
+                            onChanged: (_) => setState(() => _error = null),
+                          ),
+                        ),
+                        const SizedBox(width: 16),
+                        const SizedBox(width: 56, child: Text('列数')),
+                        SizedBox(
+                          width: 72,
+                          child: TextField(
+                            key: const Key('env-size-cols'),
+                            controller: _cols,
+                            keyboardType: TextInputType.number,
+                            inputFormatters: <TextInputFormatter>[
+                              FilteringTextInputFormatter.digitsOnly,
+                            ],
+                            onChanged: (_) => setState(() => _error = null),
+                          ),
+                        ),
+                      ],
                     ),
                   const SizedBox(height: 12),
                   Row(

@@ -88,15 +88,19 @@ void main() {
       expect(buf.buf, before, reason: '改尺寸只算**一次**编辑，一步就该撤销');
     });
 
-    testWidgets('★ 行列式：列数不可改，改行数 ⇒ 方阵', (WidgetTester tester) async {
+    testWidgets('★ 行列式：**只有一栏尺寸**，改阶数 ⇒ 方阵', (WidgetTester tester) async {
       final DocBuffer buf = await _pumpEditView(tester, kDetDoc);
       await _rightClickMath(tester);
       expect(find.byKey(const Key('env-size-dialog')), findsOneWidget);
-      final TextField cols =
-          tester.widget(find.byKey(const Key('env-size-cols'))) as TextField;
-      expect(cols.enabled, isFalse, reason: '行列式强制方阵');
+      // ★ 2026-10-18 晚（用户）：行列式在两栏改成一栏（方阵只有一个自由度）
+      expect(find.byKey(const Key('env-size-cols')), findsNothing,
+          reason: '行列式不该出现列数框');
       await tester.enterText(find.byKey(const Key('env-size-rows')), '3');
       await tester.pump();
+      expect(
+          (tester.widget(find.byKey(const Key('env-size-preview'))) as Text)
+              .data,
+          contains('3 × 3'));
       await tester.tap(find.byKey(const Key('env-size-apply')));
       await tester.pumpAndSettle();
       expect(buf.buf,

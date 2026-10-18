@@ -60,14 +60,18 @@ void main() {
     expect(got!.cols, 5);
   });
 
-  testWidgets('行列式：列数框被禁用，列数跟随行数', (WidgetTester tester) async {
+  testWidgets('行列式：只有**一栏「尺寸」**（方阵只有一个自由度）', (WidgetTester tester) async {
     EnvSizeChoice? got;
     await _open(tester, determinant: true, onResult: (EnvSizeChoice? r) => got = r);
-    final TextField cols =
-        tester.widget(find.byKey(const Key('env-size-cols'))) as TextField;
-    expect(cols.enabled, isFalse, reason: '行列式强制方阵 ⇒ 列数不可改');
+    // ★ 2026-10-18 晚（用户）：两栏改一栏 —— 原来"行数/列数（置灰）"看不出列有没有跟着动
+    expect(find.byKey(const Key('env-size-cols')), findsNothing,
+        reason: '行列式不该出现列数框：方阵只有阶数一个自由度');
     await tester.enterText(find.byKey(const Key('env-size-rows')), '3');
     await tester.pump();
+    expect(
+        (tester.widget(find.byKey(const Key('env-size-preview'))) as Text).data,
+        contains('3 × 3'),
+        reason: '改阶数 ⇒ 预览里的列数必须立刻跟着变成 3');
     await tester.tap(find.byKey(const Key('env-size-apply')));
     await tester.pumpAndSettle();
     expect(got!.rows, 3);
