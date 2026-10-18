@@ -20,6 +20,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mathlang/core/doc_buffer.dart';
 import 'package:mathlang/editor/edit_view.dart';
+import 'package:mathlang/lang/env_resize.dart';
 import 'package:mathlang/render/leaf_boxes.dart';
 import 'package:mathlang/render/math_caret.dart';
 
@@ -144,6 +145,52 @@ void main() {
       expect(await _rightClick(tester, r.root, paren.center), isTrue,
           reason: '括号上');
       expect(buf.buf, _doc(kTex), reason: '右键本身不改文档');
+    });
+  });
+
+  group('③ 比 2×2 大的环境（用户："一旦扩大出 2×2 就内部完全点不到"）', () {
+    testWidgets('★★ 3×3（由 2×2 扩大而成）：点字母中心都能落进本格',
+        (WidgetTester tester) async {
+      // 根因：超过一行高之后，引擎把括号画成**分段碎片** `⎛ ⎝ ⎞ ⎠`，
+      //   而 `kFrameDelimiters` 里没有它们 ⇒ 配对整份判死 ⇒ 整块点不进去。
+      final String tex = resizeEnvironment(
+          r'\begin{pmatrix} A & B \\ C & D \end{pmatrix}',
+          rows: 3,
+          cols: 3);
+      final DocBuffer buf = await _pump(tester, _doc(tex));
+      final ({RenderBox root, List<LeafBox> boxes}) r = _rig();
+      for (final String letter in <String>['A', 'B', 'C', 'D']) {
+        final Iterable<LeafBox> found =
+            r.boxes.where((LeafBox b) => b.text == letter);
+        if (found.isEmpty) continue; // 极端情况下该字没画出来，跳过（其余字母仍要能点）
+        await _leftClick(tester, r.root, found.first.rect.center);
+        final int at = buf.buf.indexOf(letter);
+        expect(buf.caret, inInclusiveRange(at, at + 2),
+            reason: '3×3 里点 `$letter` 要落在**本格**（$at±2），实际 ${buf.caret}');
+      }
+    });
+
+    testWidgets('★ 3×3 里右键照样弹面板', (WidgetTester tester) async {
+      final String tex = resizeEnvironment(
+          r'\begin{pmatrix} A & B \\ C & D \end{pmatrix}',
+          rows: 3,
+          cols: 3);
+      await _pump(tester, _doc(tex));
+      final ({RenderBox root, List<LeafBox> boxes}) r = _rig();
+      final LeafBox a = r.boxes.firstWhere((LeafBox b) => b.text == 'A');
+      expect(await _rightClick(tester, r.root, a.rect.center), isTrue);
+    });
+  });
+
+  group('④ 行内矩阵：右键也要能改尺寸', () {
+    testWidgets('★★ 段落里的行内矩阵右键 ⇒ 弹面板（改前：一点反应没有）',
+        (WidgetTester tester) async {
+      final String doc = '甲${r'$'}${kTex}${r'$'}乙';
+      await _pump(tester, doc);
+      final ({RenderBox root, List<LeafBox> boxes}) r = _rig();
+      final LeafBox a = r.boxes.firstWhere((LeafBox b) => b.text == 'A');
+      expect(await _rightClick(tester, r.root, a.rect.center), isTrue,
+          reason: '行内公式也必须能右键（以前只有行间块接了手势）');
     });
   });
 }

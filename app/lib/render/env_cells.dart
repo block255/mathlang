@@ -160,6 +160,7 @@ EnvCellHit? envCellHitAt({
       final Rect? r = hulls['${rowOf(s)},${colOf(s)}'];
       final double cx = r?.center.dx ??
           _columnAnchor(hulls, colOf(s), rows[row]!) ??
+          _extrapolatedColumnX(hulls, colOf(s), rows[row]!) ??
           rows[row]!.left;
       final double d = (cx - localPos.dx).abs();
       if (d < bestDx) {
@@ -193,6 +194,39 @@ double? _columnAnchor(Map<String, Rect?> hulls, int col, Rect rowBand) {
     return r.center.dx;
   }
   return null;
+}
+
+/// 整列都空（`_columnAnchor` 也找不到）时，按**相邻列**的间距外推这一列的 x 中心。
+///
+/// ★★ 2026-10-18 晚（用户实测："4×4 我只能点到前三列"）：从 2×2 扩大出来的矩阵，
+///   第 3、4 列**一个数都没有** ⇒ 没有矩形、没有锚 ⇒ 旧代码退到 `rowBand.left`
+///   ⇒ 点最右边那列被判成第 0 列。这里用"已知列的 x 中心 + 列间距"线性外推。
+double? _extrapolatedColumnX(Map<String, Rect?> hulls, int col, Rect rowBand) {
+  final Map<int, double> known = <int, double>{};
+  for (final MapEntry<String, Rect?> e in hulls.entries) {
+    final Rect? r = e.value;
+    if (r == null) continue;
+    final List<String> parts = e.key.split(',');
+    known[int.parse(parts[1])] = r.center.dx;
+  }
+  if (known.isEmpty) return null;
+  final List<int> keys = known.keys.toList()..sort();
+  if (keys.length >= 2) {
+    // 列间距取"相邻已知列"的中位间距
+    final List<double> gaps = <double>[];
+    for (var i = 1; i < keys.length; i++) {
+      final int dc = keys[i] - keys[i - 1];
+      if (dc <= 0) continue;
+      gaps.add((known[keys[i]]! - known[keys[i - 1]]!) / dc);
+    }
+    if (gaps.isEmpty) return null;
+    gaps.sort();
+    final double gap = gaps[gaps.length ~/ 2];
+    final int last = keys.last;
+    return known[last]! + (col - last) * gap;
+  }
+  // 只有一列有墨迹：用行带宽 / 列数近似
+  return known[keys.first]! + (col - keys.first) * (rowBand.width / 4);
 }
 
 /// 把格子坐标换成**源空间**偏移（用于点击落点）。

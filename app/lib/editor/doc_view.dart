@@ -1136,6 +1136,11 @@ class DocViewState extends State<DocView> {
             ? (ProjectionSegment seg, String rt, Offset g, GlobalKey k) =>
                 _onMathTap(u, seg, rt, g, k)
             : null;
+    // ★★ 2026-10-18 晚（用户实测"行内矩阵右键没反应"）：行内公式也要能右键改尺寸。
+    //   `_resizeEnvAt` 只要一个"落在这段公式里"的文档偏移 ⇒ 传这段的起点即可。
+    final void Function(int absOffset)? onMathRight = interactive
+        ? (int at) => widget.onEnvResizeRequest?.call(at)
+        : null;
 
     switch (u.type) {
       case BlockType.heading1:
@@ -1157,6 +1162,7 @@ class DocViewState extends State<DocView> {
           composingText: composing,
           mathFontSize: size,
           onMathTap: onMathTap,
+          onMathRightClick: onMathRight,
           textStyle: TextStyle(
             fontSize: size,
             fontWeight: FontWeight.bold,
@@ -1187,6 +1193,7 @@ class DocViewState extends State<DocView> {
                 composingText: composing,
                 mathFontSize: body,
                 onMathTap: onMathTap,
+          onMathRightClick: onMathRight,
                 textStyle: base,
               ),
             ),
@@ -1211,6 +1218,7 @@ class DocViewState extends State<DocView> {
             composingText: composing,
             mathFontSize: body,
             onMathTap: onMathTap,
+          onMathRightClick: onMathRight,
             textStyle: base.copyWith(color: Colors.black54),
           ),
         );
@@ -1327,6 +1335,7 @@ class DocViewState extends State<DocView> {
           composingText: composing,
           mathFontSize: body,
           onMathTap: onMathTap,
+          onMathRightClick: onMathRight,
           textStyle: base,
         );
     }

@@ -49,6 +49,7 @@ class InlineMathText extends StatefulWidget {
     this.align = MathAlignMode.baseline,
     this.mathKeys,
     this.onMathTap,
+    this.onMathRightClick,
     this.caretWidth = 1.5,
     this.caretColor,
     this.selStart,
@@ -101,6 +102,11 @@ class InlineMathText extends StatefulWidget {
   ///   点击定位必须用它去命中，否则"叶盒数 vs 原子数"对不上（详见 `injection_map.dart`）。
   final void Function(ProjectionSegment seg, String renderTex, Offset globalPos,
       GlobalKey key)? onMathTap;
+
+  /// ★★ 2026-10-18 晚（用户实测「行内矩阵右键一点反应没有」）：
+  /// 行内公式上**右键**时回调，参数是**这段公式在文档里的绝对起点**
+  /// （`_resizeEnvAt` 只要知道"落在哪一段里"就能认出环境族与当前行列）。
+  final void Function(int absOffset)? onMathRightClick;
 
   final double caretWidth;
   final Color? caretColor;
@@ -294,10 +300,19 @@ class _InlineMathTextState extends State<InlineMathText> {
           ? PlaceholderAlignment.baseline
           : PlaceholderAlignment.middle,
       baseline: baseline ? TextBaseline.alphabetic : null,
-      child: onTap == null
+      child: onTap == null && widget.onMathRightClick == null
           ? _mathWidget(key, tex, caretHere: caretHere, edge: edge, sel: sel)
           : GestureDetector(
-              onTapDown: (d) => onTap(s, tex, d.globalPosition, key),
+              // ★ 右键：行内公式也要能"改尺寸"（只有多行环境会被接住）。
+              //   `opaque` 是为了**公式内部的空白**也归它（与行间那块同一口径）。
+              behavior: HitTestBehavior.opaque,
+              onTapDown: onTap == null
+                  ? null
+                  : (TapDownDetails d) => onTap(s, tex, d.globalPosition, key),
+              onSecondaryTapDown: widget.onMathRightClick == null
+                  ? null
+                  : (TapDownDetails _) => widget
+                      .onMathRightClick!(widget.baseOffset + s.start),
               child: MouseRegion(
                 cursor: SystemMouseCursors.text,
                 child: _mathWidget(key, tex, caretHere: caretHere, edge: edge, sel: sel),
