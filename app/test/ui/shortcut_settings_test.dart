@@ -36,6 +36,9 @@ Future<EditorPageState> _pump(WidgetTester tester) async {
 Future<void> _capture(WidgetTester tester, String actionId, int index,
     {List<LogicalKeyboardKey> mods = const <LogicalKeyboardKey>[],
     required LogicalKeyboardKey key}) async {
+  // ★ 快捷键组有 40+ 行 ⇒ 目标常常在折叠区外，必须先滚到可见（否则 tap 点空）
+  await tester.ensureVisible(find.byKey(Key('shortcut-key-$actionId-$index')));
+  await tester.pumpAndSettle();
   await tester.tap(find.byKey(Key('shortcut-key-$actionId-$index')));
   await tester.pumpAndSettle();
   for (final LogicalKeyboardKey m in mods) {
@@ -50,9 +53,9 @@ Future<void> _capture(WidgetTester tester, String actionId, int index,
 
 void main() {
   group('① 这张表说实话', () {
-    testWidgets('顶部报 已接入 19 / 共 42', (WidgetTester tester) async {
+    testWidgets('顶部报 已接入 23 / 共 45', (WidgetTester tester) async {
       await _pump(tester);
-      expect(find.text('已接入 19 / 共 42'), findsOneWidget);
+      expect(find.text('已接入 23 / 共 45'), findsOneWidget);
     });
 
     testWidgets('已接入的（撤销）与未接入的（分式）徽标不同',
@@ -117,6 +120,7 @@ void main() {
     testWidgets('添加副键 ⇒ 两条；再删掉副键 ⇒ 回一条', (WidgetTester tester) async {
       final EditorPageState st = await _pump(tester);
       await tester.ensureVisible(find.byKey(const Key('shortcut-add-frac')));
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('shortcut-add-frac')));
       await tester.pumpAndSettle();
       expect(st.shortcuts.combosOf('frac').length, 2);
@@ -127,6 +131,8 @@ void main() {
       ], key: LogicalKeyboardKey.keyM);
       expect(st.shortcuts.combosOf('frac')[1].label, 'Ctrl+Alt+M');
 
+      await tester.ensureVisible(find.byKey(const Key('shortcut-del-frac-1')));
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('shortcut-del-frac-1')));
       await tester.pumpAndSettle();
       expect(st.shortcuts.combosOf('frac').length, 1);
@@ -134,11 +140,15 @@ void main() {
 
     testWidgets('停用 / 恢复默认', (WidgetTester tester) async {
       final EditorPageState st = await _pump(tester);
+      await tester.ensureVisible(find.byKey(const Key('shortcut-enable-frac')));
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('shortcut-enable-frac')));
       await tester.pumpAndSettle();
       expect(st.shortcuts.isDisabled('frac'), isTrue);
       expect(find.text('已停用'), findsWidgets);
 
+      await tester.ensureVisible(find.byKey(const Key('shortcut-reset-frac')));
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('shortcut-reset-frac')));
       await tester.pumpAndSettle();
       expect(st.shortcuts.isDisabled('frac'), isFalse);

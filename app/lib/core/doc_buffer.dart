@@ -195,6 +195,19 @@ class DocBuffer {
 
   // ---------- 内部 ----------
 
+  /// ★ S4-d：「打开文件 / 新建」用 —— **整篇换掉，并且把撤销栈清空**。
+  ///
+  /// 为什么不能用 `replace(0, len, …)`：那是一次普通编辑，撤销栈里会留着旧文档，
+  /// 用户按 `Ctrl+Z` 会把"旧文件的内容"撤回来（打开另一个文件后还能撤回去 = 见鬼）。
+  void loadDocument(String text) {
+    _buf = text;
+    _caret = 0;
+    _anchor = 0;
+    _undoStack.clear();
+    _redoStack.clear();
+    _notify();
+  }
+
   bool _replaceInternal(int start, int end, String inserted) {
     final s = start.clamp(0, _buf.length);
     final e = end.clamp(s, _buf.length);

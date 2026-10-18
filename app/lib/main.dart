@@ -3,6 +3,7 @@
 //  三块内容：★问 0 流内数学映射（A 组主战场）/ S1 渲染验证取证 / B 组 appflowy_editor
 //  判定矩阵：notes/design/技术选型与风险.md 第 9.3 节
 // ============================================================
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 
 import 'spike/ime_input/ime_input_page.dart';
@@ -23,10 +24,12 @@ class MathlangApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => MaterialApp(
-        title: '数语引擎 · S1-A 实验台',
+        title: kIsWeb ? '数语引擎 · S1-A 实验台' : '数语引擎',
         debugShowCheckedModeBanner: false,
         theme: ThemeData(useMaterial3: true, colorSchemeSeed: const Color(0xFF2B6CB0)),
-        home: const ExperimentHome(),
+        // ★ S4-d：**软件端（Windows / Android）直接进编辑器**（正式产品不该先看实验台）；
+        //   Web 只用于开发 ⇒ 保留实验台入口（各阶段的验页面都还在）。
+        home: kIsWeb ? const ExperimentHome() : const EditorPage(),
       );
 }
 

@@ -9,10 +9,10 @@ import 'package:mathlang/lang/shortcut_registry.dart';
 
 void main() {
   group('① 表本身', () {
-    test('42 条动作，其中 19 条已接入（其余随 S4-c/S4-d/S5）', () {
-      expect(kShortcutActions.length, 42);
-      expect(ShortcutSettings.total, 42);
-      expect(ShortcutSettings.wiredCount, 19);
+    test('45 条动作，其中 22 条已接入（其余随 S4-c/S4-e/S5）', () {
+      expect(kShortcutActions.length, 45);
+      expect(ShortcutSettings.total, 45);
+      expect(ShortcutSettings.wiredCount, 23);
     });
 
     test('id 唯一、分组都在允许的五个类目里', () {

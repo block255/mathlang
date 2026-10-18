@@ -21,11 +21,14 @@ import 'package:flutter/services.dart';
 
 import '../core/doc_buffer.dart';
 import '../core/doc_settings.dart';
+import '../core/document_file.dart';
 import '../editor/edit_view.dart';
 import '../lang/math_spans.dart';
 import '../lang/shortcut_registry.dart';
 import '../lang/symbol_library.dart';
 import '../lang/word_triggers.dart';
+import '../io/file_gateway.dart';
+import '../io/file_gateway_platform.dart';
 import '../layout/page_metrics.dart';
 import '../spike/s3_edit/s3_edit_page.dart' show kEditSample;
 import 'app_settings.dart';
@@ -41,6 +44,7 @@ class EditorPage extends StatefulWidget {
     this.settings,
     this.doc,
     this.buffer,
+    this.gateway,
   });
 
   /// 测试注入（不传则从 `assets/symbols.json` 加载）
@@ -48,6 +52,9 @@ class EditorPage extends StatefulWidget {
   final AppSettings? settings;
   final DocSettings? doc;
   final DocBuffer? buffer;
+
+  /// 测试注入的文件后端（不传就用当前平台的真实现）
+  final FileGateway? gateway;
 
   @override
   State<EditorPage> createState() => EditorPageState();
@@ -73,11 +80,16 @@ class EditorPageState extends State<EditorPage> {
   /// 快捷栏**赋值模式**的目标格（`null` = 不在赋值模式）
   int? _assignSlot;
 
-  String _title = '未命名文档';
-  bool _editingTitle = false;
+  /// 当前文档的身份与保存状态
+  DocumentFile _docFile = const DocumentFile();
 
-  /// "保存点"：编辑次数达到它就算已保存（**S4-d 接入真文件后才有意义**）
-  final int _savedEdits = 0;
+  /// 上次保存/打开/新建时的正文快照（dirty 的判据）
+  late String _savedText = _buf.buf;
+
+  late final FileGateway _file = widget.gateway ?? platformFileGateway();
+
+  String _title = DocumentFile.kUntitled;
+  bool _editingTitle = false;
 
   /// ★ 快捷键偏好与词表（内存态；持久化随 S4-e）
   ShortcutSettings _shortcuts = ShortcutSettings.defaults();
@@ -127,7 +139,14 @@ class EditorPageState extends State<EditorPage> {
   bool get settingsOpen => _settingsOpen;
   int? get assignSlot => _assignSlot;
   String get title => _title;
-  bool get dirty => _stats.edits != _savedEdits;
+  /// ★ dirty 的唯一判据 = **正文与上次保存/打开/新建时的快照不同**
+  ///
+  /// 为什么不用"编辑次数比对"：打开另一个文件后 `EditView` 的计数器不会归零
+  /// （实测：打开完立刻显示"未保存"），而且"改完又改回去"本来就该算干净。
+  bool get dirty => _buf.buf != _savedText;
+
+  /// 当前文档（测试与诊断用）
+  DocumentFile get docFile => _docFile;
 
   /// 右栏当前宽度（0 = 右栏不存在）
   double get rightColumnWidth => _rightWidth();
@@ -237,6 +256,105 @@ class EditorPageState extends State<EditorPage> {
     return w;
   }
 
+  // ---------------- 文件动线（S4-d：新建 / 打开 / 保存 / 另存为） ----------------
+
+  /// 新建：清空到空白文档（**先问要不要保存**）
+  Future<void> newDocument() async {
+    if (!await _confirmDiscard('新建')) return;
+    _buf.loadDocument('');
+    _savedText = _buf.buf;
+    setState(() {
+      _docFile = const DocumentFile();
+      _title = DocumentFile.kUntitled;
+    });
+    _editKey.currentState?.focusInput();
+  }
+
+  /// 打开：从磁盘读一份 md/txt（整篇换掉，并清空撤销栈）
+  Future<void> openDocument() async {
+    if (!await _confirmDiscard('打开')) return;
+    final OpenedFile? f = await _file.openText();
+    if (f == null) return; // 用户取消
+    _buf.loadDocument(f.text);
+    _savedText = _buf.buf;
+    final DocumentFile df = DocumentFile(
+      title: DocumentFile.titleFromPath(f.path),
+      path: f.path,
+    );
+    setState(() {
+      _docFile = df;
+      _title = df.title;
+    });
+    _editKey.currentState?.focusInput();
+    _snack(f.lossy
+        ? '已打开 ${f.name}（该文件可能不是 UTF-8，已按容错方式读入）'
+        : '已打开 ${f.name}');
+  }
+
+  /// 保存（`saveAs = true` ⇒ 另存为：这次一定让用户挑位置）
+  Future<bool> saveDocument({bool saveAs = false}) async {
+    final SaveOutcome out = await _file.saveText(
+      text: _buf.buf,
+      path: saveAs ? null : _docFile.path,
+      suggestedName: _docFile.suggestedFileName(),
+    );
+    if (!out.ok) return false; // 取消 ⇒ 什么都不改（dirty 不能清掉）
+    _savedText = _buf.buf; // 写下去的**就是**快照（之后再改才算脏）
+    final DocumentFile df = DocumentFile(
+      title: DocumentFile.titleFromPath(out.path!),
+      path: out.path,
+    );
+    setState(() {
+      _docFile = df;
+      _title = df.title;
+    });
+    _snack('已保存到 ${DocumentFile.fileNameOf(out.path!)}');
+    return true;
+  }
+
+  /// 有未保存改动时先确认（`true` = 可以继续）
+  Future<bool> _confirmDiscard(String action) async {
+    if (!dirty) return true;
+    final bool? go = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext c) => AlertDialog(
+        key: const Key('discard-dialog'),
+        title: Text('「$_title」有未保存的改动'),
+        content: Text('继续$action会把它们丢掉。要先保存吗？'),
+        actions: <Widget>[
+          TextButton(
+            key: const Key('discard-cancel'),
+            onPressed: () => Navigator.of(c).pop(false),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            key: const Key('discard-no-save'),
+            onPressed: () => Navigator.of(c).pop(true),
+            child: Text('不保存，继续$action'),
+          ),
+          FilledButton(
+            key: const Key('discard-save'),
+            onPressed: () async {
+              final bool ok = await saveDocument();
+              if (c.mounted) Navigator.of(c).pop(ok);
+            },
+            child: const Text('保存'),
+          ),
+        ],
+      ),
+    );
+    return go ?? false;
+  }
+
+  void _snack(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(msg, style: const TextStyle(fontSize: 12)),
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
   // ---------------- 快捷键（外壳层） ----------------
 
   KeyEventResult _onShellKey(FocusNode node, KeyEvent e) {
@@ -273,6 +391,19 @@ class EditorPageState extends State<EditorPage> {
     }
 
     if (kb.isControlPressed || kb.isMetaPressed) {
+      // ★ S4-d：文件动线四个键（与《快捷键系统》§二 的绑定一致）
+      if (k == LogicalKeyboardKey.keyN) {
+        newDocument();
+        return KeyEventResult.handled;
+      }
+      if (k == LogicalKeyboardKey.keyO) {
+        openDocument();
+        return KeyEventResult.handled;
+      }
+      if (k == LogicalKeyboardKey.keyS) {
+        saveDocument(saveAs: kb.isShiftPressed);
+        return KeyEventResult.handled;
+      }
       if (k == LogicalKeyboardKey.comma) {
         _settingsOpen ? closeSettings() : openSettings();
         return KeyEventResult.handled;
@@ -399,8 +530,10 @@ class EditorPageState extends State<EditorPage> {
             const SizedBox(width: 4),
             _saveDot(),
             const SizedBox(width: 12),
-            _deadButton('导入', const Key('import-button'), 'S4-d 接入'),
-            _deadButton('保存', const Key('save-button'), 'S4-d 接入'),
+            _textButton('导入', const Key('import-button'),
+                tip: 'S4-d 第二阶段接入', onTap: null),
+            _textButton('保存', const Key('save-button'),
+                tip: '保存（Ctrl+S）', onTap: () => saveDocument()),
             _exportMenu(),
             const Spacer(),
             _toggleButton(
@@ -436,30 +569,32 @@ class EditorPageState extends State<EditorPage> {
       tooltip: '文件',
       onSelected: (String v) {
         switch (v) {
+          case 'new':
+            newDocument();
+          case 'open':
+            openDocument();
+          case 'save':
+            saveDocument();
+          case 'saveAs':
+            saveDocument(saveAs: true);
           case 'settings':
             openSettings(group: 1);
           case 'about':
             openSettings(group: 8);
           default:
-            // 文件动线（新建/打开/保存/另存为/导入/导出/最近）归 S4-d
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('「文件」动线在 S4-d 接入（现在菜单项是灰的）'),
-                duration: Duration(seconds: 2),
-              ),
-            );
+            _snack('这一项还没接入（导入 / 导出归 S4-d 第二阶段）');
         }
       },
       itemBuilder: (BuildContext c) => <PopupMenuEntry<String>>[
-        _fileItem('新建', 'Ctrl+N', 'S4-d'),
-        _fileItem('打开…', 'Ctrl+O', 'S4-d'),
-        _fileItem('最近打开', '', 'S4-e'),
+        _fileItem('新建', 'Ctrl+N', value: 'new'),
+        _fileItem('打开…', 'Ctrl+O', value: 'open'),
+        _fileItem('最近打开', '', batch: 'S4-e'),
         const PopupMenuDivider(),
-        _fileItem('保存', 'Ctrl+S', 'S4-d'),
-        _fileItem('另存为…', 'Ctrl+Shift+S', 'S4-d'),
+        _fileItem('保存', 'Ctrl+S', value: 'save'),
+        _fileItem('另存为…', 'Ctrl+Shift+S', value: 'saveAs'),
         const PopupMenuDivider(),
-        _fileItem('导入…', '', 'S4-d'),
-        _fileItem('导出', '', 'S4-d'),
+        _fileItem('导入…', '', batch: 'S4-d②'),
+        _fileItem('导出', '', batch: 'S4-d②'),
         const PopupMenuDivider(),
         const PopupMenuItem<String>(
           value: 'settings',
@@ -486,24 +621,33 @@ class EditorPageState extends State<EditorPage> {
     );
   }
 
-  /// 文件菜单里**还没接入**的项：灰显 + 标归属批次（★ 不假装能用）
-  PopupMenuItem<String> _fileItem(String label, String shortcut, String batch) {
+  /// 文件菜单项：**没接入的给 `batch`（灰显 + 标批次，不假装能用）**；
+  /// 接入了的给 `value`（可点）。
+  PopupMenuItem<String> _fileItem(
+    String label,
+    String shortcut, {
+    String? value,
+    String? batch,
+  }) {
+    final bool on = value != null;
+    final Color fg = on ? const Color(0xFF2D3748) : const Color(0xFFA0AEC0);
     return PopupMenuItem<String>(
-      value: label,
-      enabled: false,
+      value: value ?? label,
+      enabled: on,
       height: 36,
       child: Row(
         children: <Widget>[
           SizedBox(
             width: 76,
             child: Text(label,
-                style: const TextStyle(fontSize: 12, color: Color(0xFFA0AEC0))),
+                style: TextStyle(fontSize: 12, color: fg)),
           ),
           Text(shortcut,
-              style: const TextStyle(fontSize: 10, color: Color(0xFFCBD5E0))),
+              style: const TextStyle(fontSize: 10, color: Color(0xFFA0AEC0))),
           const Spacer(),
-          Text(batch,
-              style: const TextStyle(fontSize: 9, color: Color(0xFFCBD5E0))),
+          if (batch != null)
+            Text(batch,
+                style: const TextStyle(fontSize: 9, color: Color(0xFFCBD5E0))),
         ],
       ),
     );
@@ -543,8 +687,16 @@ class EditorPageState extends State<EditorPage> {
   }
 
   void _commitTitle(String v) {
+    final String next =
+        v.trim().isEmpty ? DocumentFile.kUntitled : v.trim();
     setState(() {
-      _title = v.trim().isEmpty ? '未命名文档' : v.trim();
+      // ★ 改了名字 = "这份文档要另存成新名字" ⇒ 断开旧路径，下一次保存会问存哪儿。
+      final bool renamed = next != _docFile.title;
+      _title = next;
+      _docFile = _docFile.copyWith(
+        title: next,
+        clearPath: renamed && _docFile.hasFile,
+      );
       _editingTitle = false;
     });
   }
@@ -553,7 +705,7 @@ class EditorPageState extends State<EditorPage> {
   Widget _saveDot() {
     final bool d = dirty;
     return Tooltip(
-      message: d ? '未保存（S4-d 接入真文件后这里才有意义）' : '已保存',
+      message: d ? '有未保存的改动' : '已保存',
       child: Text(
         d ? '●' : '○',
         key: const Key('save-dot'),
@@ -565,14 +717,23 @@ class EditorPageState extends State<EditorPage> {
     );
   }
 
-  Widget _deadButton(String label, Key key, String tip) {
+  /// 顶栏文字按钮：`onTap == null` ⇒ 灰显（还没接入）
+  Widget _textButton(String label, Key key,
+      {String? tip, VoidCallback? onTap}) {
     return Tooltip(
-      message: tip,
+      message: tip ?? label,
       child: TextButton(
         key: key,
-        onPressed: null,
-        child: Text(label,
-            style: const TextStyle(fontSize: 12, color: Color(0xFFCBD5E0))),
+        onPressed: onTap,
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 12,
+            color: onTap == null
+                ? const Color(0xFFCBD5E0)
+                : const Color(0xFF4A5568),
+          ),
+        ),
       ),
     );
   }
@@ -582,10 +743,10 @@ class EditorPageState extends State<EditorPage> {
       key: const Key('export-menu'),
       tooltip: '导出（S4-d 接入）',
       itemBuilder: (BuildContext c) => <PopupMenuEntry<String>>[
-        _fileItem('Markdown', '', 'S4-d'),
-        _fileItem('纯文本', '', 'S4-d'),
-        _fileItem('图片集', '', 'S4-d'),
-        _fileItem('PDF', '', 'S4-d'),
+        _fileItem('Markdown', '', batch: 'S4-d②'),
+        _fileItem('纯文本', '', batch: 'S4-d②'),
+        _fileItem('图片集', '', batch: 'S4-d③'),
+        _fileItem('PDF', '', batch: 'S4-d③'),
       ],
       child: const Padding(
         padding: EdgeInsets.symmetric(horizontal: 8, vertical: 6),

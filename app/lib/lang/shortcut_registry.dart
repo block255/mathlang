@@ -217,7 +217,10 @@ const List<ShortcutAction> kShortcutActions = <ShortcutAction>[
   ShortcutAction(id: 'copy', name: '复制', group: '编辑类', combo: 'Ctrl+C', status: ShortcutStatus.wired),
   ShortcutAction(id: 'cut', name: '剪切', group: '编辑类', combo: 'Ctrl+X', status: ShortcutStatus.wired),
   ShortcutAction(id: 'paste', name: '粘贴', group: '编辑类', combo: 'Ctrl+V', status: ShortcutStatus.wired),
-  ShortcutAction(id: 'save', name: '保存', group: '编辑类', combo: 'Ctrl+S', status: ShortcutStatus.planned, note: 'S4-d'),
+  ShortcutAction(id: 'newdoc', name: '新建', group: '编辑类', combo: 'Ctrl+N', status: ShortcutStatus.wired),
+  ShortcutAction(id: 'open', name: '打开…', group: '编辑类', combo: 'Ctrl+O', status: ShortcutStatus.wired),
+  ShortcutAction(id: 'save', name: '保存', group: '编辑类', combo: 'Ctrl+S', status: ShortcutStatus.wired),
+  ShortcutAction(id: 'saveAs', name: '另存为…', group: '编辑类', combo: 'Ctrl+Shift+S', status: ShortcutStatus.wired),
   ShortcutAction(id: 'sourceView', name: '源码视图', group: '编辑类', combo: 'Ctrl+Alt+D', status: ShortcutStatus.planned, note: 'S5'),
 ];
 
