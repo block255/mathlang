@@ -3,7 +3,8 @@
 //  三块内容：★问 0 流内数学映射（A 组主战场）/ S1 渲染验证取证 / B 组 appflowy_editor
 //  判定矩阵：notes/design/技术选型与风险.md 第 9.3 节
 // ============================================================
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kIsWeb, kReleaseMode;
+import 'package:flutter/semantics.dart';
 import 'package:flutter/material.dart';
 
 import 'spike/ime_input/ime_input_page.dart';
@@ -17,7 +18,24 @@ import 'spike/s2_projection/s2_projection_page.dart';
 import 'spike/s3_edit/s3_edit_page.dart';
 import 'ui/editor_page.dart';
 
-void main() => runApp(const MathlangApp());
+void main() {
+  // ★★ 2026-10-17：**桌面端在调试构建里开语义树**。
+  //
+  // 为什么：Flutter 桌面**默认不向 UIA 发布 widget 树** ⇒ 电脑操作插件只能看到
+  // `TitleBar / Min / Max / Close / FLUTTERVIEW` 一个 Pane，拿不到「保存」「符号」这些元素，
+  // 只能退回**坐标点击**（正是刚才点偏、还差点把 Ctrl 卡住的那条路）。
+  // 开了之后 `computer_find` 能看到按钮名字，`pattern invoke` 可以**静默按下**（不动键鼠、不抢前台）。
+  //
+  // 成本与边界：
+  //   · 只在**非 Web**（Web 上开语义树会切换文本输入策略，测输入层时是禁忌）；
+  //   · 只在**调试构建**（release 不开：语义树有额外开销，且正式用户走真·无障碍时才需要）；
+  //   · **不影响测试**：widget 测试直接 pump 组件，不经过 `main()`。
+  if (!kIsWeb && !kReleaseMode) {
+    WidgetsFlutterBinding.ensureInitialized();
+    SemanticsBinding.instance.ensureSemantics();
+  }
+  runApp(const MathlangApp());
+}
 
 class MathlangApp extends StatelessWidget {
   const MathlangApp({super.key});
