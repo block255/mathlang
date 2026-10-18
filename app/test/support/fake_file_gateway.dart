@@ -6,7 +6,17 @@ import 'package:mathlang/core/document_file.dart';
 import 'package:mathlang/io/file_gateway.dart';
 
 class FakeFileGateway implements FileGateway {
-  FakeFileGateway({this.toOpen, this.savePath, this.cancelSave = false});
+  FakeFileGateway({
+    this.toOpen,
+    this.savePath,
+    this.cancelSave = false,
+    this.throwOnOpen,
+    this.throwOnSave,
+  });
+
+  /// 让 open / save **抛异常**（用来守"错误必须可见"）
+  final Object? throwOnOpen;
+  final Object? throwOnSave;
 
   /// `openText()` 要返回的内容（null = 用户取消）
   OpenedFile? toOpen;
@@ -28,6 +38,7 @@ class FakeFileGateway implements FileGateway {
     List<String> extensions = const <String>['md', 'txt', 'markdown'],
   }) async {
     opens++;
+    if (throwOnOpen != null) throw throwOnOpen!;
     return toOpen;
   }
 
@@ -39,6 +50,7 @@ class FakeFileGateway implements FileGateway {
     String extension = 'md',
   }) async {
     saves.add((path: path, text: text));
+    if (throwOnSave != null) throw throwOnSave!;
     if (cancelSave) return const SaveOutcome.cancelled();
     final String out = path ?? savePath ?? r'C:\docs\' + suggestedName;
     return SaveOutcome(path: out);

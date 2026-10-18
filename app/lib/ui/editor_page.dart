@@ -16,6 +16,7 @@
 
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart' show kReleaseMode;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -85,6 +86,9 @@ class EditorPageState extends State<EditorPage> {
 
   /// 上次保存/打开/新建时的正文快照（dirty 的判据）
   late String _savedText = _buf.buf;
+
+  /// 布局打点只打一次
+  bool _layoutLogged = false;
 
   late final FileGateway _file = widget.gateway ?? platformFileGateway();
 
@@ -273,7 +277,14 @@ class EditorPageState extends State<EditorPage> {
   /// 打开：从磁盘读一份 md/txt（整篇换掉，并清空撤销栈）
   Future<void> openDocument() async {
     if (!await _confirmDiscard('打开')) return;
-    final OpenedFile? f = await _file.openText();
+    OpenedFile? f;
+    try {
+      f = await _file.openText();
+    } catch (e) {
+      // ★★ 2026-10-17：**文件出错必须让用户看见**（以前只进控制台 ⇒ "点了没反应"）。
+      await _showFileError('打开', e);
+      return;
+    }
     if (f == null) return; // 用户取消
     _buf.loadDocument(f.text);
     _savedText = _buf.buf;
@@ -293,11 +304,17 @@ class EditorPageState extends State<EditorPage> {
 
   /// 保存（`saveAs = true` ⇒ 另存为：这次一定让用户挑位置）
   Future<bool> saveDocument({bool saveAs = false}) async {
-    final SaveOutcome out = await _file.saveText(
-      text: _buf.buf,
-      path: saveAs ? null : _docFile.path,
-      suggestedName: _docFile.suggestedFileName(),
-    );
+    SaveOutcome out;
+    try {
+      out = await _file.saveText(
+        text: _buf.buf,
+        path: saveAs ? null : _docFile.path,
+        suggestedName: _docFile.suggestedFileName(),
+      );
+    } catch (e) {
+      await _showFileError(saveAs ? '另存为' : '保存', e);
+      return false;
+    }
     if (!out.ok) return false; // 取消 ⇒ 什么都不改（dirty 不能清掉）
     _savedText = _buf.buf; // 写下去的**就是**快照（之后再改才算脏）
     final DocumentFile df = DocumentFile(
@@ -344,6 +361,49 @@ class EditorPageState extends State<EditorPage> {
       ),
     );
     return go ?? false;
+  }
+
+  /// ★ 文件操作失败时**弹出来**：原因 + 一句"接下来往哪儿查"。
+  ///
+  /// 为什么必须有：用户 2026-10-17 在 Windows 上点「保存」时**界面毫无反应**
+  /// （异常只进了控制台），这违反原则 5「可疑要可见」——出错比"没发生"更需要说清。
+  Future<void> _showFileError(String action, Object e) async {
+    final String raw = e.toString();
+    final String detail = raw.length > 400 ? '${raw.substring(0, 400)}…' : raw;
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (BuildContext c) => AlertDialog(
+        key: const Key('file-error-dialog'),
+        icon: const Icon(Icons.error_outline, color: Color(0xFFC53030)),
+        title: Text('$action失败'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            SelectableText(detail,
+                key: const Key('file-error-detail'),
+                style: const TextStyle(
+                    fontFamily: 'monospace',
+                    fontSize: 11,
+                    color: Color(0xFF2D3748))),
+            const SizedBox(height: 10),
+            const Text(
+              '常见原因：文件被别的程序占用 / 只读 / 没有写权限 / 路径太长。\n'
+              '换个位置或关掉占用它的程序再试。',
+              style: TextStyle(fontSize: 11, color: Color(0xFF718096), height: 1.5),
+            ),
+          ],
+        ),
+        actions: <Widget>[
+          TextButton(
+            key: const Key('file-error-close'),
+            onPressed: () => Navigator.of(c).pop(),
+            child: const Text('知道了'),
+          ),
+        ],
+      ),
+    );
   }
 
   void _snack(String msg) {
@@ -447,6 +507,18 @@ class EditorPageState extends State<EditorPage> {
         onKeyEvent: _onShellKey,
         child: LayoutBuilder(builder: (BuildContext c, BoxConstraints cons) {
           final PanelMode mode = _s.effectivePanelMode(cons.maxWidth);
+          // ★ 一次性布局打点（只在调试构建）：用来核实"右栏宽度/DPR 到底是多少"。
+          //   Windows 上按 125%/150% 缩放时，逻辑像素与物理像素容易看花眼。
+          if (!kReleaseMode && !_layoutLogged) {
+            _layoutLogged = true;
+            final double dpr = MediaQuery.of(context).devicePixelRatio;
+            debugPrint('[layout] window=${cons.maxWidth.toStringAsFixed(1)} '
+                'dpr=$dpr '
+                'pageW=${PageGeometry.from(_doc).pageWidth.toStringAsFixed(1)} '
+                'panelW=${LayoutMetrics.panelWidth(_s.gridColumns, cell: _s.cellSize).toStringAsFixed(1)} '
+                'quickSlots=${_s.quickBarSlots} cell=${_s.cellSize} '
+                'rightW=${_rightWidth().toStringAsFixed(1)}');
+          }
           final double rightW = _rightWidth();
           final Widget page = _pageColumn(
             // 覆盖式：页面居中（抽屉只遮不改）

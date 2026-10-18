@@ -11,6 +11,8 @@
 //   ④ 另存为被取消 ⇒ **dirty 不能清掉**（这是最容易做错的一条）；
 //   ⑤ 改标题 ⇒ 下次保存要**另存**（不能偷偷写回旧文件）。
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -25,12 +27,13 @@ import '../support/symbol_fixture.dart';
 Future<(EditorPageState, DocBuffer, FakeFileGateway)> _pump(
   WidgetTester tester, {
   String doc = 'abc',
+  FakeFileGateway? gateway,
 }) async {
   tester.view.physicalSize = const Size(1500, 1000);
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
-  final FakeFileGateway gw = FakeFileGateway();
+  final FakeFileGateway gw = gateway ?? FakeFileGateway();
   final DocBuffer buf = DocBuffer(doc)..setCaret(doc.length);
   await tester.pumpWidget(MaterialApp(
     home: EditorPage(
@@ -211,6 +214,58 @@ void main() {
       expect(st.docFile.hasFile, isFalse,
           reason: '★ 改了名字 ⇒ 不能偷偷写回旧文件（甲.md）');
       expect(st.docFile.suggestedFileName(), '乙.md');
+    });
+  });
+  group('⑥ 文件出错必须**可见**（2026-10-17 Windows 实测"点了没反应"的反面）', () {
+    testWidgets('★ 保存抛异常 ⇒ 弹「保存失败」+ 原因，且 dirty 不清',
+        (WidgetTester tester) async {
+      final FakeFileGateway gw = FakeFileGateway(
+        throwOnSave: Exception('拒绝访问: C:\\docs\\作业1.md'),
+      );
+      final (EditorPageState st, DocBuffer buf, FakeFileGateway _) =
+          await _pump(tester, gateway: gw);
+      await _type(tester, 'Q');
+      expect(st.dirty, isTrue);
+
+      await tester.tap(find.byKey(const Key('save-button')));
+      // ★ 不用 pumpAndSettle：编辑器有 530ms 光标闪烁（无限动画）⇒ settle 永远等不到
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+
+      expect(find.byKey(const Key('file-error-dialog')), findsOneWidget,
+          reason: '★ 出错不许静默（原则 5）');
+      expect(find.byKey(const Key('file-error-detail')), findsOneWidget);
+      expect(find.textContaining('拒绝访问'), findsWidgets,
+          reason: '原因要原样给用户看（可选中复制）');
+      expect(find.text('保存失败'), findsOneWidget);
+      expect(st.dirty, isTrue, reason: '写失败了当然还脏');
+
+      await tester.tap(find.byKey(const Key('file-error-close')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.byKey(const Key('file-error-dialog')), findsNothing);
+    });
+
+    testWidgets('★ 打开抛异常 ⇒ 弹「打开失败」，文档原样',
+        (WidgetTester tester) async {
+      final FakeFileGateway gw =
+          FakeFileGateway(throwOnOpen: Exception('文件被占用'));
+      final (EditorPageState st, DocBuffer buf, FakeFileGateway _) =
+          await _pump(tester, gateway: gw);
+      final String before = buf.buf;
+      // ★ 不能 `await`：`openDocument()` 内部 `await showDialog(...)`，对话框没人关就永远不返回
+      unawaited(st.openDocument());
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+
+      expect(find.byKey(const Key('file-error-dialog')), findsOneWidget);
+      expect(find.text('打开失败'), findsOneWidget);
+      expect(buf.buf, before);
+      expect(st.docFile.hasFile, isFalse);
+      // 关掉对话框（不关会留 pending 路由 ⇒ 测试收尾挂住）
+      await tester.tap(find.byKey(const Key('file-error-close')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
     });
   });
 }
