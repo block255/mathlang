@@ -155,7 +155,8 @@ class _MathWithCaretState extends State<MathWithCaret> {
         bar = caretBarRect(
           at: at,
           // ★ 把**锚点**一起给它：选行以"锚点所在的那一行"为准（见 findLocalRowBox）
-          localRowBox: findLocalRowBox(root, at, anchor: anchor),
+          localRowBox: _clampRowHeight(
+              findLocalRowBox(root, at, anchor: anchor), widget.fontSize),
           width: widget.caretWidth,
           fontSize: widget.fontSize,
         );
@@ -373,6 +374,16 @@ bool sameLayer(RenderObject? row, RenderObject? anchorRow) {
 ///
 /// 为什么用 ¶ 盒（字形盒）而不是引擎的行盒：**行盒太紧**（16 px 字号下行盒只有 10–11 px），
 /// 拿它当光标会明显偏矮；而 ¶ 盒 = 字形的**行高盒**（主行 16、上标 / 下标 11.2 —— 正好 0.7 倍）。
+/// ★★ 2026-10-18（用户实测：矩阵空格子里"竖条有两行高"）：
+/// 环境里的**空格子**没有任何字形 ⇒ `findLocalRowBox` 会退到"锚点那一行"的行盒，
+/// 而那一行的行盒可能是**整个环境行**（矩阵里一行含多列、且高度被拉伸）⇒ 竖条过长。
+/// 这里按"当地一行的合理高度"（字号 × 1.35）把它夹住，居中裁剪。
+Rect? _clampRowHeight(Rect? r, double fontSize) {
+  if (r == null) return null;
+  final double maxH = fontSize * 1.35;
+  if (r.height <= maxH || maxH <= 1) return r;
+  return Rect.fromCenter(center: r.center, width: r.width, height: maxH);
+}
 Rect? findLocalRowBox(RenderObject root, Offset at, {RenderObject? anchor}) {
   final List<({Rect rect, double dx, RenderObject? row})> hits =
       <({Rect rect, double dx, RenderObject? row})>[];

@@ -49,17 +49,19 @@ void main() {
   });
 
   group('多行环境不画占位框', () {
-    test(r'aligned 的格子不注入垫子', () {
+    test(r'aligned 的格子：**只有当前格**画占位框', () {
       const String aligned = r'\begin{aligned}&=\\&=\end{aligned}';
-      // 第一格（`&` 之前）是空的：caretRel 落在格子起点
-      final String t = renderMathTex(aligned, caretRel: 15);
-      expect(countPads(t), 0, reason: '格子里注垫子会改列宽 ⇒ 等号对不齐');
+      // 2026-10-18 第二版口径（用户复验）：格子需要看得见的落点，但不能常驻
+      expect(countPads(renderMathTex(aligned, caretRel: 15)), 1,
+          reason: '光标在第一格 ⇒ 该格有占位框');
+      expect(countPads(renderMathTex(aligned, caretRel: -1)), 0,
+          reason: '光标不在环境里 ⇒ 一格都不画');
     });
 
-    test(r'cases 的格子不注入垫子', () {
+    test(r'cases 的格子：同理', () {
       const String cases = r'\begin{cases}&\\&\end{cases}';
-      final String t = renderMathTex(cases, caretRel: 13);
-      expect(countPads(t), 0);
+      expect(countPads(renderMathTex(cases, caretRel: 13)), 1);
+      expect(countPads(renderMathTex(cases, caretRel: -1)), 0);
     });
   });
 }
