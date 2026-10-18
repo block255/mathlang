@@ -171,6 +171,12 @@ bool _shouldDrawEmptySlot(
   SlotSpan? cur,
   List<OpScope> scopes,
 ) {
+  // ★★ 2026-10-18（用户拍板）：**多行环境的格子不画占位框**。
+  //    理由（用户的模型）：`aligned` 的意义是"把等号排到一列"、`cases` 的意义是"分成几行"，
+  //    格子本身**就是可见的落点**（光标进去有竖条），再画虚线框是把"渲染提示"画成了一个域；
+  //    而且格子里的垫子会**改列宽** ⇒ 两侧填上内容后等号反而对不齐（用户实测）。
+  if (s.path.any((SlotStep st) => st.row != null || st.col != null)) return false;
+
   // ★★ §4.8 **第三类：挂件槽不画占位框**（2026-10-15 晚用户拍板）——
   //    理由（用户的模型：**挂件挂在/套在基座上，不是结构**）：
   //    · 文本里的一个字**旁边没有格子**；给挂件画框，就是把"渲染提示"画成了"一个域"；
@@ -243,15 +249,22 @@ const String kEmptyFormulaTex = kEmptySlotTex;
 /// 收成一个纯函数之后，注入结果**可以直接被单测断言**（不必真渲染）。
 ///
 /// 顺序不能反：**先注空槽占位**（它给光标偏移做了补偿），**再注光标**。
-String renderMathTex(String tex, {required int caretRel}) {
+/// 渲染某个数学段时用的 tex（**注入与渲染必须走同一个函数**，否则点击定位会错位）。
+///
+/// ★★ 2026-10-18：`caretRel` 与 `showCursor` **拆成两件事**（用户实测"虚线框随光标闪烁若隐若现 +
+///   排版闪动"的根因）：
+///   · `caretRel` = **光标逻辑位置**（不受闪烁/选区影响）⇒ 决定"注不注空槽垫子"（会改宽度！）
+///   · `showCursor` = **视觉上画不画竖条**（闪烁灭、有选区时 false）
+///   以前两者共用同一个 `caretRel`（闪烁灭 ⇒ -1），于是垫子每秒增删两次 ⇒ 整段重排两次。
+String renderMathTex(String tex, {required int caretRel, bool showCursor = true}) {
   // ★ 空公式也要画出来（§6.1.1）——它没有任何槽可注入，所以要单独兜一句
   if (tex.trim().isEmpty) {
     final String mark = caretRel < 0 ? kEmptyFormulaTex : kCurrentSlotTex;
     // 光标在里面时再补一根光标条（否则用户不知道自己停在哪儿）
-    return caretRel < 0 ? mark : mark + kCursorTex;
+    return (caretRel < 0 || !showCursor) ? mark : mark + kCursorTex;
   }
   final SlotMarkResult marks = injectSlotMarks(tex, caretRel: caretRel);
   // 光标不在这段里 → 只画空槽，不画光标（`marks.rel` 此时为负，不能喂给 injectCursor）
-  if (caretRel < 0) return marks.tex;
+  if (caretRel < 0 || !showCursor) return marks.tex;
   return injectCursor(marks.tex, marks.rel).tex;
 }

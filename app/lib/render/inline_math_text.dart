@@ -42,6 +42,7 @@ class InlineMathText extends StatefulWidget {
     required this.source,
     this.baseOffset = 0,
     this.caretOffset,
+    this.slotCaretOffset,
     this.composingText = '',
     this.textStyle,
     this.mathFontSize = 16,
@@ -68,6 +69,15 @@ class InlineMathText extends StatefulWidget {
 
   /// 文档绝对光标偏移（`null` = 不画光标）
   final int? caretOffset;
+
+  /// **光标逻辑位置**（用来决定"注不注空槽垫子"）。
+  ///
+  /// ★★ 与 [caretOffset] 的唯一区别：它**不受光标闪烁相位、不受选区影响**。
+  ///   为什么必须分开：空槽垫子是"注进 TeX 的字形"，**会改版面宽度**；
+  ///   若它跟着闪烁灭/亮走，整段每秒重排两次 ⇒ 用户看到的"虚线框若隐若现 + 排版闪动"
+  ///   （2026-10-18 用户实测，根因就是 `_caretAbsFor` 在闪烁灭时返回 null）。
+  ///   ⇒ 位置归位置（本字段），可见性归可见性（[caretOffset]）。
+  final int? slotCaretOffset;
 
   /// ★ 组合中间态文本（拼音串）：**只进排版，不进缓冲区**。
   ///
@@ -117,6 +127,13 @@ class _InlineMathTextState extends State<InlineMathText> {
     final CaretPlacement? pl =
         rel == null ? null : caretPlacement(widget.source, rel);
 
+    // ★★ 注入垫子用的**逻辑**位置（不看闪烁、不看选区）——见 [slotCaretOffset] 的说明
+    final int? slotRel = widget.slotCaretOffset == null
+        ? null
+        : widget.slotCaretOffset! - widget.baseOffset;
+    final CaretPlacement? slotPl =
+        slotRel == null ? null : caretPlacement(widget.source, slotRel);
+
     // 清掉已经不存在的公式 key（源码变了之后旧 key 会残留）
     if (widget.mathKeys == null) {
       final live = <int>{
@@ -129,7 +146,7 @@ class _InlineMathTextState extends State<InlineMathText> {
     for (var i = 0; i < segs.length; i++) {
       final ProjectionSegment s = segs[i];
       if (s.isMath) {
-        children.add(_mathSpan(s, i, pl));
+        children.add(_mathSpan(s, i, pl, slotPl));
         // 光标在这个行内公式里 → 组合串接在公式**之后**（拼音不是数学源码，塞进 `$...$` 会破坏渲染）
         if (caretOwnedBy(pl, i, isMath: true) &&
             widget.composingText.isNotEmpty) {
@@ -214,9 +231,12 @@ class _InlineMathTextState extends State<InlineMathText> {
         ),
       );
 
-  InlineSpan _mathSpan(ProjectionSegment s, int i, CaretPlacement? pl) {
+  InlineSpan _mathSpan(ProjectionSegment s, int i, CaretPlacement? pl,
+      CaretPlacement? slotPl) {
     final absStart = widget.baseOffset + s.start;
     final bool caretHere = caretOwnedBy(pl, i, isMath: true);
+    // ★ 垫子看**逻辑**位置（闪烁/选区不影响），竖条看**视觉**位置
+    final bool slotHere = caretOwnedBy(slotPl, i, isMath: true);
 
     final key = _keys.putIfAbsent(absStart, () => GlobalKey());
     final bool baseline = widget.align == MathAlignMode.baseline;
@@ -257,8 +277,11 @@ class _InlineMathTextState extends State<InlineMathText> {
     //     原先"不在这段里就什么都不注入" → 空分数退化成 3.4 × 10.3 px 细线 → 看着像"消失了"。
     //   ★ 注入点仍走**位点吸附**（`caret_sites.dart` 的 `injectCursor`）——
     //     旧的 `snapCaretInTex` 只防"切开命令名"，会把光标留在 `}{` 这类语法夹缝里。
-    final String tex =
-        renderMathTex(s.tex, caretRel: caretHere ? pl!.localRel : -1);
+    final String tex = renderMathTex(
+      s.tex,
+      caretRel: slotHere ? slotPl!.localRel : -1,
+      showCursor: caretHere,
+    );
 
     // ★★ ⑤ 选区：`source` 里公式段是 `$tex$` ⇒ 内容从 `s.start + 1` 开始
     final ({int from, int to})? sel = _texSelection(s, s.tex.length);
@@ -303,9 +326,12 @@ class _InlineMathTextState extends State<InlineMathText> {
         textFontSize: _textFontSize,
         mathKey: key,
         fontSize: widget.mathFontSize,
-        onErrorFallback: (e) => Text(
-          '❌ ${e.messageWithType}',
-          style: const TextStyle(color: Colors.red, fontSize: 13),
+        onErrorFallback: (e) => Tooltip(
+          message: e.messageWithType,
+          child: const Text(
+            '［公式不完整］',
+            style: TextStyle(color: Color(0xFFB08968), fontSize: 13),
+          ),
         ),
       );
 

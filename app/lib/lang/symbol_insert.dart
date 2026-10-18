@@ -55,6 +55,17 @@ String _shell(String tex, {required bool display}) =>
 ///   而这里要的是"**空槽内部**的第一个落点"（模板插入后光标就该停在那个空格里）。
 ///   判据就是源码里的空组 —— 与 `slot_marks` 认空槽的口径一致（空 `{}` / 空 `[]`）。
 int firstSlotOffset(String tex) {
+  // ★★ 2026-10-18 多行环境（`\begin{aligned}…\end{aligned}` / `cases` …）：
+  //   光标落进**第一格** = `\begin{env}` 之后、第一个 `&` 之前。
+  //   为什么必须这样（用户实测）：原来环境里**没有 `{}` / `[]`**，于是 `firstSlotOffset`
+  //   返回 `tex.length`（末尾）⇒ 人一打字就打在 `&` **右边**，而 `&` 后面那一列是**左对齐**的，
+  //   于是 `=` 被内容推右、两行的等号立刻错位（`\begin{aligned}&a=b\\&=\end{aligned}`）。
+  //   写推导的自然顺序是"左边 → `=` → 右边"，所以先落第一格。
+  final int begin = tex.indexOf(r'\begin{');
+  if (begin >= 0) {
+    final int brace = tex.indexOf('}', begin);
+    if (brace > 0) return brace + 1;
+  }
   final int a = tex.indexOf('{}');
   final int b = tex.indexOf('[]');
   if (a < 0 && b < 0) return tex.length;

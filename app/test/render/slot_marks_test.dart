@@ -29,10 +29,14 @@ void main() {
       expect(lexVisibleAtoms(kCurrentSlotTex).length, 2);
     });
 
-    test('墨色：空槽用纸色（看不见）、当前槽淡蓝（自绘层缺席时的兜底）', () {
+    test('墨色：两种垫子都**不可见**（区别只剩一个色阶）', () {
       expect(kEmptySlotTex.contains('#FFFFFF'), isTrue,
           reason: '看不见 —— 框由自绘层画虚线（§6.1）');
-      expect(kCurrentSlotTex.contains('#E3F2FD'), isTrue, reason: '§6.1 当前槽的淡蓝底');
+      expect(kCurrentSlotTex.contains('#FEFEFE'), isTrue,
+          reason: '2026-10-18 起当前槽的墨色也不可见：原先的淡蓝 #E3F2FD '
+              '在纯白纸面上会露出一个淡蓝的 M（用户实测）');
+      expect(kCurrentSlotTex.toUpperCase().contains('E3F2FD'), isFalse,
+          reason: '"光标在哪一格"改由自绘层画淡蓝底，不再靠垫子的墨色');
     });
   });
 

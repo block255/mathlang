@@ -55,8 +55,14 @@ const String kSlotPadInner = '$kSlotPadGlyph$kSlotPadFiller';
 /// **空槽**的垫子（白墨 ⇒ 看不见；框由自绘层画虚线）
 const String kSlotPadTex = '\\textcolor{#FFFFFF}{$kSlotPadInner}';
 
-/// **当前槽**的垫子（淡蓝墨 ⇒ 即使自绘层缺席，用户仍看得出"光标在哪一格"）
-const String kSlotPadCurrentTex = '\\textcolor{#E3F2FD}{$kSlotPadInner}';
+/// **当前槽**的垫子。
+///
+/// ★★ 2026-10-18 改：墨色也**不可见**了。原先用淡蓝 `#E3F2FD` 当墨，
+///   在纯白纸面上会露出一个淡蓝的 `M` 字形（用户实测："随光标闪烁若隐若现的 M 图标"）。
+///   "光标在哪一格"改由**自绘层**画淡蓝底 + 虚线框（它本来就不占版面）。
+///   与空槽的区别只剩**一个色阶**（`#FEFEFE` vs `#FFFFFF`）：两者肉眼都看不见，
+///   但字符串不同 ⇒ 注入链与测试仍能分别定位两种垫子，也不会互相当子串重复计数。
+const String kSlotPadCurrentTex = '\\textcolor{#FEFEFE}{$kSlotPadInner}';
 
 // ---------------------------------------------------------------------------
 // ★★ 结构尾垫（2026-10-15，设计稿 §11.18）—— 与上面两个垫子**同一个机制**，故同住一处

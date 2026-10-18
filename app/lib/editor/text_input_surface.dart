@@ -48,6 +48,12 @@ const TextEditingValue _kClearedValue = TextEditingValue(
   selection: TextSelection.collapsed(offset: 0),
 );
 
+/// 平台元素里允许累积的文本上限（超过就清一次，且只在**不在组合中**时清）。
+///
+/// 不清空的代价是：平台元素里的文本会随着输入一直变长。实测没有副作用（定位靠
+/// `setEditableSizeAndTransform`，不靠文本长度），但没必要让 IME 拖着整篇文本。
+const int _kPlatformBaselineLimit = 20000;
+
 /// 文本输入面：自己实现 `TextInputClient`，直接驱动 Web 的隐藏 textarea。
 ///
 /// 生命周期由 [focusNode] 驱动：拿到焦点 → 接上平台文本通道；失去焦点 → 断开。
@@ -230,13 +236,31 @@ class TextInputSurfaceController extends ChangeNotifier with TextInputClient {
 
     // ② 组合结束（或本来就没有组合）：只取「新出现的那段文本」
     final PlatformEdit? edit = diffPlatformText(_platformText, v.text);
-    final String inserted = edit?.inserted ?? '';
+    String inserted = edit?.inserted ?? '';
+    // ★★ 2026-10-18：平台有**两套投递模型**，这里必须同时伺候：
+    //   · **累积式**（真机、元素不清空时的 IME）：value = 元素里的全文 ⇒ 取新增后缀；
+    //   · **单字符式**（测试替身 `testTextInput`、以及元素被清空时的硬件键）：
+    //     value = 刚打的那一格 ⇒ 与基线**完全相同**也要算"又打了一个同样的字"。
+    //   判据：只有当"重复送来的那份"长度 > 1 时才当成重复（累积式重复交付的是整串）；
+    //   长度为 1 时一律当新输入 —— 否则 `summer` 会变成 `sumer`（真跑出来过）。
+    if (inserted.isEmpty && v.text == _platformText && _platformText.length <= 1) {
+      inserted = v.text;
+    }
     final bool wasComposing = _composing.isNotEmpty;
     _composing = '';
     if (inserted.isNotEmpty) {
       onCommitText?.call(inserted);
     }
-    _pushEmpty(); // 元素清空 → 插入符回到原点
+    // ★★ 2026-10-18：**不再每次提交后清空平台元素**（原先这里调 `_pushEmpty()`）。
+    //   探针实测（146 行日志）证明：清空会把 IME 的组合态当场打断 ——
+    //   `composing` 从有效的 `(0,1)/(0,2)` 退化成 `(-1,-1)` ⇒ 拼音被当普通文本插入，
+    //   且引擎改送"累积整串"⇒ 整串被反复提交（用户看到"字被复制多份"）。
+    //   改为**基线跟随**：这次看到的平台文本就是基线，下一轮 diff 只取新增后缀。
+    //   兜底：基线过长且不在组合中时清一次，别让 IME 一直拖着一整篇文本。
+    _platformText = v.text;
+    if (_platformText.length > _kPlatformBaselineLimit && _composing.isEmpty) {
+      _pushEmpty();
+    }
     if (wasComposing || inserted.isNotEmpty) notifyListeners();
     _lastValue = _kClearedValue;
   }

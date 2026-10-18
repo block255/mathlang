@@ -86,8 +86,18 @@ NormalizeResult normalizeTex(String tex, int caretRel) {
         <({int from, int to, String repl, int lead})>[];
 
     // ① 全空结构：整段删
+    //   ★★ 2026-10-18 例外：**多行环境**（`\begin{aligned}…\end{aligned}` / `cases` …）不回收。
+    //      它的"空格子"是**模板本身的骨架**（用户从面板刚插进来时必然全空），
+    //      按"全空结构"删掉就等于：**一失焦（提交点）就把刚插入的对齐推导吞成空壳**。
+    //      实测（探针）：`normalizeTex(r'\begin{aligned}&=\\&=\end{aligned}')` 修复前返回 `""`。
     for (final StructureUnit u in structureUnits(t)) {
-      if (u.allEmpty) edits.add((from: u.start, to: u.end, repl: '', lead: 0));
+      if (!u.allEmpty) continue;
+      final String slice = tex.substring(
+        u.start.clamp(0, tex.length),
+        u.end.clamp(0, tex.length),
+      );
+      if (slice.contains(r'\begin{')) continue;
+      edits.add((from: u.start, to: u.end, repl: '', lead: 0));
     }
 
     // ② 单原子脚本参数：去掉花括号（`x^{2}` → `x^2`）

@@ -152,15 +152,25 @@ bool _narrower(TexRegion a, TexRegion b) {
 
 // ---------------------------------------------------------------- Tab 走槽
 
+/// 这个槽算不算 `Tab` 的**停靠点**。
+///
+/// · 空槽 ⇒ 算（模板里的空格子当然要停）；
+/// · **多行环境的格子 ⇒ 一律算**（哪怕里面已经有内容）。
+///   ★★ 2026-10-18 用户实测：`aligned` 里 `=` 所在格子**永远非空** ⇒ 旧规则（只停空槽）把它跳过，
+///   Tab 于是"跨行"走：第 1 行左 → 第 2 行左 → 第 1 行右。表格的自然顺序是**按行逐格**。
+bool _isTabStop(SlotSpan s) =>
+    s.isEmpty || s.path.any((SlotStep st) => st.row != null || st.col != null);
+
 /// `Tab` 的落点（相对偏移）；`null` = **走出公式**。
 ///
-/// 规则（§十-①）：**下一个空槽 → 槽内容末尾 → 走出公式**。
+/// 规则（§十-①）：**下一个停靠槽 → 当前槽内容末尾 → 走出公式**。
+/// 落点取该槽内容的**末尾**（环境格子 ⇒ 接在 `=` 之后写右式；空槽的起止相同，无差别）。
 int? tabForward(CaretSiteTable t, int rel) {
   if (t.degraded) return null; // 降级：交给调用方按位点/字节走
-  // ① 下一个**空槽**（严格在光标右侧）
+  // ① 右侧最近的**停靠槽**（见 [_isTabStop]）
   for (final SlotSpan s in slotOrder(t)) {
-    if (!s.isEmpty) continue;
-    if (s.start > rel) return s.start;
+    if (!_isTabStop(s)) continue;
+    if (s.start > rel) return s.end;
   }
   // ② 当前槽（最内层）的内容末尾；不在槽里就取最后一个槽的末尾
   final List<SlotSpan> order = slotOrder(t);
@@ -173,17 +183,17 @@ int? tabForward(CaretSiteTable t, int rel) {
 
 /// `Shift+Tab` 的落点（相对偏移）；`null` = **从左侧走出公式**。
 ///
-/// 镜像规则：**上一个空槽 → 当前槽内容开头 → 走出公式**。
+/// 镜像规则：**上一个停靠槽 → 当前槽内容开头 → 走出公式**。
 int? tabBackward(CaretSiteTable t, int rel) {
   if (t.degraded) return null;
   final List<SlotSpan> order = slotOrder(t);
-  // ① 上一个空槽（严格在光标左侧）：取最靠右的那个
-  SlotSpan? empty;
+  // ① 左侧最近的停靠槽：取"内容末尾仍在光标左侧"的最后一个（与前进对称，且不会原地打转）
+  SlotSpan? prev;
   for (final SlotSpan s in order) {
-    if (!s.isEmpty) continue;
-    if (s.start < rel) empty = s;
+    if (!_isTabStop(s)) continue;
+    if (s.end < rel) prev = s;
   }
-  if (empty != null) return empty.start;
+  if (prev != null) return prev.end;
   // ② 当前槽内容开头
   final SlotSpan? cur = innermostSlotAt(t, rel);
   if (cur != null && cur.start < rel) return cur.start;

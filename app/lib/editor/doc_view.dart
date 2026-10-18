@@ -484,13 +484,18 @@ class DocViewState extends State<DocView> {
   }
 
   Rect? _computeCaretRect() {
+    if (!mounted) return null;
+    // ★★ 2026-10-18：`_blankBoxes` 是**只写不清**的缓存 —— 空行 widget 被回收后表里还留着
+    //   它的 RenderBox，帧回调再拿它 `localToGlobal` 就会断言 `'attached': is not true`
+    //   （用户实测"点第二次报错"）。⇒ 先清掉已 detach 的条目，用前再查一次。
+    _blankBoxes.removeWhere((String _, RenderBox b) => !b.attached);
     final RenderObject? root = context.findRenderObject();
     final int? caret = _caret;
     if (root is! RenderBox || caret == null) return null;
 
     // ★★ ⑥ 丙：光标在**空行**上 ⇒ 用空行槽自己的盒子（它才是那一行的载体）
     final RenderBox? blank = _blankBoxes['blank@$caret'];
-    if (blank != null && blank.hasSize) {
+    if (blank != null && blank.attached && blank.hasSize) {
       final Offset g = blank.localToGlobal(Offset.zero, ancestor: root);
       return Rect.fromLTWH(g.dx, g.dy, _kCaretBoxWidth, textCaretHeight(_s.bodyFontSize));
     }
@@ -820,6 +825,17 @@ class DocViewState extends State<DocView> {
     if (!widget.caretVisible) return null; // 闪烁"灭"的相位
     return u.renderBase + rel;
   }
+
+  /// **逻辑光标**位置：只用来决定"注不注空槽垫子"。
+  ///
+  /// ★★ 与 [_caretAbsFor] 的差别只有两条：**闪烁相位**与**选区**都不参与。
+  ///   理由：垫子会改版面宽度 —— 它必须只随"光标在哪"变，不能随"光标看不看得见"变。
+  ///   失焦仍然返回 null（不画光标时不注垫子，否则页面上会留下看不见的占位）。
+  int? _slotCaretAbsFor(_Unit u, int? rel) {
+    if (rel == null) return null;
+    if (widget.hideCaretAndSelection) return null;
+    return u.renderBase + rel;
+  }
   ({int from, int to})? _localSelFor(_Unit u) {
     if (widget.hideCaretAndSelection || _selEnd <= _selStart) return null;
     final int rawA = _selStart - u.renderBase;
@@ -1013,6 +1029,10 @@ class DocViewState extends State<DocView> {
     // 光标在本单元内时换算成**绝对偏移**（InlineMathText 用的是绝对偏移）
     // ★ ⑤ 有选区时**不画光标**（标准编辑器行为：选区就是"当前操作对象"，光标让位）
     final int? caretAbs = _caretAbsFor(u, caretRel);
+    // ★★ 2026-10-18：注入空槽垫子用的是**逻辑位置**（不看闪烁、不看选区）。
+    //   垫子是"注进 TeX 的字形"，会改版面宽度；跟着闪烁走 ⇒ 整段每秒重排两次
+    //   （用户实测："虚线框若隐若现 + 排版闪动"）。
+    final int? slotCaretAbs = _slotCaretAbsFor(u, caretRel);
     // ★ 组合中间态：只接给含光标的那一个单元，且行间公式块不接（见 _composingFor）
     final String composing = _composingFor(u, caretRel);
     // 只有渲染树需要接点击（测量树是离屏的，接了也没用，还会多两个对象）
@@ -1036,6 +1056,7 @@ class DocViewState extends State<DocView> {
           source: text,
           baseOffset: u.renderBase,
           caretOffset: caretAbs,
+                slotCaretOffset: slotCaretAbs,
           selStart: selFrom,
           selEnd: selTo,
           composingText: composing,
@@ -1065,6 +1086,7 @@ class DocViewState extends State<DocView> {
                 source: text,
                 baseOffset: u.renderBase,
                 caretOffset: caretAbs,
+                slotCaretOffset: slotCaretAbs,
                 selStart: selFrom,
                 selEnd: selTo,
                 composingText: composing,
@@ -1088,6 +1110,7 @@ class DocViewState extends State<DocView> {
             source: text,
             baseOffset: u.renderBase,
             caretOffset: caretAbs,
+                slotCaretOffset: slotCaretAbs,
             selStart: selFrom,
             selEnd: selTo,
             composingText: composing,
@@ -1102,7 +1125,10 @@ class DocViewState extends State<DocView> {
         // 先注空槽占位（★ 光标不在里面时**也要注**：空槽必须一直看得见，见该函数注释），再按需注光标。
         final String tex = renderMathTex(
           text,
-          caretRel: caretAbs == null ? -1 : caretAbs - u.renderBase,
+          // ★ 垫子看逻辑位置（闪烁/选区不影响），竖条看视觉位置（同 renderMathTex 的说明）
+          caretRel:
+              slotCaretAbs == null ? -1 : slotCaretAbs - u.renderBase,
+          showCursor: caretAbs != null,
         );
         // ⚠️ 2026-10-15 晚：原先这里给整段行间公式刷淡色底（§6.5 旧版），**已撤** ——
         //    它把"渲染提示"画成了"一个对象"（用户指出 `$\frac{a}{b}=\sqrt{2}$` 是三个对象）。
@@ -1151,9 +1177,12 @@ class DocViewState extends State<DocView> {
             mathKey: mathKey,
             fontSize: display,
             mathStyle: MathStyle.display,
-            onErrorFallback: (e) => Text(
-              '❌ ${e.messageWithType}',
-              style: const TextStyle(color: Colors.red, fontSize: 13),
+            onErrorFallback: (e) => Tooltip(
+              message: e.messageWithType,
+              child: const Text(
+                '［公式不完整］',
+                style: TextStyle(color: Color(0xFFB08968), fontSize: 13),
+              ),
             ),
           ),
         );
@@ -1184,6 +1213,7 @@ class DocViewState extends State<DocView> {
           source: text,
           baseOffset: u.renderBase,
           caretOffset: caretAbs,
+                slotCaretOffset: slotCaretAbs,
           selStart: selFrom,
           selEnd: selTo,
           composingText: composing,

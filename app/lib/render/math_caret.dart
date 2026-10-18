@@ -160,8 +160,18 @@ class _MathWithCaretState extends State<MathWithCaret> {
           fontSize: widget.fontSize,
         );
       } else {
+        // ★★ 2026-10-18：**行间块**的"公式之前 / 之后"那两格，光标要贴在**块的边界**上
+        //   （之后 ⇒ 块底、之前 ⇒ 块顶），不能用块内锚点的 y ——
+        //   `aligned` / `cases` 的锚点在竖直**中心** ⇒ 竖条会浮在**两行之间**
+        //   （用户实测：从第 2 行右式末尾按 Tab 退出公式，光标落在两行中间靠右）。
+        final bool isDisplay =
+            widget.mathStyle == MathStyle.display && root is RenderBox && root.hasSize;
+        final Offset baseline = isDisplay
+            ? Offset(at.dx,
+                widget.caretEdge == CaretEdge.before ? 0.0 : root.size.height)
+            : at;
         bar = textLayerCaretRect(
-          baseline: at,
+          baseline: baseline,
           width: widget.caretWidth,
           fontSize: widget.textFontSize ?? widget.fontSize,
         );
@@ -406,6 +416,16 @@ Rect? findLocalRowBox(RenderObject root, Offset at, {RenderObject? anchor}) {
 
     final ({Rect rect, double dx, RenderObject? row})? inRow = pick(0) ?? pick(2);
     if (inRow != null) return inRow.rect;
+
+    // ★★ 2026-10-18：锚点那一行**一个字形都没有**（多行环境里的空格子：`aligned` / `cases` 的格子）
+    //   ⇒ 直接用**那一行自己的行盒**当光标行。
+    //   不补这一条会怎样（用户实测）：几何退路也找不到"含基线"的字形盒
+    //   ⇒ 返回 null ⇒ 上层按"整个公式盒居中"画 ⇒ 竖条落在**两行之间**。
+    if (anchorRow is RenderBox && anchorRow.hasSize && anchorRow.size.height > 0) {
+      final Rect rowRect =
+          anchorRow.localToGlobal(Offset.zero, ancestor: root) & anchorRow.size;
+      return clip(rowRect);
+    }
   }
 
   // ② 退路：纯几何（严格含基线 → ±2 px）
