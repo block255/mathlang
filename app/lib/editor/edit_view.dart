@@ -27,10 +27,12 @@ import '../lang/math_spans.dart';
 import '../lang/smart_wrap.dart';
 import '../lang/symbol_insert.dart';
 import '../lang/word_triggers.dart';
-import '../render/caret_sites.dart' show kCaretColorValue;
+import '../render/caret_sites.dart'
+    show kCaretColorValue, CaretSiteTable, SlotSpan, buildCaretSites;
 import '../render/delete_reclaim.dart';
 import '../render/insert_guard.dart';
 import '../render/math_nav.dart';
+import '../render/site_adjacency.dart';
 import '../render/normalize.dart';
 import '../render/selection_range.dart';
 import '../render/smart_delete.dart';
@@ -273,6 +275,12 @@ class EditViewState extends State<EditView> {
   ///   输入设备的内容由 [TextInputSurfaceController] 自己维持成"空的"。
   void _commitText(String rawText, {int autoWrapped = 0}) {
     if (rawText.isEmpty) return;
+    // ★★ PC-1b（2026-10-18）：**行内数学里按 Enter ⇒ 在光标处断栅栏**（原子一个不动）。
+    //   规则（用户拍板，按"层"分）：
+    //     · 行内段里、且**不在任何结构内部**（一串平铺原子之间）⇒ 就地断：`$左$` + 断行 + `$右$`；
+    //     · 结构内部（`\frac{}{}` 的分子里、上下标里）⇒ **不切**，交给 `insert_guard` 推到块后；
+    //     · 行间块内部 ⇒ 同上（display 是块级单元，不切）。
+    if (_splitInlineMathOnEnter(rawText)) return;
     // ★★ S4-c：**自动展开**（打字即渲染）先于插入守门人 —— 因为它是"改写用户刚打的那几个字符"，
     //   不是"往后插一段东西"。三条（`/`→分式、词触发、`>=`→`\ge`）都只对**单字符/终止符**生效，
     //   粘贴这种多字符载荷一律不参与（`planAutoExpand` 自己会拒）。
@@ -537,8 +545,31 @@ class EditViewState extends State<EditView> {
   ///
   /// ⚠️ `op()` 内部会 notify（→ 上报统计），那一次上报读到的还是**旧计数**，
   /// 所以这里改完必须**补一次上报**，否则统计永远慢一拍。
-  void _mutate(void Function() op) {
-    final String before = _buf.buf;
+  /// **行内数学里按 Enter ⇒ 在光标处断栅栏**（PC-1b）。返回 true = 已处理。
+  ///
+  /// 判据见 [`_commitText`] 开头的注释：只有"行内段里且**不在结构内部**"才断。
+  /// 断完光标落在**右段内容开头**（用户拍板乙案：与记事本一致，接着往下写）。
+  bool _splitInlineMathOnEnter(String raw) {
+    if (!raw.contains('\n')) return false;
+    if (_buf.hasSelection) return false; // 有选区时让通用路径替换选区
+    final MathRegion? r = mathRegionAt(_buf.buf, _buf.caret);
+    if (r == null || r.isDisplay) return false;
+    final int rel = _buf.caret - r.contentStart;
+    if (rel <= 0 || rel >= r.tex.length) return false; // 段首/段尾：交给 insert_guard
+    // **结构内部**（真有层级）⇒ 不切
+    final CaretSiteTable t = buildCaretSites(r.tex);
+    final SlotSpan? slot = innermostSlotAt(t, rel);
+    if (slot != null && slot.path.isNotEmpty) return false;
+    final String left = r.tex.substring(0, rel);
+    final String right = r.tex.substring(rel);
+    final String repl = '\$$left\$\n\n\$$right\$';
+    _mutate(() => _buf.replace(r.openStart, r.closeEnd, repl));
+    _buf.setCaret(r.openStart + 1 + left.length + 2 + 1);
+    _pokeBlink();
+    return true;
+  }
+
+  void _mutate(void Function() op) {    final String before = _buf.buf;
     op();
     if (identical(before, _buf.buf)) return;
     _edits++;
