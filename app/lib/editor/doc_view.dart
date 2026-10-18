@@ -37,6 +37,7 @@ import '../layout/paginator.dart';
 import '../render/caret_ownership.dart';
 import '../render/caret_sites.dart';
 import '../render/empty_math_mark.dart';
+import '../render/env_cells.dart';
 import '../render/hit_map.dart';
 import '../render/inline_math_text.dart';
 import '../render/injection_map.dart';
@@ -702,6 +703,23 @@ class DocViewState extends State<DocView> {
     required bool displayStyle,
   }) {
     final Offset localPos = (root as RenderBox).globalToLocal(global);
+
+    // ★★ P2-D（2026-10-18）：多行环境**按格子**判落点。
+    //   原因：`aligned` / `cases` 的一行里只有 `=` 之类有墨迹，其它位置是空白；
+    //   旧的"最近字形"会把远处点击吸到别处（用户实测：点第一行左侧空白，
+    //   光标落到**第二个等号**旁边）。格子有行/列的矩形可算 ⇒ 先按格子定，再退回旧判据。
+    if (hasEnv(tex)) {
+      final EnvCellHit? cell = envCellHitAt(
+        root: root,
+        localPos: localPos,
+        tex: renderTex,
+        displayStyle: displayStyle,
+      );
+      if (cell != null) {
+        final int? cellOffset = envCellOffset(tex, cell);
+        if (cellOffset != null) return cellOffset;
+      }
+    }
     final MathHit hit = hitTestMathTex(
       root: root,
       localPos: localPos,

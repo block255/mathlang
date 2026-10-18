@@ -307,6 +307,12 @@ SmartEdit smartBackspace(CaretSiteTable t, int rel) {
   // §4.4 降级：字节级，笨但可预测
   if (t.degraded) return SmartEdit.remove(r - 1, r, r - 1);
 
+  // ★★ 2026-10-18：**分隔符不可单删**（`\left(` / `\right)` / `\middle|` 的字符）。
+  //   否则会删出 `\left2\right)` 这种非法 tex ⇒ KaTeX 抛 Parser Error（用户实测"点删除报错"）。
+  //   判据：删到分隔符 ⇒ **整对一起删**（与 §4.6「删除要干脆」同一口径）。
+  final _DelimPair? pair = _delimPairAt(t.tex, r - 1);
+  if (pair != null) return SmartEdit.remove(pair.start, pair.end, pair.start);
+
   final CaretSite s = t.snap(r);
 
   // ★ §4.7 **优先**：光标停在某个**操作对象的右端** ⇒ 删的是**整个操作对象**
@@ -359,6 +365,10 @@ SmartEdit smartDelete(CaretSiteTable t, int rel) {
   if (r >= t.tex.length) return SmartEdit.none;
 
   if (t.degraded) return SmartEdit.remove(r, r + 1, r);
+
+  // ★★ 2026-10-18：分隔符不可单删（见 [smartBackspace] 的说明）⇒ 整对一起删
+  final _DelimPair? pair = _delimPairAt(t.tex, r);
+  if (pair != null) return SmartEdit.remove(pair.start, pair.end, pair.start);
 
   final CaretSite s = t.snap(r);
 
@@ -602,3 +612,124 @@ int _extentEnd(String tex, int slotEnd) =>
 /// 父路径的字符串键（**不含命令与行列** —— 实例身份由"源码起点"决定，见 [structureUnits]）
 String _pathKey(List<SlotStep> path) =>
     path.map((SlotStep s) => '${s.command}(${s.argIndex})').join('/');
+
+// ---------------------------------------------------------------- 分隔符对（2026-10-18）
+
+/// `\left X … \right Y` 的一对（`start` = `\left` 起点，`end` = `\right` 之后）
+class _DelimPair {
+  const _DelimPair(this.start, this.end);
+  final int start;
+  final int end;
+}
+
+const List<String> _kDelimCommands = <String>['left', 'right', 'middle'];
+
+/// 分隔符 token 的结束位置（命令名之后，吃掉空白与分隔符本身）
+int _delimTokenEnd(String tex, int from) {
+  int j = from;
+  while (j < tex.length && tex[j] == ' ') {
+    j++;
+  }
+  if (j >= tex.length) return j;
+  if (tex[j] == r'\') {
+    j++;
+    if (j < tex.length && tex[j] == '{') return j + 1; // `\{` `\}`
+    while (j < tex.length) {
+      final int c = tex.codeUnitAt(j);
+      final bool letter =
+          (c >= 0x41 && c <= 0x5A) || (c >= 0x61 && c <= 0x7A);
+      if (!letter) break;
+      j++;
+    }
+    return j;
+  }
+  return j + 1;
+}
+
+/// 扫出所有 `\left` / `\right` / `\middle` token（含它们的分隔符）
+List<({int start, int end, String name})> _delimTokens(String tex) {
+  final List<({int start, int end, String name})> out =
+      <({int start, int end, String name})>[];
+  int i = 0;
+  while (i < tex.length) {
+    if (tex[i] != r'\') {
+      i++;
+      continue;
+    }
+    int j = i + 1;
+    final int nameStart = j;
+    while (j < tex.length) {
+      final int c = tex.codeUnitAt(j);
+      final bool letter = (c >= 0x41 && c <= 0x5A) || (c >= 0x61 && c <= 0x7A);
+      if (!letter) break;
+      j++;
+    }
+    final String name = tex.substring(nameStart, j);
+    if (_kDelimCommands.contains(name)) {
+      out.add((start: i, end: _delimTokenEnd(tex, j), name: name));
+      i = _delimTokenEnd(tex, j);
+      continue;
+    }
+    i = j > i + 1 ? j : i + 1;
+  }
+  return out;
+}
+
+/// **覆盖字符 [at] 的分隔符 token** 所属的那一对；不在分隔符语法上 ⇒ null。
+///
+/// 为什么要它：单个分隔符被删掉会得到 `\left2\right)` 这种**非法 tex**
+/// （KaTeX 直接抛 `Invalid delimiter type`，用户实测"点删除报错"）。
+_DelimPair? _delimPairAt(String tex, int at) {
+  if (at < 0 || at >= tex.length) return null;
+  final List<({int start, int end, String name})> toks = _delimTokens(tex);
+  int hit = -1;
+  for (int k = 0; k < toks.length; k++) {
+    if (at >= toks[k].start && at < toks[k].end) {
+      hit = k;
+      break;
+    }
+  }
+  if (hit < 0) return null;
+
+  final String name = toks[hit].name;
+  if (name == 'left') {
+    int depth = 0;
+    for (int k = hit; k < toks.length; k++) {
+      if (toks[k].name == 'left') depth++;
+      if (toks[k].name == 'right') {
+        depth--;
+        if (depth == 0) return _DelimPair(toks[hit].start, toks[k].end);
+      }
+    }
+    return null;
+  }
+  if (name == 'right') {
+    int depth = 0;
+    for (int k = hit; k >= 0; k--) {
+      if (toks[k].name == 'right') depth++;
+      if (toks[k].name == 'left') {
+        depth--;
+        if (depth == 0) return _DelimPair(toks[k].start, toks[hit].end);
+      }
+    }
+    return null;
+  }
+  // \middle：归它外面那一对
+  int? leftStart;
+  int depth = 0;
+  for (int k = hit - 1; k >= 0; k--) {
+    if (toks[k].name == 'right') depth++;
+    if (toks[k].name == 'left') {
+      if (depth == 0) {
+        leftStart = toks[k].start;
+        break;
+      }
+      depth--;
+    }
+  }
+  if (leftStart == null) return null;
+  for (int k = hit + 1; k < toks.length; k++) {
+    if (toks[k].name == 'right') return _DelimPair(leftStart, toks[k].end);
+  }
+  return null;
+}
