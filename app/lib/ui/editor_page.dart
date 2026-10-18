@@ -195,11 +195,10 @@ class EditorPageState extends State<EditorPage> {
       _panelOpen = open ?? !_panelOpen;
       if (!_panelOpen && _assignSlot != null) _assignSlot = null;
     });
-    if (_panelOpen) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _searchFocus.requestFocus();
-      });
-    }
+    // ★★ 2026-10-18：**打开面板不抢焦点**（用户拍板：覆盖只是视觉覆盖）。
+    //   原来这里把焦点推给搜索框 ⇒ 编辑器失焦 ⇒ 光标不画、点编辑器会被当"点外面"。
+    //   ⇒ 现在打字直接进正文（这正是"交互上不影响"）；要用搜索框就**点它一下**
+    //     （那一刻编辑器才失焦、光标才隐藏 —— 那是合理的）。
   }
 
   void toggleQuickBar({bool? open}) {
@@ -842,24 +841,19 @@ class EditorPageState extends State<EditorPage> {
               : Stack(
                   children: <Widget>[
                     Positioned.fill(child: page),
-                    if (rightW > 0) ...<Widget>[
-                      Positioned.fill(
-                        child: GestureDetector(
-                          key: const Key('panel-scrim'),
-                          onTap: () {
-                            togglePanel(open: false);
-                            toggleQuickBar(open: false);
-                          },
-                          child: const ColoredBox(color: Color(0x1A000000)),
-                        ),
-                      ),
+                    if (rightW > 0)
+                      // ★★ 2026-10-18（用户拍板）：**覆盖 = 视觉覆盖，不是模态**。
+                      //   原来这里还有一层 `panel-scrim`（26% 黑 + 点它关面板）+ 打开面板时把焦点
+                      //   抢给搜索框 ⇒ 编辑器失焦 ⇒ **光标不画**、点编辑器就关面板。
+                      //   用户的原话（类比）："9336 打开可以悬浮在机甲网页上面，但是不影响机甲网页
+                      //   其他部分的视觉；我操作机甲网页也不影响它们继续悬浮。"
+                      //   ⇒ 遮罩整层删掉、焦点不抢：面板就是一张浮在页面上的卡片。
                       Positioned(
                         top: 0,
                         bottom: 0,
                         right: 0,
                         child: _rightColumn(rightW),
                       ),
-                    ],
                   ],
                 );
           return Stack(

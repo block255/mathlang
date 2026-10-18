@@ -264,7 +264,7 @@ void main() {
       expect(renderMathTex(r'\frac{a}{b}', caretRel: -1), r'\frac{a}{b}');
     });
 
-    testWidgets(r'★ 端到端：点横线那一截 + `⌫` ⇒ **整个 \overline{AB} 走**（留空壳）',
+    testWidgets(r'★ 端到端：点横线那一截 + `⌫` ⇒ **整个 \overline{AB} 走**（连定界符，不留壳）',
         (WidgetTester tester) async {
       final DocBuffer buf = DocBuffer(r'$\overline{AB}$尾');
       await _mountEdit(tester, buf);
@@ -280,8 +280,8 @@ void main() {
       await tester.sendKeyEvent(LogicalKeyboardKey.backspace);
       await tester.pump();
 
-      expect(buf.buf, r'$$尾',
-          reason: '★ 点横线末端 + ⌫ 应当删掉**整个 `$kOverlineTex`**；实际：${buf.buf}');
+      expect(buf.buf, '尾',
+          reason: '★ 点横线末端 + ⌫ 应当删掉**整个结构**（«删空留壳»只针对子位点，整段删完不留壳）；实际：${buf.buf}');
     });
   });
 
@@ -298,7 +298,7 @@ void main() {
       return (digit: scan.eligible.first.rect, tail: scan.eligible.last.rect);
     }
 
-    testWidgets('点尾垫（横线那一截）→ 整个根号消失，留下空壳', (WidgetTester tester) async {
+    testWidgets('点尾垫（横线那一截）→ 整个根号消失（连定界符，不留壳）', (WidgetTester tester) async {
       final DocBuffer buf = DocBuffer(r'$\sqrt{2}$尾');
       await _mountEdit(tester, buf);
       await tester.pumpAndSettle();
@@ -310,8 +310,8 @@ void main() {
       await tester.sendKeyEvent(LogicalKeyboardKey.backspace);
       await tester.pump();
 
-      expect(buf.buf, r'$$尾',
-          reason: '★ 点横线末端 + ⌫ 应当删掉**整个根号**（结构层）');
+      expect(buf.buf, '尾',
+          reason: '★ 点横线末端 + ⌫ 应当删掉**整个根号**（结构层，不留空壳）；实际：${buf.buf}');
     });
 
     testWidgets('点式子右缘 → 只删 `2`，根号还在（出现空位框）',

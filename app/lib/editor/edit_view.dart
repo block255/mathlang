@@ -28,6 +28,7 @@ import '../lang/smart_wrap.dart';
 import '../lang/symbol_insert.dart';
 import '../lang/word_triggers.dart';
 import '../render/caret_sites.dart' show kCaretColorValue;
+import '../render/delete_reclaim.dart';
 import '../render/insert_guard.dart';
 import '../render/math_nav.dart';
 import '../render/normalize.dart';
@@ -653,7 +654,7 @@ class EditViewState extends State<EditView> {
         final String sel = _selectedText;
         if (sel.isNotEmpty) {
           Clipboard.setData(ClipboardData(text: sel));
-          _mutate(() => _buf.replace(_buf.selectionStart, _buf.selectionEnd, ''));
+          _deleteRange(_buf.selectionStart, _buf.selectionEnd);
         }
         return KeyEventResult.handled;
       }
@@ -667,7 +668,7 @@ class EditViewState extends State<EditView> {
     if (k == LogicalKeyboardKey.backspace || k == LogicalKeyboardKey.delete) {
       // ★ ⑤ 有选区 ⇒ 删整个区间（一步撤销），不走结构删除
       if (_buf.hasSelection) {
-        _mutate(() => _buf.replace(_buf.selectionStart, _buf.selectionEnd, ''));
+        _deleteRange(_buf.selectionStart, _buf.selectionEnd);
         return KeyEventResult.handled;
       }
       _applyEdit(smartEditAt(_buf.buf, _buf.caret,
@@ -755,12 +756,24 @@ class EditViewState extends State<EditView> {
   void _applyEdit(SmartEdit e) {
     if (e.isNone) return;
     if (e.deletes) {
-      _mutate(() => _buf.replace(e.from!, e.to!, ''));
-      // `replace` 会把光标放到删除点之后；跨越删除后要落回起点（用户感知是"删掉那一个符号"）
-      if (_buf.caret != e.caret) _buf.setCaret(e.caret);
-    } else {
-      _buf.setCaret(e.caret);
+      // ★★ 「删除要干脆」（2026-10-18 用户拍板）：**删空数学段 ⇒ 连定界符一起删**。
+      //   口径：`删空留壳` **只针对结构里的子位点**（``\frac{□}{□}`` 的槽）；
+      //   "把整个数学语言删掉"**没有留壳回打的义务**（用户原话）。
+      final SmartEdit ed = reclaimEmptiedMath(_buf.buf, e);
+      _mutate(() => _buf.replace(ed.from!, ed.to!, ''));
+      // `replace` 会把光标放到删除点之后；扩成整段删之后要落回起点
+      if (_buf.caret != ed.caret) _buf.setCaret(ed.caret);
+      return;
     }
+    _buf.setCaret(e.caret);
+  }
+
+  /// 删一个区间（内部走「删空数学段 ⇒ 连定界符」那条判据）—— 选区删除 / 剪切共用。
+  void _deleteRange(int from, int to) {
+    final SmartEdit ed =
+        reclaimEmptiedMath(_buf.buf, SmartEdit.remove(from, to, from));
+    _mutate(() => _buf.replace(ed.from!, ed.to!, ''));
+    if (_buf.caret != ed.caret) _buf.setCaret(ed.caret);
   }
 
   int _lineStart(int offset) {

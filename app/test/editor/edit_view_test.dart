@@ -772,7 +772,7 @@ $$
   group('★ 回归：光标在公式后面退格 → 删掉公式里紧邻的那个对象（不再爆编码）', () {
     const String doc = '文字。\$\\frac{a}{b}\$\n\n尾段\n';
 
-    testWidgets('退格 → 整个分式没了、留空壳；画面上不许出现 `\\frac` 源码',
+    testWidgets('退格 → 整个分式没了、**不留空壳**；画面上不许出现 `\\frac` 源码',
         (WidgetTester tester) async {
       final DocBuffer buf = DocBuffer(doc);
       await _mount(tester, buf);
@@ -784,8 +784,10 @@ $$
 
       expect(buf.buf.contains(r'\frac'), isFalse,
           reason: '★ 整个分式都该消失。实际缓冲区：\n${buf.buf}');
-      expect(buf.buf.contains(r'$$'), isTrue,
-          reason: '★ 定界符留着 = 空壳（§4.6），它会被画成一个占位字形（§6.1.1），不是幽灵');
+      // ★★ 2026-10-18 用户拍板（"删除要干脆"）：**删空数学段 ⇒ 连定界符一起删**。
+      //   口径：`删空留壳` 只针对**结构里的子位点**；把整个数学语言删掉**没有留壳回打的义务**。
+      expect(buf.buf.contains(r'$'), isFalse,
+          reason: '★ 整段删干净（改前会留下空壳）。实际缓冲区：\n${buf.buf}');
       expect(find.textContaining(r'\frac'), findsNothing,
           reason: '★ 画面上不许出现 LaTeX 源码（原则 2：用户永远不需要看数学编码）');
       expect(find.textContaining('❌'), findsNothing);

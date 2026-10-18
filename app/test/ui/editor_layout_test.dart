@@ -81,7 +81,7 @@ void main() {
       expect(_editWidth(tester), closeTo(closed, 0.5));
     });
 
-    testWidgets('窄屏（1000）：覆盖式；面板打开后正文宽度仍不变（只是被遮住）',
+    testWidgets('窄屏（1000）：覆盖式；面板打开后正文宽度仍不变（浮在上面、不压暗）',
         (WidgetTester tester) async {
       final EditorPageState st =
           await _pump(tester, window: const Size(1000, 800));
@@ -89,7 +89,9 @@ void main() {
       final double closed = _editWidth(tester);
       st.togglePanel(open: true);
       await tester.pumpAndSettle();
-      expect(find.byKey(const Key('panel-scrim')), findsOneWidget);
+      // ★ 2026-10-18：覆盖 = 视觉覆盖，不是模态 ⇒ **不再有遮罩**（panel-scrim 已删）
+      expect(find.byKey(const Key('symbol-panel')), findsOneWidget);
+      expect(find.byKey(const Key('panel-scrim')), findsNothing);
       expect(_editWidth(tester), closeTo(closed, 0.5),
           reason: '★ 覆盖式也必须"改位置不改宽"');
     });
