@@ -46,6 +46,17 @@ Future<(EditorPageState, DocBuffer)> _pump(WidgetTester tester) async {
 }
 
 void main() {
+  testWidgets('★ 默认就打开符号面板与快捷栏（2026-10-18 晚用户定）',
+      (WidgetTester tester) async {
+    final (EditorPageState st, _) = await _pump(tester);
+    // ★ 判据：**未修改任何设置**时，两个入口都在屏幕上（各是各的开关）
+    expect(st.panelOpen, isTrue,
+        reason: '用户原话：「未修改时，符号面板与快捷栏默认都打开」');
+    expect(st.quickOpen, isTrue);
+    expect(find.byKey(const Key('symbol-panel')), findsOneWidget);
+    expect(find.byKey(const Key('quick-slot-0')), findsOneWidget);
+  });
+
   testWidgets('★ 面板打开时没有遮罩（页面不压暗）', (WidgetTester tester) async {
     final (EditorPageState st, _) = await _pump(tester);
     st.togglePanel(open: true);

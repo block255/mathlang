@@ -53,6 +53,51 @@ void main() {
           LayoutMetrics.panelWidth(8));
     });
 
+    testWidgets('★ 空栏位不画加号，只留序号（2026-10-18 晚用户定）',
+        (WidgetTester tester) async {
+      await _pump(
+        tester,
+        settings: const AppSettings(
+          favorites: <String?>['plus', null, null, null],
+        ),
+      );
+      await tester.pumpAndSettle();
+      // ★ 判据：快捷栏里**一个** `+` 图标都没有（空位靠序号辨认，不靠加号）
+      expect(
+        find.descendant(
+          of: find.byType(QuickBar),
+          matching: find.byIcon(Icons.add),
+        ),
+        findsNothing,
+        reason: '用户原话：「快捷栏空栏位不要加号，简洁一点」',
+      );
+      // 空位仍要**看得出这是第几格**（序号在左上角，字号 8）
+      expect(
+        find.descendant(
+          of: find.byKey(const Key('quick-slot-7')),
+          matching: find.text('8'),
+        ),
+        findsOneWidget,
+        reason: '空位不能变成"什么都没有"：序号是唯一的身份线索',
+      );
+      // 有内容的格子照旧画符号预览（`symbolPreview` = FittedBox + Math.tex）
+      expect(
+        find.descendant(
+          of: find.byKey(const Key('quick-slot-0')),
+          matching: find.byType(FittedBox),
+        ),
+        findsOneWidget,
+      );
+      // 空位**除了序号什么都不画**
+      expect(
+        find.descendant(
+          of: find.byKey(const Key('quick-slot-7')),
+          matching: find.byType(FittedBox),
+        ),
+        findsNothing,
+      );
+    });
+
     testWidgets('★ 关掉快捷栏不影响面板；两者都关 ⇒ 右栏消失',
         (WidgetTester tester) async {
       final (EditorPageState st, DocBuffer _) = await _pump(tester);
@@ -145,6 +190,10 @@ void main() {
           favorites: <String?>['frac', null, null, null],
         ),
       );
+      await tester.pumpAndSettle();
+      // ★ 2026-10-18 晚：面板**默认已打开**（用户定的），这条测的是"面板关着也插入"
+      //   ⇒ 先显式关掉（判据不变：Alt+N 不依赖面板状态）。
+      st.togglePanel(open: false);
       await tester.pumpAndSettle();
       expect(st.panelOpen, isFalse);
       // 让编辑器拿到焦点（键事件从主焦点向上冒泡到外壳 Focus）

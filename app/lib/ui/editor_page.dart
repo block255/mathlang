@@ -115,7 +115,12 @@ class EditorPageState extends State<EditorPage> {
   late AppSettings _s = widget.settings ?? const AppSettings();
   late DocSettings _doc = widget.doc ?? DocSettings.defaults;
 
-  bool _panelOpen = false;
+  /// ★★ 2026-10-18 晚（用户）：**默认就打开符号面板** —— 「未修改时，符号面板与快捷栏
+  ///   默认都打开」。原来这里是 `false`（= 一进来只有一个编辑器，什么符号都得先去顶栏找）。
+  ///   两条依据：① 面板是**覆盖式**（不压暗、不抢焦点、不压正文宽）⇒ 开着不打断写作；
+  ///   ② 这个软件的第一动作就是"插一个数学符号"，把入口藏起来等于多一次点击。
+  ///   ★ 独立开关不变：顶栏「符号」仍可关，快捷栏仍是自己的 `_quickOpen`。
+  bool _panelOpen = true;
 
   /// ★ 快捷栏与面板**各有自己的开关**（用户 2026-10-17 定）
   bool _quickOpen = true;
@@ -622,6 +627,14 @@ class EditorPageState extends State<EditorPage> {
   Future<List<Uint8List>?> _capturePages(String action) async {
     final EditViewState? st = _editKey.currentState;
     if (st == null) return null;
+    // ★★ 2026-10-18 晚：**空文档现在也有"一页空白纸"了**（新建文档要能点出光标 ⇒
+    //   零单元也必须分页，见 `DocView._scheduleMeasure`）⇒ 抓页会成功抓到一张空白页。
+    //   但"导出空文档"仍然是**没有意义**的（用户按下导出却得到一张白图 = 静默骗人）
+    //   ⇒ 判据从"抓不到页"改成"**文档本身是空的**"，两者都拒绝、都不写文件。
+    if (_buf.buf.trim().isEmpty) {
+      await _showFileError(action, '文档还是空的，没有可导出的内容');
+      return null;
+    }
     // ★ 这里**不**等 `endOfFrame`：`DocView.capturePages` 只在"这一页还没画过"时才等一帧。
     //   无条件等会把调用方**永远挂住**（测试里没有自动出帧；真机上点导出时页面早就画好了）。
     final List<Uint8List> pages;

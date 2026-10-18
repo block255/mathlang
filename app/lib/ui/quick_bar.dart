@@ -132,11 +132,11 @@ class QuickBar extends StatelessWidget {
                       fontSize: 8, color: Color(0xFFB0BEC5)),
                 ),
               ),
-              if (item == null)
-                const Center(
-                  child: Icon(Icons.add, size: 13, color: Color(0xFFCBD5E0)),
-                )
-              else
+              // ★★ 2026-10-18 晚（用户）：**空位不要加号** —— 「简洁一点」。
+              //   空位只留左上角那个小序号（告诉用户"这是第几格"），
+              //   不再画 `+`：`+` 会让人以为"必须点它才能加"，而实际动作是
+              //   「点格子进赋值模式」（提示已经写在 tooltip 里，不占视觉）。
+              if (item != null)
                 Padding(
                   padding: const EdgeInsets.fromLTRB(2, 8, 2, 2),
                   child: Center(child: symbolPreview(item, size: 13)),

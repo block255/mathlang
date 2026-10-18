@@ -1364,7 +1364,13 @@ class DocViewState extends State<DocView> {
           }
         }
       }
-      if (!changed) return;
+      if (!changed && _layout != null) return;
+      // ★★ 2026-10-18 晚：**零单元也必须分页一次**。
+      //   空文档前 `hs` 与 `_units` 都是空 ⇒ `changed == false` ⇒ 这里原来直接 return
+      //   ⇒ `_layout` 永远是 `null` ⇒ 界面上根本没有"页"（只有"正在分页…"），
+      //     于是连"文末那片空白"都不存在 ⇒ **点哪儿都落不了光标**。
+      //   `paginate` 对空列表会自己补一页（`if (pages.isEmpty) pages.add([])`），
+      //   所以这里放进来的代价就是"多一页空白纸"—— 那正是新建文档该有的样子。
 
       setState(() {
         _heights = hs;
@@ -1471,6 +1477,30 @@ class DocViewState extends State<DocView> {
         caretColor: const Color(kCaretColorValue),
         topAligned: true,
         onTap: (int at) => _onTailBlankTap(),
+        onBox: (String id, RenderBox box) => _blankBoxes[id] = box,
+      ));
+    } else if (p == layout.pageCount - 1 && _units.isEmpty) {
+      // ★★ 2026-10-18 晚（用户报「**新建文档点不出光标**」）·
+      //   根因不是光标没画，而是**整页一个可点单元都没有**：
+      //   `BlockIndex.parse('')` 里空行全被 R1 跳过 ⇒ `blocks = []` ⇒ `flowUnits = []`
+      //   ⇒ 上面的分支要求 `prevUnit != null`（不成立）⇒ 页面里连一个命中盒都不存在
+      //   ⇒ 点哪儿都落不了光标（打字也就无从插入）。
+      //   修法（**最小、不动分页、不动块模型**）：整页铺一个空行槽 ——
+      //   落点 0、高度 = 正文高（与"文末那片空白"同一套件），点哪儿都落到 0。
+      //   ★ 这是 §11.46（"空块不产出单元"）的**最小补丁**；真正的模型级修法
+      //     （真空段落占一行高）留给结构层那一批，两者不冲突：这里只补"零单元"这一种。
+      children.add(_BlankSlot(
+        id: 'blank@empty',
+        height: _m.bodyHeight,
+        offset: 0,
+        caretHere: !widget.hideCaretAndSelection &&
+            widget.caretVisible &&
+            (_caret ?? 0) == 0,
+        caretHeight: textCaretHeight(_s.bodyFontSize),
+        caretWidth: 1.5,
+        caretColor: const Color(kCaretColorValue),
+        topAligned: true,
+        onTap: (int at) => widget.onTapOffset?.call(at),
         onBox: (String id, RenderBox box) => _blankBoxes[id] = box,
       ));
     }
