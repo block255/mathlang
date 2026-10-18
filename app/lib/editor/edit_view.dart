@@ -428,49 +428,6 @@ class EditViewState extends State<EditView> {
     }
   }
 
-  /// ★★ S4-c：`Alt+=` / `Ctrl+Alt+E` —— 插入一个**空公式壳**，光标落在里面。
-  ///
-  /// 空壳的内容是一个**空格**（`$ $`）而不是空串：
-  ///   · `$$` 两个字符紧挨着在**整行**时会变成行间围栏（`BlockMarkers.isMathFence`），
-  ///     那会把用户接着打的字送进"TeX 源码"分区；
-  ///   · 空格在数学里只是词法分隔符（不占版面），KaTeX 也照样解析。
-  /// ⚠️ 记账：空公式目前**看不见**（只有一个光标）—— 那是 §6.1.1「空公式必须画出来」，
-  ///   属视觉规范批，不在这里假装解决。
-  void insertMathShell({required bool display}) {
-    final String payload = display ? '\$\$\n\n\$\$' : r'$ $';
-    // 光标落进壳里：`$ $` ⇒ 第一个 `$` 之后；`$$\n\n$$` ⇒ 第一道围栏与空行之间
-    final int inside = display ? 3 : 1;
-
-    // 有选区 ⇒ 用壳替换选区（标准编辑器行为，一步撤销）
-    if (_buf.hasSelection) {
-      final int s = _buf.selectionStart;
-      final String next = _buf.buf.replaceRange(s, _buf.selectionEnd, payload);
-      final int caret = (s + inside).clamp(0, next.length);
-      _mutate(() {
-        _buf.replace(0, _buf.length, next);
-        _buf.setCaret(caret);
-      });
-      return;
-    }
-
-    // ★ 走守门人：落点在围栏行 / 数学段内部时会被推开（规则 ①③④）
-    final InsertPlan plan = planInsert(_buf.buf, _buf.caret, payload);
-    final String padded = plan.padText(payload);
-    final int shift = padded.contains(payload) ? padded.indexOf(payload) : 0;
-    var d = _buf.buf;
-    if (plan.wrapBareArg != null) {
-      final ({int start, int end}) w = plan.wrapBareArg!;
-      d = d.replaceRange(w.start, w.end, '{${d.substring(w.start, w.end)}}');
-    }
-    final int at = plan.offset.clamp(0, d.length);
-    final String next = d.replaceRange(at, at, padded);
-    final int caret = (at + shift + inside).clamp(0, next.length);
-    _mutate(() {
-      _buf.replace(0, _buf.length, next);
-      _buf.setCaret(caret);
-    });
-  }
-
   /// ★★ S4-c：`Ctrl+↑` / `Ctrl+↓` —— 上标 / 下标（MathType Web 的真实约定）。
   ///
   /// 有基座 ⇒ `^{}`（作用于前面那个原子）；**没有基座**（公式开头 / 正文里）⇒ `{}^{}`
@@ -1140,3 +1097,4 @@ class EditViewState extends State<EditView> {
     );
   }
 }
+

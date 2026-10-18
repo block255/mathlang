@@ -11,6 +11,7 @@ import 'package:flutter/material.dart';
 
 import 'caret_ownership.dart';
 import 'caret_sites.dart';
+import 'empty_math_mark.dart';
 import 'math_caret.dart';
 import 'projection.dart';
 import 'slot_marks.dart';
@@ -217,6 +218,39 @@ class _InlineMathTextState extends State<InlineMathText> {
     final absStart = widget.baseOffset + s.start;
     final bool caretHere = caretOwnedBy(pl, i, isMath: true);
 
+    final key = _keys.putIfAbsent(absStart, () => GlobalKey());
+    final bool baseline = widget.align == MathAlignMode.baseline;
+    final onTap = widget.onMathTap;
+
+    // ★★ §6.1.1（2026-10-18）：**空公式必须看得见**。
+    //   `$ $`（在公式里把内容删光的产物，§4.6）渲染出来是**零尺寸** ⇒ 既看不见也点不到，
+    //   只能靠"再按一次退格"清掉（用户实测"按了没反应"）。
+    //   ⇒ 空壳不走 Math 渲染，改画一个 1px 淡虚线小框（`EmptyMathMark`）；
+    //   点它就落进公式里（`doc_view._onMathTap` 对空 tex 直接给 contentStart）。
+    //   ★ 它占"一个正文汉字宽"（与空槽同一口径），高度取**当地那一行** —— 与光标同一标准。
+    if (s.tex.trim().isEmpty) {
+      final Widget mark = EmptyMathMark(
+        width: widget.mathFontSize * 1.2,
+        height: textCaretHeight(_textFontSize),
+        showCaret: caretHere,
+      );
+      return WidgetSpan(
+        alignment: baseline
+            ? PlaceholderAlignment.baseline
+            : PlaceholderAlignment.middle,
+        baseline: baseline ? TextBaseline.alphabetic : null,
+        child: onTap == null
+            ? mark
+            : GestureDetector(
+                onTapDown: (d) => onTap(s, s.tex, d.globalPosition, key),
+                child: MouseRegion(
+                  cursor: SystemMouseCursors.text,
+                  child: mark,
+                ),
+              ),
+      );
+    }
+
     // ★★ 注入链的**唯一入口**（`slot_marks.renderMathTex`）：先注空槽占位，再按需注光标。
     //   ★ `caretHere == false` 时**也要注占位** —— 空槽必须一直看得见。
     //     2026-10-15 用户实测：粘贴 `$\frac{}{}$` 后光标停在**闭合 `$` 之后那一格**，
@@ -226,9 +260,6 @@ class _InlineMathTextState extends State<InlineMathText> {
     final String tex =
         renderMathTex(s.tex, caretRel: caretHere ? pl!.localRel : -1);
 
-    final key = _keys.putIfAbsent(absStart, () => GlobalKey());
-    final bool baseline = widget.align == MathAlignMode.baseline;
-    final onTap = widget.onMathTap;
     // ★★ ⑤ 选区：`source` 里公式段是 `$tex$` ⇒ 内容从 `s.start + 1` 开始
     final ({int from, int to})? sel = _texSelection(s, s.tex.length);
     // ★★ 层级（§11.27）：光标落在**两端多认领的那两格**上时，这一格**视觉上属于文本层**

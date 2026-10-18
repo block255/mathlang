@@ -14,6 +14,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mathlang/core/block.dart';
 import 'package:mathlang/core/doc_buffer.dart';
 import 'package:mathlang/editor/edit_view.dart';
+import 'package:mathlang/render/empty_math_mark.dart';
 import 'package:mathlang/render/inline_math_text.dart';
 import 'package:mathlang/render/leaf_boxes.dart';
 
@@ -829,10 +830,12 @@ $$
       await tester.pump();
 
       expect(find.textContaining('❌'), findsNothing);
-      final Finder ms = find.byType(Math);
-      expect(ms, findsWidgets,
-          reason: '空公式也要渲染出来（占位字形）—— 否则既看不见也点不到');
-      expect(tester.getSize(ms.first).width, greaterThan(5),
+      // ★★ 2026-10-18（§6.1.1 落地）：空壳**不再交给 Math 渲染**（那会得到零尺寸的幽灵），
+      //   改画一个淡虚线占位框 `EmptyMathMark`。
+      final Finder mark = find.byType(EmptyMathMark);
+      expect(mark, findsWidgets,
+          reason: '空公式也要画出来 —— 否则既看不见也点不到');
+      expect(tester.getSize(mark.first).width, greaterThan(5),
           reason: '★ 空公式若渲染成零尺寸，用户会看到"按了没反应"');
     });
   });

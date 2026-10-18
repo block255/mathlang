@@ -64,7 +64,7 @@ const Map<String, String> kShortcutSymbolIds = <String, String>{
 const Set<String> kShellActions = <String>{
   'newdoc', 'open', 'save', 'saveAs', 'settings', 'panelToggle', 'quickSlot',
   'h1', 'h2', 'h3', 'ol', 'ul', 'quote', 'codeblock', 'pagebreak', //
-  'mathInline', 'mathDisplay', 'frac', 'sqrt', 'sup', 'sub', 'integral',
+  'frac', 'sqrt', 'sup', 'sub', 'integral',
   'summ', 'limit', 'aligned', 'cases', 'pmatrix', 'binom',
 };
 
@@ -742,12 +742,6 @@ class EditorPageState extends State<EditorPage> {
         return _blockOp(BlockOp.codeblock);
       case 'pagebreak':
         return _blockOp(BlockOp.pagebreak);
-      case 'mathInline':
-        _editKey.currentState?.insertMathShell(display: false);
-        return true;
-      case 'mathDisplay':
-        _editKey.currentState?.insertMathShell(display: true);
-        return true;
       case 'sup':
         _editKey.currentState?.insertScript(sup: true);
         return true;
@@ -814,9 +808,19 @@ class EditorPageState extends State<EditorPage> {
                 'rightW=${_rightWidth().toStringAsFixed(1)}');
           }
           final double rightW = _rightWidth();
+          // ★ 页面横向可用宽（设置页横条那行"可移动 N px"读数用**同一份**数字）
+          final double pageAvail = mode == PanelMode.sideBySide
+              ? (cons.maxWidth - rightW)
+              : cons.maxWidth;
           final Widget page = _pageColumn(
-            // 覆盖式：页面居中（抽屉只遮不改）
-            dock: mode == PanelMode.sideBySide ? _s.pageXDock : 0.5,
+            // ★★ 2026-10-18 **修复**（用户报"Windows 里拖横条页面不动"）：
+            //   原来是 `mode == PanelMode.sideBySide ? _s.pageXDock : 0.5`
+            //   —— **覆盖式下把用户设置直接丢掉了**。
+            //   而形态判据是"窗口宽 ≥ 1280 才并排"：1920×1080 @150% 的 Windows 窗口只有
+            //   **1265 逻辑像素** ⇒ **永远走覆盖式** ⇒ 横条永远无效
+            //   （Web 视口 1434 是并排，所以那边一切正常 —— 这就是"Web 能拖、Windows 不能"的全部原因）。
+            //   ⇒ 两种模式**都吃** `pageXDock`；覆盖式的可用空间 = **整窗宽**（抽屉浮在上面、不挤压）。
+            dock: _s.pageXDock,
           );
           final Widget body = mode == PanelMode.sideBySide
               ? Row(
@@ -860,6 +864,8 @@ class EditorPageState extends State<EditorPage> {
                     settings: _s,
                     doc: _doc,
                     library: _lib,
+                    // ★ 页面横向可用宽 ⇒ 设置页横条旁边那行"可移动 N px"（诚实读数）
+                    pageSpace: pageAvail,
                     onSettings: (AppSettings v) => setState(() => _s = v),
                     onDoc: (DocSettings v) => setState(() => _doc = v),
                     shortcuts: _shortcuts,

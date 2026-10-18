@@ -63,6 +63,7 @@ class SettingsOverlay extends StatefulWidget {
     this.triggers,
     this.onShortcuts,
     this.onTriggers,
+    this.pageSpace,
   });
 
   final AppSettings settings;
@@ -71,6 +72,13 @@ class SettingsOverlay extends StatefulWidget {
   final ValueChanged<DocSettings> onDoc;
   final VoidCallback onClose;
   final SymbolLibrary? library;
+
+  /// ★★ 页面横向**可用宽度**（由外壳按真实布局算给设置页）。
+  ///
+  /// 用途：横条旁边那行"⇒ 可移动 N px"—— 用户 2026-10-18 报"拖了页面不动"，
+  /// 根因是覆盖式下 dock 被写死成 0.5；修完之后还要让"**能动多少**"可见，
+  /// 否则窗口真的没余量时，用户还是只能说"它不动"。
+  final double? pageSpace;
 
   /// ★ 快捷键偏好（`lang/shortcut_registry.dart`）与词表（`lang/word_triggers.dart`）
   final ShortcutSettings? shortcuts;
@@ -637,6 +645,21 @@ class SettingsOverlayState extends State<SettingsOverlay> {
               children: <Widget>[
                 Text('左缘 ${(s.pageXDock * 100).round()}%',
                     style: const TextStyle(fontSize: 11, color: Color(0xFF718096))),
+                const SizedBox(width: 10),
+                // ★★ 诚实读数（2026-10-18）：**能动多少像素**。
+                //   窗口真的没余量时这里会写"没有余量" —— 免得用户以为功能坏了。
+                Flexible(
+                  child: Text(
+                    _dockSpanLabel(),
+                    key: const Key('dock-span'),
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: _dockSpan() <= 0
+                          ? const Color(0xFFDD6B20)
+                          : const Color(0xFF38A169),
+                    ),
+                  ),
+                ),
                 const Spacer(),
                 Segmented<double>(
                   keyPrefix: 'dock',
@@ -696,6 +719,24 @@ class SettingsOverlayState extends State<SettingsOverlay> {
       if ((p - s.pageXDock).abs() < (best - s.pageXDock).abs()) best = p;
     }
     return best;
+  }
+
+  /// 页面**横向能移动多少像素**（`pageSpace` 没给时返回 -1 = 未知）
+  double _dockSpan() {
+    final double? avail = widget.pageSpace;
+    if (avail == null) return -1;
+    return LayoutMetrics.pageSpan(
+      availableWidth: avail,
+      pageWidth: PageGeometry.from(widget.doc).pageWidth,
+    );
+  }
+
+  /// 横条旁边的诚实读数（0 余量时必须说清楚，否则用户以为功能坏了）
+  String _dockSpanLabel() {
+    final double span = _dockSpan();
+    if (span < 0) return '';
+    if (span <= 0.5) return '⇒ 当前窗口没有余量（贴左）';
+    return '⇒ 可移动 ${span.toStringAsFixed(0)} px';
   }
 
   // ---------------- ③面板 ----------------

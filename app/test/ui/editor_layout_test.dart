@@ -163,6 +163,43 @@ void main() {
       expect(tester.getTopLeft(find.byType(EditView).first).dx,
           greaterThan(x0), reason: '贴右必须真的往右挪');
     });
+
+    // ★★ 2026-10-18 用户报："Windows 软件版里拖那根横条，编辑页面不动"
+    //   根因：`dock: mode == sideBySide ? _s.pageXDock : 0.5` —— **覆盖式把设置丢了**，
+    //   而 1920×1080 @150% 的 Windows 窗口只有 1265 逻辑像素（< 1280 阈值）⇒ 永远覆盖式。
+    testWidgets('★★ 覆盖式（窗口 < 1280）下横条也必须生效',
+        (WidgetTester tester) async {
+      final EditorPageState st =
+          await _pump(tester, window: const Size(1200, 900));
+      expect(st.settings.effectivePanelMode(1200), PanelMode.overlay,
+          reason: '这组数字必须走覆盖式，否则守不到那个 bug');
+      final double w0 = _editWidth(tester);
+      final double x0 = tester.getTopLeft(find.byType(EditView).first).dx;
+
+      st.settings = st.settings.copyWith(pageXDock: 1);
+      await tester.pumpAndSettle();
+      final double x1 = tester.getTopLeft(find.byType(EditView).first).dx;
+
+      expect(x1, greaterThan(x0 + 100),
+          reason: '覆盖式下"贴右"必须真的移动（改前：一动不动，被写死成 0.5）');
+      expect(_editWidth(tester), closeTo(w0, 0.5), reason: '仍然只平移、不改宽');
+    });
+
+    testWidgets('★ 窗口真的没余量时 ⇒ 贴左（不硬挤、不溢出）',
+        (WidgetTester tester) async {
+      // 830 < 页宽 793.7 + 2×24 = 841.7 ⇒ span < 0
+      final EditorPageState st =
+          await _pump(tester, window: const Size(830, 900));
+      st.settings = st.settings.copyWith(pageXDock: 1);
+      await tester.pumpAndSettle();
+      expect(
+          LayoutMetrics.pageSpan(
+              availableWidth: 830, pageWidth: _pageWidth),
+          lessThan(0),
+          reason: '这组数字必须真的没余量');
+      expect(tester.getTopLeft(find.byType(EditView).first).dx,
+          closeTo(LayoutMetrics.pageOuterMargin, 1.0));
+    });
   });
 
   group('⑥ 快捷栏 / 面板两个开关的四种组合：正文宽恒不变', () {

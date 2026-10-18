@@ -36,6 +36,7 @@ import '../layout/page_metrics.dart';
 import '../layout/paginator.dart';
 import '../render/caret_ownership.dart';
 import '../render/caret_sites.dart';
+import '../render/empty_math_mark.dart';
 import '../render/hit_map.dart';
 import '../render/inline_math_text.dart';
 import '../render/injection_map.dart';
@@ -730,6 +731,13 @@ class DocViewState extends State<DocView> {
       GlobalKey key) {
     final void Function(int)? cb = widget.onTapOffset;
     if (cb == null) return;
+    // ★★ §6.1.1（2026-10-18）：**空公式没有字形盒** ⇒ 走不了命中表。
+    //   但它是**看得见的对象**（`EmptyMathMark` 那个虚线小框），点它必须"落进公式里"
+    //   —— 空公式唯一的内容位点就是它的 contentStart。
+    if (seg.tex.trim().isEmpty) {
+      cb(u.renderBase + seg.start);
+      return;
+    }
     final RenderObject? ro = key.currentContext?.findRenderObject();
     if (ro is! RenderBox || !ro.hasSize) return;
     final int? texRel = _mathTapTexOffset(
@@ -1112,6 +1120,17 @@ class DocViewState extends State<DocView> {
         //   默认 = 正文 × 1.25）。块内的光标不需要另设判据 —— 它取自当地 ¶ 盒（自动跟随）；
         //   块**之前 / 之后**那两格仍按**段落文本层**标准（`textFontSize: body`，§11.27）。
         final double display = _s.effectiveDisplayFontSize;
+        // ★★ §6.1.1（2026-10-18）：**空的公式块也要看得见**（同上，行内那份的理由）。
+        //   行间块的内容被删光时，`renderMathTex('')` 是零尺寸 ⇒ 同理是个幽灵。
+        if (text.trim().isEmpty) {
+          return Center(
+            child: EmptyMathMark(
+              width: display * 1.2,
+              height: display * 1.1,
+              showCaret: caretAbs != null,
+            ),
+          );
+        }
         return Center(
           child: MathWithCaret(
             tex: tex,

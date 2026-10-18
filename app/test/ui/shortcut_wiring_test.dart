@@ -144,14 +144,21 @@ void main() {
       expect(buf.buf, r'甲乙丙$\sum_{}^{}$');
     });
 
-    testWidgets('Alt+= ⇒ 空行内公式壳，光标在里面',
+    testWidgets('★ `Alt+=` 已撤掉 ⇒ 什么都不发生（不造空公式壳）',
         (WidgetTester tester) async {
+      // 平权口径（2026-10-18 用户拍板）：数学不是模式，对象由**内容**产生
+      // ⇒ "先造空壳再往里写"这条路不存在了。
       final (_, DocBuffer buf) = await _pump(tester, atEnd: true);
       await _combo(tester, <LogicalKeyboardKey>[LogicalKeyboardKey.altLeft],
           LogicalKeyboardKey.equal);
-      expect(buf.buf, r'甲乙丙$ $',
-          reason: '空壳里放一个空格（两个紧挨的 \$ 会被当成围栏）');
-      expect(buf.caret, 4, reason: '光标要落在两个 \$ 之间（3 + 1）');
+      expect(buf.buf, '甲乙丙', reason: '按下去必须什么都不发生');
+    });
+
+    testWidgets('★ `Ctrl+Alt+E`（原行间公式）也已撤掉',
+        (WidgetTester tester) async {
+      final (_, DocBuffer buf) = await _pump(tester, atEnd: true);
+      await _combo(tester, kCtrlAlt, LogicalKeyboardKey.keyE);
+      expect(buf.buf, '甲乙丙');
     });
 
     testWidgets('Ctrl+ArrowUp ⇒ 上标模板（正文里自动建壳）',
@@ -198,9 +205,9 @@ void main() {
       expect(buf.buf, '甲乙丙');
     });
 
-    test('登记表口径：45 条里 44 条已接入（只剩源码视图等 S5）', () {
-      expect(kShortcutActions.length, 45);
-      expect(ShortcutSettings.wiredCount, 44);
+    test('登记表口径：43 条里 42 条已接入（只剩源码视图等 S5）', () {
+      expect(kShortcutActions.length, 43);
+      expect(ShortcutSettings.wiredCount, 42);
       final List<String> planned = <String>[
         for (final ShortcutAction a in kShortcutActions)
           if (!a.wired) a.id,

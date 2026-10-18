@@ -244,8 +244,21 @@ class LayoutMetrics {
     required double pageWidth,
     required double dock,
   }) {
-    final double span = availableWidth - 2 * pageOuterMargin - pageWidth;
+    final double span = pageSpan(
+      availableWidth: availableWidth,
+      pageWidth: pageWidth,
+    );
     if (span <= 0) return pageOuterMargin; // 放不下 ⇒ 贴左（配合 fit-width 缩放）
     return pageOuterMargin + span * dock.clamp(0.0, 1.0);
   }
+
+  /// ★★ 页面横向**能移动多少像素**（0 = 当前窗口没有余量，横条拖了也是白拖）
+  ///
+  /// 用途：设置页那根横条下面给一行**诚实读数**（"⇒ 可移动 423 px"）。
+  /// 2026-10-18 用户报"Windows 上拖横条页面不动"时，缺的正是这个"后果可见"。
+  static double pageSpan({
+    required double availableWidth,
+    required double pageWidth,
+  }) =>
+      availableWidth - 2 * pageOuterMargin - pageWidth;
 }
