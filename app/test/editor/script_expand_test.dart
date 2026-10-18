@@ -65,6 +65,6 @@ void main() {
     const String doc = r'$\alpha$';
     final DocBuffer buf = await _mount(tester, doc, doc.length - 1);
     await _type(tester, '^');
-    expect(buf.buf, r'$\alpha^{}$', reason: '不能切成 `\alp` + `ha`');
+    expect(buf.buf, r'$\alpha^{}$', reason: '不能切成 al/pha 两半');
   });
 }

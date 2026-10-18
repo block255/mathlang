@@ -42,6 +42,8 @@ import '../spike/s3_edit/s3_edit_page.dart' show kEditSample;
 import 'app_settings.dart';
 import 'diagnostics_panel.dart';
 import 'quick_bar.dart';
+import 'env_size_dialog.dart';
+import '../lang/env_resize.dart';
 import 'settings_page.dart';
 import 'symbol_panel.dart';
 
@@ -375,7 +377,40 @@ class EditorPageState extends State<EditorPage> {
 
   /// 面板插入（也供测试直接调）
   void insertSymbol(SymbolItem item) {
+    // ★★ 2026-10-18（PC-5）：矩阵 / 行列式**先定义尺寸再插入**（用户拍的流程）。
+    //   记住上次选择；取消 ⇒ 什么都不插。
+    if (item.id == 'mat2' || item.id == 'det2') {
+      _insertEnvWithSizePicker(item);
+      return;
+    }
     _editKey.currentState?.insertSymbolTex(item.tex,
+        template: item.isTemplate, display: item.isDisplay);
+  }
+
+  /// 上次在尺寸面板里的选择（矩阵/行列式各自记一份）
+  EnvSizeChoice? _lastEnvMatrix;
+  EnvSizeChoice? _lastEnvDet;
+
+  Future<void> _insertEnvWithSizePicker(SymbolItem item) async {
+    final bool det = item.id == 'det2';
+    final EnvSizeChoice? last = det ? _lastEnvDet : _lastEnvMatrix;
+    final EnvSizeChoice? choice = await showEnvSizeDialog(
+      context,
+      style: det ? EnvStyle.det : EnvStyle.bracket,
+      rows: last?.rows ?? 2,
+      cols: last?.cols ?? 2,
+      determinant: det,
+      title: det ? '行列式' : '矩阵',
+    );
+    if (choice == null || !mounted) return;
+    if (det) {
+      _lastEnvDet = choice;
+    } else {
+      _lastEnvMatrix = choice;
+    }
+    final String tex = resizeEnvironment(det ? item.tex : item.tex,
+        rows: choice.rows, cols: choice.cols, style: choice.style);
+    _editKey.currentState?.insertSymbolTex(tex,
         template: item.isTemplate, display: item.isDisplay);
   }
 
