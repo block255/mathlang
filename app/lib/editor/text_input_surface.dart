@@ -52,9 +52,17 @@ const TextEditingValue _kClearedValue = TextEditingValue(
 ///
 /// 生命周期由 [focusNode] 驱动：拿到焦点 → 接上平台文本通道；失去焦点 → 断开。
 class TextInputSurfaceController extends ChangeNotifier with TextInputClient {
-  TextInputSurfaceController({required this.focusNode});
+  TextInputSurfaceController({required this.focusNode, this.viewId});
 
   final FocusNode focusNode;
+
+  /// 平台视图 id。**引擎要求它非 null**：`TextInput.setClient` 带着
+  /// `TextInputConfiguration.toJson()` 过去，`viewId: null` 会被直接拒绝
+  /// （`PlatformException(Bad Arguments, Could not set client, view ID is null.)`），
+  /// 于是文本通道接不上 ⇒ IME 哑掉、每次点击都刷 "no client is set"。
+  /// `EditableText` 传的是 `View.of(context).viewId`；本 surface 不挂在 widget 树上，
+  /// 所以默认取 `platformDispatcher.implicitView`（单窗口的桌面/移动端就是它）。
+  final int? viewId;
 
   /// 组合结束（或普通输入）后，**需要插入缓冲区**的那一段文本。
   ///
@@ -130,9 +138,14 @@ class TextInputSurfaceController extends ChangeNotifier with TextInputClient {
   /// 由**用户手势**里调用，确保平台文本通道已接上（浏览器才肯把 IME 接进来）。
   void ensureAttached() {
     if (_conn != null) return;
+    // ★ viewId 必须给：null 会被引擎拒（见字段声明处的说明）
+    final int viewId = this.viewId ??
+        WidgetsBinding.instance.platformDispatcher.implicitView?.viewId ??
+        0;
     _conn = TextInput.attach(
       this,
-      const TextInputConfiguration(
+      TextInputConfiguration(
+        viewId: viewId,
         inputType: TextInputType.multiline,
         inputAction: TextInputAction.newline,
         autocorrect: false,
