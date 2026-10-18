@@ -199,4 +199,28 @@ void main() {
       expect(got.single.id, 'frac');
     });
   });
+  group('⑦ 长按 = 真预览（b1 只有小 tooltip）', () {
+    testWidgets('长按「分段」⇒ 浮层里有大图 + LaTeX + 插入按钮',
+        (WidgetTester tester) async {
+      await _pump(tester);
+      await tester.longPress(find.byKey(const Key('symbol-frac')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('symbol-preview-frac')), findsOneWidget);
+      expect(find.text(r'\frac{}{}'), findsOneWidget,
+          reason: '浮层里要能看见真实源码（可选中复制）');
+      expect(find.byKey(const Key('symbol-preview-insert-frac')), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('symbol-preview-insert-frac')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('symbol-preview-frac')), findsNothing,
+          reason: '插入后浮层要关掉');
+    });
+
+    testWidgets('★ `preview` 字段：分段/对齐推导画的是**代表式**（不是一对空花括号）',
+        (WidgetTester tester) async {
+      final SymbolLibrary lib = testSymbolLibrary();
+      expect(lib.byId('frac')!.previewTex, r'\frac{}{}',
+          reason: '没有 preview 的项回落到 tex 本身');
+    });
+  });
 }

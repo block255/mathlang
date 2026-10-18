@@ -14,12 +14,14 @@
 
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../core/block.dart';
 import '../core/doc_buffer.dart';
 import '../core/doc_settings.dart';
+import '../lang/math_spans.dart';
 import '../lang/smart_wrap.dart';
 import '../lang/symbol_insert.dart';
 import '../render/caret_sites.dart' show kCaretColorValue;
@@ -41,6 +43,7 @@ class EditViewStats {
     required this.composing,
     required this.composingText,
     this.autoWrapped = 0,
+    this.autoWrappedSpans = const <MathSpan>[],
     this.pages = 0,
   });
 
@@ -58,6 +61,9 @@ class EditViewStats {
   /// 走状态栏 = **不进正文流**（不触发重排/分页）；同时它也是 S4-a A4「诊断清单」的数据来源。
   final int autoWrapped;
 
+  /// ★ S4-b②：**这次自动包裹补出来的那几处数学段**（诊断清单点一条就跳过去）。
+  /// `autoWrapped` 只是它的条数 —— 清单要的是**位置**，不是数量。
+  final List<MathSpan> autoWrappedSpans;
   /// ★ 排完版后**实际页数**（由 `DocView` 的 `DocViewStats.pages` 回传；状态栏「页号」用它）。
   final int pages;
 
@@ -70,11 +76,13 @@ class EditViewStats {
       other.composing == composing &&
       other.composingText == composingText &&
       other.autoWrapped == autoWrapped &&
-      other.pages == pages;
+      other.pages == pages &&
+      listEquals(other.autoWrappedSpans, autoWrappedSpans);
 
   @override
   int get hashCode => Object.hash(
-      length, caret, edits, composing, composingText, autoWrapped, pages);
+      length, caret, edits, composing, composingText, autoWrapped, pages,
+      autoWrappedSpans.isEmpty ? 0 : Object.hashAll(autoWrappedSpans));
 
   @override
   String toString() => '$length 字符 · 光标 $caret · $edits 次编辑'
@@ -173,6 +181,10 @@ class EditViewState extends State<EditView> {
   /// ★ S4-a A2：最近一次**粘贴**里智能包裹了几处（0 = 没包裹 / 已被后续编辑清掉）
   int _autoWrapped = 0;
 
+
+  /// ★ S4-b②：最近一次自动包裹补出来的数学段（诊断清单点一条就跳过去）
+  List<MathSpan> _autoWrappedSpans = const <MathSpan>[];
+
   /// ★ S4-b②：`DocView` 回传的**实际页数**（状态栏「页号」读它）
   int _pages = 0;
   EditViewStats? _lastStats;
@@ -259,12 +271,18 @@ class EditViewState extends State<EditView> {
       final InsertPadding pad =
           padForRange(_buf.buf, _buf.selectionStart, _buf.selectionEnd, text);
       final String payload = pad.wrap(text);
+      final int from = _buf.selectionStart;
       _mutate(() =>
           _buf.replace(_buf.selectionStart, _buf.selectionEnd, payload));
-      _stampWrapped(autoWrapped);
+      _stampWrapped(autoWrapped,
+          spans: _spansAround(from, from + payload.length));
       return;
     }
     final InsertPlan plan = planInsert(_buf.buf, _buf.caret, text);
+    // ★ 诊断清单要"在哪"：裸参数被补花括号时落点会右移 2 格
+    final int wrapShift = plan.wrapBareArg == null ? 0 : 2;
+    final int from = plan.offset + wrapShift;
+    final int to = from + plan.padText(text).length;
     _mutate(() {
       final ({int start, int end})? wrap = plan.wrapBareArg;
       if (wrap != null) {
@@ -275,14 +293,27 @@ class EditViewState extends State<EditView> {
       if (_buf.caret != plan.offset) _buf.setCaret(plan.offset);
       _buf.insertText(plan.padText(text));
     });
-    _stampWrapped(autoWrapped);
+    _stampWrapped(autoWrapped, spans: _spansAround(from, to));
   }
 
-  /// 记下"这次粘贴自动包裹了几处"并补一次上报（`_mutate` 会把计数清零 ⇒ 必须**之后**再盖上去）。
-  void _stampWrapped(int n) {
+  /// 记下"这次自动包裹了几处（以及**在哪**）"并补一次上报。
+  ///
+  /// 为什么必须**之后**盖：`_mutate` 里会把上一次的计数清掉（它只描述最近一次插入）。
+  /// ★ S4-b②：`spans` 是诊断清单的数据源 —— 「补了 3 处」不如「补的这 3 处点一下能跳过去」。
+  void _stampWrapped(int n, {List<MathSpan> spans = const <MathSpan>[]}) {
     if (n <= 0) return;
     _autoWrapped = n;
+    _autoWrappedSpans = spans;
     if (mounted) _emitStats();
+  }
+
+  /// 文档里与 `[from, to]` 有交集的数学段（给诊断清单用）
+  List<MathSpan> _spansAround(int from, int to) {
+    final List<MathSpan> all = scanMathSpans(_buf.buf);
+    return <MathSpan>[
+      for (final MathSpan s in all)
+        if (s.end >= from - 1 && s.start <= to + 1) s,
+    ];
   }
 
   /// ★★ S4-b：**面板插入**（符号 / 结构模板）—— 一次区间替换 = **一步撤销**。
@@ -302,9 +333,32 @@ class EditViewState extends State<EditView> {
       _buf.replace(0, _buf.length, r.doc);
       _buf.setCaret(r.caret);
     });
-    _stampWrapped(r.wrapped ? 1 : 0);
+    // ★ 建壳时的区间：光标所在的那个数学段（`mathRegionAt` 与插入侧同一条判据）
+    final List<MathSpan> spans = <MathSpan>[];
+    if (r.wrapped) {
+      final MathRegion? mr = mathRegionAt(r.doc, r.caret);
+      if (mr != null) {
+        spans.add(MathSpan(
+          start: mr.openStart,
+          end: mr.closeEnd,
+          tex: mr.tex,
+          display: mr.isDisplay,
+        ));
+      }
+    }
+    _stampWrapped(r.wrapped ? 1 : 0, spans: spans);
   }
 
+  /// ★★ S4-b②：诊断清单点一条 ⇒ **跳过去并高亮**那一段（不写缓冲区 ⇒ 不算一次编辑）。
+  void jumpTo(int start, int end) {
+    final int s = start.clamp(0, _buf.length);
+    final int e = end.clamp(s, _buf.length);
+    // ★ 顺序不能反：`setCaret` 会把选区**收起来**（anchor = caret）⇒ 必须"先落光标再拉选区"
+    _buf.setCaret(e);
+    _buf.setSelection(s, e);
+    focusInput();
+    if (mounted) setState(() {});
+  }
   /// 插入 [insert] 之前需不需要先补一个**命令分隔符**（空格）？
   ///
   /// 条件：插入的是**字母**、光标前是字母、向前扫到 `\`（即光标停在控制词末尾）、
@@ -337,8 +391,9 @@ class EditViewState extends State<EditView> {
     op();
     if (identical(before, _buf.buf)) return;
     _edits++;
-    // ★ 任何一次**普通**编辑都把"上次粘贴的包裹计数"清掉（它只描述**最近一次粘贴**）
+    // ★ 任何一次**普通**编辑都把"上次自动包裹"的记账清掉（它只描述**最近一次插入**）
     _autoWrapped = 0;
+    _autoWrappedSpans = const <MathSpan>[];
     if (mounted) _emitStats();
   }
 
@@ -604,6 +659,7 @@ class EditViewState extends State<EditView> {
       composing: _input.isComposing,
       composingText: _input.composingText,
       autoWrapped: _autoWrapped,
+      autoWrappedSpans: _autoWrappedSpans,
       pages: _pages,
     );
     if (_lastStats == s) return;

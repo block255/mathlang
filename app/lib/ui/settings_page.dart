@@ -16,13 +16,16 @@
 import 'package:flutter/material.dart';
 
 import '../core/doc_settings.dart';
+import '../lang/shortcut_registry.dart';
 import '../lang/symbol_library.dart';
+import '../lang/word_triggers.dart';
 import '../layout/page_metrics.dart';
 import 'app_settings.dart';
 import 'controls/num_field.dart';
 import 'controls/segmented.dart';
 import 'controls/setting_row.dart';
 import 'controls/stepper_row.dart';
+import 'shortcut_page.dart';
 
 /// 设置页里的一级分组（顺序 = 用户 2026-10-17 定的九组）
 class SettingGroup {
@@ -40,8 +43,8 @@ const List<SettingGroup> kSettingGroups = <SettingGroup>[
   SettingGroup('面板', Icons.grid_view),
   SettingGroup('快捷栏', Icons.star_outline),
   SettingGroup('状态栏', Icons.view_headline),
-  SettingGroup('快捷键', Icons.keyboard, live: false),
-  SettingGroup('智能输入', Icons.auto_fix_high, live: false),
+  SettingGroup('快捷键', Icons.keyboard),
+  SettingGroup('智能输入', Icons.auto_fix_high),
   SettingGroup('高级', Icons.build_outlined, live: false),
   SettingGroup('关于', Icons.info_outline),
 ];
@@ -56,6 +59,10 @@ class SettingsOverlay extends StatefulWidget {
     required this.onClose,
     this.library,
     this.initialGroup = 0,
+    this.shortcuts,
+    this.triggers,
+    this.onShortcuts,
+    this.onTriggers,
   });
 
   final AppSettings settings;
@@ -64,6 +71,12 @@ class SettingsOverlay extends StatefulWidget {
   final ValueChanged<DocSettings> onDoc;
   final VoidCallback onClose;
   final SymbolLibrary? library;
+
+  /// ★ 快捷键偏好（`lang/shortcut_registry.dart`）与词表（`lang/word_triggers.dart`）
+  final ShortcutSettings? shortcuts;
+  final TriggerSettings? triggers;
+  final ValueChanged<ShortcutSettings>? onShortcuts;
+  final ValueChanged<TriggerSettings>? onTriggers;
 
   /// 从"文件 ▾ → 设置"或"关于"进来时直接落到某一组
   final int initialGroup;
@@ -82,6 +95,16 @@ class SettingsOverlayState extends State<SettingsOverlay> {
   bool get _marginsEqual =>
       widget.doc.marginTopMm == widget.doc.marginBottomMm &&
       widget.doc.marginLeftMm == widget.doc.marginRightMm;
+
+  @override
+  void didUpdateWidget(SettingsOverlay oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // ★ 外壳用同一个 `initialGroup` 重新打开另一组时，State 是复用的
+    //   （`late` 初始化只跑一次）⇒ 必须在这里跟一次，否则"从文件菜单进设置"会停在旧分组。
+    if (widget.initialGroup != oldWidget.initialGroup) {
+      _group = widget.initialGroup.clamp(0, kSettingGroups.length - 1);
+    }
+  }
 
   AppSettings get s => widget.settings;
   DocSettings get d => widget.doc;
@@ -314,18 +337,38 @@ class SettingsOverlayState extends State<SettingsOverlay> {
         2 => _panelGroup(),
         3 => _quickBarGroup(),
         4 => _statusGroup(),
-        5 => <Widget>[
-            _pending('快捷键',
-                '默认 37 条 + 每条 启用/禁用 · 自定义组合键 · 副绑定 · 冲突检测 · 词触发表。\n这一整段在 b2-② 落地。')
-          ],
-        6 => <Widget>[
-            _pending('智能输入', '自动补分隔符 · `/`→分式 · 快捷输入表（词 + 终止符）。b2-② 落地。')
-          ],
+        5 => <Widget>[_shortcutGroup()],
+        6 => <Widget>[_triggerGroup()],
         7 => <Widget>[
-            _pending('高级', '源码视图（S5）· 诊断清单（b2-②）· 清空本地缓存（S4-e）。')
+            _pending('高级',
+                '源码视图（S5）· 清空本地缓存（S4-e）。\n★ 诊断清单已经做好了：在**状态栏**点「自动包裹 N 处 · 查看清单 ›」。')
           ],
         _ => _aboutGroup(),
       },
+    );
+  }
+
+  /// ⑤ 快捷键（★ **会说实话的表**：39 条里真正接上的 17 条带徽标）
+  Widget _shortcutGroup() {
+    final ShortcutSettings? sc = widget.shortcuts;
+    if (sc == null) {
+      return _pending('快捷键', '这一份设置没有接入快捷键状态（测试注入时可能出现）。');
+    }
+    return ShortcutSettingsView(
+      settings: sc,
+      onChanged: (ShortcutSettings v) => widget.onShortcuts?.call(v),
+    );
+  }
+
+  /// ⑥ 智能输入：词触发表（词是用户自己编的 ⇒ 可加行可删行）
+  Widget _triggerGroup() {
+    final TriggerSettings? t = widget.triggers;
+    if (t == null) {
+      return _pending('智能输入', '这一份设置没有接入词表状态（测试注入时可能出现）。');
+    }
+    return WordTriggerView(
+      settings: t,
+      onChanged: (TriggerSettings v) => widget.onTriggers?.call(v),
     );
   }
 

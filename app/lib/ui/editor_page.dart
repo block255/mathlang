@@ -22,10 +22,14 @@ import 'package:flutter/services.dart';
 import '../core/doc_buffer.dart';
 import '../core/doc_settings.dart';
 import '../editor/edit_view.dart';
+import '../lang/math_spans.dart';
+import '../lang/shortcut_registry.dart';
 import '../lang/symbol_library.dart';
+import '../lang/word_triggers.dart';
 import '../layout/page_metrics.dart';
 import '../spike/s3_edit/s3_edit_page.dart' show kEditSample;
 import 'app_settings.dart';
+import 'diagnostics_panel.dart';
 import 'quick_bar.dart';
 import 'settings_page.dart';
 import 'symbol_panel.dart';
@@ -74,6 +78,14 @@ class EditorPageState extends State<EditorPage> {
 
   /// "保存点"：编辑次数达到它就算已保存（**S4-d 接入真文件后才有意义**）
   final int _savedEdits = 0;
+
+  /// ★ 快捷键偏好与词表（内存态；持久化随 S4-e）
+  ShortcutSettings _shortcuts = ShortcutSettings.defaults();
+  TriggerSettings _triggers = TriggerSettings.defaults();
+
+  /// 测试/诊断用：快捷键偏好与词表
+  ShortcutSettings get shortcuts => _shortcuts;
+  TriggerSettings get triggers => _triggers;
 
   EditViewStats _stats = const EditViewStats(
     length: 0,
@@ -193,6 +205,16 @@ class EditorPageState extends State<EditorPage> {
     } else {
       insertFavorite(i);
     }
+  }
+
+  /// ★ 诊断清单：点状态栏「自动包裹 N 处」⇒ 列出那几处，点一条跳过去并高亮
+  void openDiagnostics() {
+    final List<MathSpan> spans = _stats.autoWrappedSpans;
+    showDiagnostics(
+      context,
+      spans: spans,
+      onJump: (MathSpan s) => _editKey.currentState?.jumpTo(s.start, s.end),
+    );
   }
 
   void _onStats(EditViewStats s) {
@@ -343,6 +365,12 @@ class EditorPageState extends State<EditorPage> {
                     library: _lib,
                     onSettings: (AppSettings v) => setState(() => _s = v),
                     onDoc: (DocSettings v) => setState(() => _doc = v),
+                    shortcuts: _shortcuts,
+                    triggers: _triggers,
+                    onShortcuts: (ShortcutSettings v) =>
+                        setState(() => _shortcuts = v),
+                    onTriggers: (TriggerSettings v) =>
+                        setState(() => _triggers = v),
                     onClose: closeSettings,
                   ),
                 ),
@@ -698,9 +726,7 @@ class EditorPageState extends State<EditorPage> {
       if (_s.statusItems.contains(StatusItem.chars)) '${_stats.length} 字符',
       if (_s.statusItems.contains(StatusItem.caret)) '光标 ${_stats.caret}',
       if (_s.statusItems.contains(StatusItem.edits)) '${_stats.edits} 次编辑',
-      if (_s.statusItems.contains(StatusItem.autoWrapped) &&
-          _stats.autoWrapped > 0)
-        '自动包裹 ${_stats.autoWrapped} 处',
+
       if (_s.statusItems.contains(StatusItem.saveState))
         dirty ? '未保存' : '已保存',
     ];
@@ -712,12 +738,32 @@ class EditorPageState extends State<EditorPage> {
       child: Row(
         children: <Widget>[
           Expanded(
-            child: Text(
-              parts.join(' · '),
-              key: const Key('status-text'),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 11, color: Color(0xFF4A5568)),
+            child: Row(
+              children: <Widget>[
+                Flexible(
+                  child: Text(
+                    parts.join(' · '),
+                    key: const Key('status-text'),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 11, color: Color(0xFF4A5568)),
+                  ),
+                ),
+                if (_s.statusItems.contains(StatusItem.autoWrapped) &&
+                    _stats.autoWrapped > 0)
+                  InkWell(
+                    key: const Key('diag-open'),
+                    onTap: openDiagnostics,
+                    child: Padding(
+                      padding: const EdgeInsets.only(left: 8),
+                      child: Text(
+                        '自动包裹 ${_stats.autoWrapped} 处 · 查看清单 ›',
+                        style: const TextStyle(
+                            fontSize: 11, color: Color(0xFFDD6B20)),
+                      ),
+                    ),
+                  ),
+              ],
             ),
           ),
           if (_stats.composing)

@@ -12,8 +12,8 @@
     { "id": "overline", "kind": "template", "tex": "\\overline{}", "label": "上划线", "alias": ["overline", "bar"], "pinyin": "shx", "keywords": ["共轭", "平均值"], "group": "结构" },
     { "id": "hat", "kind": "template", "tex": "\\hat{}", "label": "帽子", "alias": ["hat"], "pinyin": "mz", "keywords": ["估计量", "单位向量"], "group": "结构" },
     { "id": "vec", "kind": "template", "tex": "\\vec{}", "label": "向量", "alias": ["vec", "vector"], "pinyin": "xl", "keywords": ["箭头", "矢量"], "group": "结构" },
-    { "id": "cases", "kind": "template", "tex": "\\begin{cases}&\\\\&\\end{cases}", "label": "分段", "alias": ["cases", "piecewise"], "pinyin": "fd", "keywords": ["分段函数", "大括号", "多行"], "group": "结构" },
-    { "id": "aligned", "kind": "template", "tex": "\\begin{aligned}&=\\\\&=\\end{aligned}", "label": "对齐推导", "alias": ["aligned", "align"], "pinyin": "dqtd", "keywords": ["多行", "等号对齐", "推导"], "group": "结构" },
+    { "id": "cases", "kind": "template", "tex": "\\begin{cases}&\\\\&\\end{cases}", "preview": "\\begin{cases}x&x\\ge 0\\\\-x&x<0\\end{cases}", "label": "分段", "alias": ["cases", "piecewise"], "pinyin": "fd", "keywords": ["分段函数", "大括号", "多行"], "group": "结构" },
+    { "id": "aligned", "kind": "template", "tex": "\\begin{aligned}&=\\\\&=\\end{aligned}", "preview": "\\begin{aligned}a&=b+c\\\\&=d\\end{aligned}", "label": "对齐推导", "alias": ["aligned", "align"], "pinyin": "dqtd", "keywords": ["多行", "等号对齐", "推导"], "group": "结构" },
 
     { "id": "alpha", "kind": "symbol", "tex": "\\alpha", "label": "阿尔法", "alias": ["alpha"], "pinyin": "aef", "keywords": ["希腊"], "group": "符号", "subgroup": "希腊" },
     { "id": "beta", "kind": "symbol", "tex": "\\beta", "label": "贝塔", "alias": ["beta"], "pinyin": "bt", "keywords": ["希腊"], "group": "符号", "subgroup": "希腊" },
@@ -56,7 +56,7 @@
     { "id": "cdot", "kind": "symbol", "tex": "\\cdot", "label": "点乘", "alias": ["cdot"], "pinyin": "dc", "keywords": ["乘法", "内积"], "group": "符号", "subgroup": "运算" },
     { "id": "factorial", "kind": "symbol", "tex": "!", "label": "阶乘", "alias": ["factorial", "bang"], "pinyin": "jc", "keywords": ["阶乘", "排列组合"], "group": "符号", "subgroup": "运算" },
     { "id": "dots", "kind": "symbol", "tex": "\\dots", "label": "省略号", "alias": ["dots", "ldots"], "pinyin": "slh", "keywords": ["省略", "序列"], "group": "符号", "subgroup": "运算" },
-    { "id": "prime", "kind": "symbol", "tex": "'", "label": "撇（导数）", "alias": ["prime", "derivative"], "pinyin": "pds", "keywords": ["导数", "一阶导"], "group": "符号", "subgroup": "运算" },
+    { "id": "prime", "kind": "symbol", "tex": "'", "label": "导数撇", "alias": ["prime", "derivative"], "pinyin": "pds", "keywords": ["导数", "一阶导"], "group": "符号", "subgroup": "运算" },
 
     { "id": "forall", "kind": "symbol", "tex": "\\forall", "label": "任意", "alias": ["forall"], "pinyin": "ry", "keywords": ["任意", "全称", "所有", "集合论"], "group": "符号", "subgroup": "逻辑集合" },
     { "id": "exists", "kind": "symbol", "tex": "\\exists", "label": "存在", "alias": ["exists"], "pinyin": "cz", "keywords": ["存在", "至少一个", "集合论"], "group": "符号", "subgroup": "逻辑集合" },
@@ -77,7 +77,7 @@
     { "id": "bigvee", "kind": "template", "tex": "\\bigvee_{}^{}", "label": "多或", "alias": ["bigvee"], "pinyin": "dh", "keywords": ["批量", "多个", "析取", "数理逻辑"], "group": "符号", "subgroup": "逻辑集合", "alsoIn": ["符号/运算"] },
     { "id": "bigwedge", "kind": "template", "tex": "\\bigwedge_{}^{}", "label": "多且", "alias": ["bigwedge"], "pinyin": "dq", "keywords": ["批量", "多个", "合取", "数理逻辑"], "group": "符号", "subgroup": "逻辑集合", "alsoIn": ["符号/运算"] },
 
-    { "id": "to", "kind": "symbol", "tex": "\\to", "label": "箭头（趋近）", "alias": ["to", "rightarrow"], "pinyin": "jt", "keywords": ["趋近", "趋向", "映射到"], "group": "符号", "subgroup": "箭头" },
+    { "id": "to", "kind": "symbol", "tex": "\\to", "label": "趋近箭头", "alias": ["to", "rightarrow"], "pinyin": "jt", "keywords": ["趋近", "趋向", "映射到"], "group": "符号", "subgroup": "箭头" },
     { "id": "Rightarrow", "kind": "symbol", "tex": "\\Rightarrow", "label": "推出", "alias": ["Rightarrow", "implies"], "pinyin": "tc", "keywords": ["推出", "蕴含", "数理逻辑"], "group": "符号", "subgroup": "箭头" },
     { "id": "Leftarrow", "kind": "symbol", "tex": "\\Leftarrow", "label": "被推出", "alias": ["Leftarrow"], "pinyin": "btc", "keywords": ["蕴含", "数理逻辑"], "group": "符号", "subgroup": "箭头" },
     { "id": "iff", "kind": "symbol", "tex": "\\Leftrightarrow", "label": "等价", "alias": ["iff", "Leftrightarrow"], "pinyin": "dj", "keywords": ["等价", "充要", "数理逻辑"], "group": "符号", "subgroup": "箭头" },

@@ -28,6 +28,7 @@ class SymbolItem {
     this.pinyin = '',
     this.keywords = const <String>[],
     this.alsoIn = const <String>[],
+    this.preview = '',
   });
 
   final String id;
@@ -49,6 +50,16 @@ class SymbolItem {
   /// 格式 `一级/子类`（如 `符号/运算`）；主归属仍是 [group] / [subgroup]。
   /// 只在"两种找法都自然"的少数项上用（白名单见《符号表-分类与关键词.md》）。
   final List<String> alsoIn;
+
+  /// ★ 面板里画画用的**代表式**（空 ⇒ 用 [tex] 本身）
+  ///
+  /// 为什么需要：`\begin{cases}&\\&\end{cases}` 的格子是空的 ⇒ 面板里只看得见 `{` 和 `=`，
+  /// 用户根本认不出这是"分段"。所以给一份**预览专用**的填充式
+  /// （**插入的仍是空槽 tex**，两者不混）。
+  final String preview;
+
+  /// 预览该用哪份 tex
+  String get previewTex => preview.isEmpty ? tex : preview;
 
   bool get isTemplate => kind == SymbolKind.template;
 
@@ -116,6 +127,7 @@ class SymbolLibrary {
           for (final dynamic a in (m['alsoIn'] as List<dynamic>?) ?? <dynamic>[])
             a as String,
         ],
+        preview: (m['preview'] as String?) ?? '',
       ));
     }
     return SymbolLibrary(out);

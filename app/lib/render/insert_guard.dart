@@ -274,12 +274,19 @@ InsertPadding padForRange(String src, int start, int end, String text) {
       src[s - 1] != '\n' &&
       !text.startsWith('\n') &&
       ((leftDollar && text.startsWith(r'$')) || _isBlockSyntaxLine(firstLine));
+  // ★★ 规则 ⑥（2026-10-17 b2-② 手验抓到的真缺陷）：**落点正好在"整行语法行"的行首**。
+  //   例：`# 例 1 一元二次方程` 的光标在 0 ⇒ 插 `$\frac{}{}$` 会粘成
+  //   `$\frac{}{}$# 例 1 …` ⇒ `#` 不再在行首 ⇒ **整行标题退化成正文**（用户实测截图）。
+  //   判据只多一句"右边这个位置就是某行行首，且那一行是整行语法"。
+  final bool atSyntaxLineStart = (e == 0 || src[e - 1] == '\n') &&
+      _isBlockSyntaxLine(_nextLineAt(src, e));
   final bool suffix = e < src.length &&
       src[e] != '\n' &&
       !text.endsWith('\n') &&
       ((rightDollar && text.endsWith(r'$')) ||
           _isBlockSyntaxLine(lastLine) ||
-          _isFenceLine(_nextLineAt(src, e)));
+          _isFenceLine(_nextLineAt(src, e)) ||
+          atSyntaxLineStart);
   return InsertPadding(prefixNewline: prefix, suffixNewline: suffix);
 }
 

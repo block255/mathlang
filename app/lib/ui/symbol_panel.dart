@@ -356,6 +356,9 @@ class SymbolPanelState extends State<SymbolPanel> {
         key: Key('symbol-${item.id}'),
         borderRadius: BorderRadius.circular(8),
         onTap: () => _tap(item),
+        // ★ 长按 = **真预览**（大图 + 名称 + LaTeX）；b1 只有一个小 tooltip
+        onLongPress: () => showSymbolPreviewDialog(context, item,
+            onInsert: () => _tap(item)),
         child: Container(
           decoration: BoxDecoration(
             color: Colors.white,
@@ -387,7 +390,9 @@ class SymbolPanelState extends State<SymbolPanel> {
 /// ★ 走**同一条注入链**（`renderMathTex`）：空槽会被注上占位垫 ⇒
 ///   `^{}` / `_{}` / `\frac{}{}` 这些模板在格子里**看得见空槽**（否则是一片空白）。
 Widget symbolPreview(SymbolItem item, {double size = 14}) {
-  final String tex = renderMathTex(item.tex, caretRel: -1);
+  // ★ 优先用 `preview`（代表式）：`cases`/`aligned` 的空格子直接画出来是一对花括号，
+  //   看不出是什么东西 ⇒ 数据里给一份填充式当门面（插入的仍是空槽 tex）。
+  final String tex = renderMathTex(item.previewTex, caretRel: -1);
   return FittedBox(
     fit: BoxFit.scaleDown,
     child: Math.tex(
@@ -396,6 +401,69 @@ Widget symbolPreview(SymbolItem item, {double size = 14}) {
       textStyle: TextStyle(fontSize: size, color: const Color(0xFF1A202C)),
       onErrorFallback: (Object e) =>
           Text(item.label, style: const TextStyle(fontSize: 10)),
+    ),
+  );
+}
+
+/// 长按格子的**真预览浮层**（大图 + 名称 + LaTeX 源码 + 插入）
+///
+/// 为什么值得做：面板里格子只有 44px，`\bigcup` 和 `\cup` 那种差别在 14px 下看不出来。
+Future<void> showSymbolPreviewDialog(
+  BuildContext context,
+  SymbolItem item, {
+  VoidCallback? onInsert,
+}) {
+  return showDialog<void>(
+    context: context,
+    builder: (BuildContext c) => Dialog(
+      key: Key('symbol-preview-${item.id}'),
+      backgroundColor: Colors.white,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(18, 14, 18, 10),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Text(item.label,
+                style: const TextStyle(
+                    fontSize: 13, fontWeight: FontWeight.w600)),
+            const SizedBox(height: 10),
+            ConstrainedBox(
+              constraints: const BoxConstraints(minHeight: 64),
+              child: Center(
+                child: symbolPreview(item, size: 40),
+              ),
+            ),
+            const SizedBox(height: 10),
+            SelectableText(
+              item.tex,
+              style: const TextStyle(
+                  fontFamily: 'monospace',
+                  fontSize: 11,
+                  color: Color(0xFF718096)),
+            ),
+            const SizedBox(height: 6),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: <Widget>[
+                TextButton(
+                  onPressed: () => Navigator.of(c).pop(),
+                  child: const Text('关闭', style: TextStyle(fontSize: 12)),
+                ),
+                if (onInsert != null)
+                  FilledButton(
+                    key: Key('symbol-preview-insert-${item.id}'),
+                    onPressed: () {
+                      Navigator.of(c).pop();
+                      onInsert();
+                    },
+                    child: const Text('插入', style: TextStyle(fontSize: 12)),
+                  ),
+              ],
+            ),
+          ],
+        ),
+      ),
     ),
   );
 }
