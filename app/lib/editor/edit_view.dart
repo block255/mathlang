@@ -759,7 +759,22 @@ class EditViewState extends State<EditView> {
       }
       final int? to = tabStopAt(_buf.buf, _buf.caret, forward: !shift);
       if (to == null) return KeyEventResult.ignored;
-      _buf.setCaret(to);
+      // ★★ PC-2（2026-10-18）：从**行间块**里走出去 ⇒ 落到**下一行行首**。
+      //   旧行为只走到 `closeEnd`（= 紧跟收尾 `$$`），人一打字就接在块后面
+      //   （用户实测："出去应该到下一个空的行，而不是接在这一块后面"）。
+      int dest = to;
+      final MathRegion? reg = mathRegionAt(_buf.buf, shift ? dest : _buf.caret);
+      if (!shift && reg != null && reg.isDisplay && dest == reg.closeEnd) {
+        if (dest < _buf.buf.length && _buf.buf[dest] == '\n') {
+          dest += 1; // 下一行行首
+        } else if (dest >= _buf.buf.length) {
+          // 块在文末：先补一个换行，才有"下一行"可落
+          _buf.setCaret(dest);
+          _mutate(() => _buf.replace(dest, dest, '\n'));
+          dest += 1;
+        }
+      }
+      _buf.setCaret(dest);
       return KeyEventResult.handled;
     }
     if (k == LogicalKeyboardKey.home) {
