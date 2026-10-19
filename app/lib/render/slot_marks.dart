@@ -139,8 +139,12 @@ SlotMarkResult injectSlotMarks(String tex, {required int caretRel}) {
         ),
     // ★★ 2026-10-18 晚：**环境空格子恒定占 1em**（预留宽度，见 slot_pad.kEnvCellFillTex）。
     //   与光标在哪一格无关 ⇒ 画框/移光标都不改变列宽。
+    //   ★★ 2026-10-19 修：`s.isEmpty` 只表示"**零长度**"，而格子里通常带着**填充空格**
+    //     （`& a &` 的格子文本是 `" a "`）⇒ 旧判据对空格子是**永不成立**的（实测：一个垫子都没注入）。
+    //     改成"**trim 后为空**"。
     for (final SlotSpan s in t.slots)
-      if (s.isEmpty && s.path.any((SlotStep st) => st.row != null || st.col != null))
+      if (s.path.any((SlotStep st) => st.row != null || st.col != null) &&
+          tex.substring(s.start, s.end).trim().isEmpty)
         _Ins(s.start, kEnvCellFillTex, shiftAt: true),
     // ② ★ 尾垫（§11.18）：插在**内容末尾**、花括号**之内** ⇒ 装饰跟着内容变长
     for (final SlotSpan s in t.slots)
