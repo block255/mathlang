@@ -22,6 +22,7 @@ import 'package:flutter/foundation.dart'
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../core/block.dart';
 import '../core/doc_buffer.dart';
 import '../core/doc_settings.dart';
 import '../core/document_file.dart';
@@ -35,6 +36,7 @@ import '../lang/symbol_library.dart';
 import '../lang/word_triggers.dart';
 import '../io/file_gateway.dart';
 import '../io/file_gateway_platform.dart';
+import '../io/desktop_shortcut.dart';
 import '../io/session_data.dart';
 import '../io/session_store.dart';
 import '../io/session_store_platform.dart';
@@ -208,6 +210,26 @@ class EditorPageState extends State<EditorPage> {
     // ★ S4-e-①：先尝试恢复上次会话（**同步入口、异步等待**，恢复完再挂监听去存）
     _buf.addListener(_onBufferEdited);
     _restoreSession();
+    _ensureDesktopShortcutOnFirstFrame();
+  }
+
+  /// ★★ 2026-10-19（U6）：**第一次启动就把桌面图标摆好**。
+  ///
+  /// 为什么必须由应用自己做：**MSIX 安装包不允许创建桌面快捷方式**（微软只给开始菜单/任务栏），
+  /// 而"普通用户根本不会去找软件装在哪"（用户原话）⇒ 装完自动开一次、顺手把图标放好，才符合直觉。
+  /// 失败不打扰用户（写诊断输出即可）；设置 → 高级 里能看到状态并能删/重建。
+  void _ensureDesktopShortcutOnFirstFrame() {
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (_disposed || !_s.desktopShortcut) return;
+      if (desktopShortcutExists()) {
+        if (mounted) setState(() {}); // 让设置页显示"已创建"
+        return;
+      }
+      final bool ok = await ensureDesktopShortcut();
+      if (!mounted) return;
+      setState(() {});
+      if (!ok) _snack('桌面快捷方式没建成（可以在 设置 → 高级 里重试）');
+    });
   }
 
   @override
@@ -1152,6 +1174,18 @@ class EditorPageState extends State<EditorPage> {
                       _schedulePersist();
                     },
                     shortcuts: _shortcuts,
+                    // ★ U6：桌面快捷方式的状态与操作（设置 → 高级）
+                    desktopShortcutExists: desktopShortcutExists(),
+                    onDesktopShortcut: (bool create) async {
+                      if (create) {
+                        await ensureDesktopShortcut();
+                        setState(() => _s = _s.copyWith(desktopShortcut: true));
+                      } else {
+                        removeDesktopShortcut();
+                        setState(() => _s = _s.copyWith(desktopShortcut: false));
+                      }
+                      _schedulePersist();
+                    },
                     triggers: _triggers,
                     // ★ S4-e-①：本地暂存的可见性（「高级」组）
                     sessionPath: _sessionPath,
@@ -1189,6 +1223,10 @@ class EditorPageState extends State<EditorPage> {
           children: <Widget>[
             const SizedBox(width: 6),
             _fileMenu(),
+            const SizedBox(width: 4),
+            // ★★ 2026-10-19（U6，用户："标题行没有显眼入口"）：顶栏「块类型」下拉。
+            //   口径：**只有正文与三级标题**（平权：不引入列表/引用/代码块那套层级思维）。
+            _blockTypeMenu(),
             const SizedBox(width: 8),
             _titleWidget(),
             const SizedBox(width: 4),
@@ -1225,6 +1263,89 @@ class EditorPageState extends State<EditorPage> {
               onPressed: () => _settingsOpen ? closeSettings() : openSettings(),
             ),
             const SizedBox(width: 6),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ---------------- 块类型下拉（U6）----------------
+
+  /// 当前光标所在行是什么块类型（只区分 正文 / 标题1-3）
+  BlockType _caretLineType() {
+    final String doc = _buf.buf;
+    final int c = _buf.caret.clamp(0, doc.length);
+    // ★ 光标在 0 时 lastIndexOf(pattern, -1) 会抛 RangeError ⇒ 单独处理
+    final int start = c <= 0 ? 0 : doc.lastIndexOf('\n', c - 1) + 1;
+    int end = doc.indexOf('\n', c);
+    if (end < 0) end = doc.length;
+    final int level = BlockMarkers.headingLevel(doc.substring(start, end));
+    return switch (level) {
+      1 => BlockType.heading1,
+      2 => BlockType.heading2,
+      3 => BlockType.heading3,
+      _ => BlockType.paragraph,
+    };
+  }
+
+  static String _blockLabel(BlockType t) => switch (t) {
+        BlockType.heading1 => '标题 1',
+        BlockType.heading2 => '标题 2',
+        BlockType.heading3 => '标题 3',
+        _ => '正文',
+      };
+
+  /// 行首标记（与 `BlockMarkers.markerFor` 同源，`''` = 正文）
+  static String _markerOf(BlockType t) => switch (t) {
+        BlockType.heading1 => '# ',
+        BlockType.heading2 => '## ',
+        BlockType.heading3 => '### ',
+        _ => '',
+      };
+
+  Widget _blockTypeMenu() {
+    final BlockType cur = _caretLineType();
+    const List<BlockType> items = <BlockType>[
+      BlockType.paragraph,
+      BlockType.heading1,
+      BlockType.heading2,
+      BlockType.heading3,
+    ];
+    return PopupMenuButton<BlockType>(
+      key: const Key('block-type-menu'),
+      tooltip: '段落类型（正文 / 标题 1-3）',
+      onSelected: (BlockType t) {
+        // 已经是这一类 ⇒ 什么都不做（下拉是"设置"，不是"切换"）
+        if (t == _caretLineType()) return;
+        _editKey.currentState?.setLineMarker(_markerOf(t));
+        _editKey.currentState?.focusInput();
+        setState(() {}); // 标签跟着变
+      },
+      itemBuilder: (BuildContext c) => <PopupMenuEntry<BlockType>>[
+        for (final BlockType t in items)
+          PopupMenuItem<BlockType>(
+            key: Key('block-type-${t.name}'),
+            value: t,
+            height: 34,
+            child: Row(
+              children: <Widget>[
+                SizedBox(
+                  width: 18,
+                  child: t == cur
+                      ? const Icon(Icons.check, size: 13, color: Color(0xFF1E88E5))
+                      : null,
+                ),
+                Text(_blockLabel(t), style: const TextStyle(fontSize: 12)),
+              ],
+            ),
+          ),
+      ],
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        child: Row(
+          children: <Widget>[
+            Text(_blockLabel(cur), style: const TextStyle(fontSize: 12)),
+            const Icon(Icons.arrow_drop_down, size: 16),
           ],
         ),
       ),

@@ -525,6 +525,23 @@ class EditViewState extends State<EditView> {
     });
   }
 
+  /// ★★ 2026-10-19（U6）：**设置**当前行的块类型（顶栏「块类型」下拉用）。
+  ///
+  /// 与 [insertBlockOp] 的区别只有一条：**不切换**。选「标题 2」就当标题 2；
+  /// 已经是标题 2 就什么都不做（`planLineMarkerSet` 返回 null）。
+  /// 落盘仍是**一次区间替换** ⇒ 一步撤销。
+  void setLineMarker(String desired) {
+    _breakUndoGroup();
+    final BlockOpResult? r = planLineMarkerSet(_buf.buf, _buf.caret, desired);
+    if (r == null || r.isNoop) return;
+    final String out = applyBlockOpTo(_buf.buf, r);
+    final int caret = r.caret.clamp(0, out.length);
+    _mutate(() {
+      _buf.replace(0, _buf.length, out);
+      _buf.setCaret(caret);
+    });
+  }
+
   /// ★★ S4-d③：把**每一页**抓成 PNG（图片集 / 图片式 PDF 的唯一入口）。
   ///
   /// 语义完全对齐原则 4「编辑时的分页预览 = 导出的 PDF 页 = 图片集的一张图」：

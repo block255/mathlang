@@ -123,6 +123,34 @@ BlockOpResult? _planLineMarker(String doc, int caret, BlockOp op, String marker)
   );
 }
 
+/// ★★ 2026-10-19（U6）：**设置**语义的行首标记（不是"再按一次回正文"）。
+///
+/// 顶栏「块类型」下拉用它：用户是在**选择**目标类型，不是在切换 ——
+/// 所以"已经是标题 2"时再选标题 2 应当是**什么都不做**，而不是被切成正文。
+///
+/// [desired] = 目标行首标记（`''` = 正文）。返回 `null` = 这一行不能改（整块语义的行），
+/// 或本来就是目标（无需改动）。
+BlockOpResult? planLineMarkerSet(String doc, int caret, String desired) {
+  final LineIndex lines = LineIndex.of(doc);
+  final int line = lines.lineOf(caret.clamp(0, doc.length));
+  final String text = lines.text(line);
+  if (_isWholeBlockLine(text)) return null;
+  final int lineStart = lines.starts[line];
+  final int oldLen = BlockMarkers.markerLength(text);
+  final String oldMarker = text.substring(0, oldLen);
+  if (oldMarker == desired) return null;
+  final int inLine = (caret - lineStart).clamp(0, text.length);
+  final int contentIn = (inLine - oldLen).clamp(0, text.length - oldLen);
+  return BlockOpResult(
+    from: lineStart,
+    to: lineStart + oldLen,
+    insert: desired,
+    caret: lineStart + desired.length + contentIn,
+    // 下拉里的"正文"也是一次块操作；`op` 只用于日志/调试，沿用 h1 这一族
+    op: BlockOp.h1,
+  );
+}
+
 bool _isWholeBlockLine(String text) =>
     BlockMarkers.isFence(text) ||
     BlockMarkers.isMathFence(text) ||

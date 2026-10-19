@@ -81,6 +81,8 @@ if errorlevel 1 (
   )
   echo   证书已信任。
 )
+rem ★ U6：顺手建桌面快捷方式（用户要求"装完就有图标"；绿色版直接从当前目录建）
+powershell -NoProfile -Command "$d=[Environment]::GetFolderPath('Desktop'); $p=Join-Path $d '数语引擎.lnk'; if (-not (Test-Path $p)) { $s=(New-Object -ComObject WScript.Shell).CreateShortcut($p); $s.TargetPath='%HERE%数语引擎.exe'; $s.WorkingDirectory='%HERE%'; $s.IconLocation='%HERE%数语引擎.exe,0'; $s.Save() }"
 start "" "%HERE%数语引擎.exe"
 "@
 [System.IO.File]::WriteAllText((Join-Path $stage '启动数语引擎.cmd'), ($cmd -replace "`r?`n", "`r`n"), [System.Text.Encoding]::GetEncoding(936))

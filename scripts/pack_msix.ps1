@@ -161,6 +161,66 @@ if ($Install) {
     Write-Host "        已安装：$identity" -ForegroundColor DarkGray
 }
 
+# ★★ 2026-10-19（U6）：给 MSIX 配一个**双击即装、装完自动开**的安装器脚本。
+#   MSIX 没有"安装后执行一次"的机制（微软不给），而"普通用户根本不会去找软件装在哪"
+#   ⇒ 用一个 .cmd 代劳：信任证书（需要就自提权）→ 装 msix → 启动应用
+#   （首次启动应用自己会在桌面建快捷方式）。
+$bundle = Join-Path $root 'dist\安装包'
+if (Test-Path $bundle) { Remove-Item $bundle -Recurse -Force }
+New-Item -ItemType Directory -Path $bundle -Force | Out-Null
+Copy-Item $msix (Join-Path $bundle '数语引擎.msix') -Force
+Copy-Item (Join-Path $signing '数语引擎-自签证书.cer') (Join-Path $bundle '证书-数语引擎.cer') -Force
+
+$installCmd = @"
+@echo off
+setlocal
+set "HERE=%~dp0"
+set "THUMB=$($cert.Thumbprint)"
+echo 数语引擎 —— 安装（先信任证书，再装应用，最后自动打开）
+echo.
+certutil -user -store TrustedPeople %THUMB% >nul 2>&1
+if errorlevel 1 (
+  echo   需要一次管理员授权来信任本软件的自签证书，请在弹窗里点 [是]。
+  powershell -NoProfile -Command "Start-Process certutil -Verb RunAs -Wait -ArgumentList '-addstore','-f','TrustedPeople','\"%HERE%证书-数语引擎.cer\"'"
+)
+echo   正在安装…
+powershell -NoProfile -Command "Add-AppxPackage -Path '%HERE%数语引擎.msix' -ForceApplicationShutdown"
+if errorlevel 1 (
+  echo.
+  echo   [失败] 安装没成功。请把上面这句话截图发给我。
+  pause
+  exit /b 1
+)
+echo   装好了，正在打开…
+powershell -NoProfile -Command "`$p=(Get-AppxPackage MathLang.Editor).PackageFamilyName; Start-Process ('shell:AppsFolder\'+`$p+'!App')"
+echo.
+echo 完成。以后从桌面「数语引擎」图标打开即可。
+pause
+"@
+[System.IO.File]::WriteAllText((Join-Path $bundle '安装数语引擎.cmd'), ($installCmd -replace "`r?`n", "`r`n"), [System.Text.Encoding]::GetEncoding(936))
+
+$installReadme = @"
+数语引擎 $Version · Windows 安装说明
+
+一、安装
+  双击「安装数语引擎.cmd」，按提示走：
+    ① 第一次会弹管理员授权（信任本软件的自签证书，点"是"）
+    ② 自动安装并**自动打开**；桌面上会出现「数语引擎」图标
+  以后从桌面图标打开即可。
+
+二、卸载
+  设置 → 应用 → 已安装的应用 → 搜「数语引擎」→ 卸载
+  或 PowerShell：Get-AppxPackage MathLang.Editor | Remove-AppxPackage
+
+三、数据在哪
+  设置与本地暂存在 %APPDATA%\mathlang\（卸载**不会**删它，要彻底清就手动删这个目录）。
+  你保存的 .md 文件不受影响。
+
+四、为什么还需要"信任证书"
+  这个版本用自签证书签名（免费的替代方案）。将来换成公共 CA 签名后，这一步就不需要了。
+"@
+[System.IO.File]::WriteAllText((Join-Path $bundle '安装说明.txt'), ($installReadme -replace "`r?`n", "`r`n"), (New-Object System.Text.UTF8Encoding($false)))
+
 if (-not $KeepStage) { Remove-Item $stageRoot -Recurse -Force }
 $mb = [math]::Round((Get-Item $msix).Length / 1MB, 1)
 Write-Host ''

@@ -75,6 +75,8 @@ class SettingsOverlay extends StatefulWidget {
     this.onShowDiagnostics,
     this.onShowSource,
     this.autoWrappedCount = 0,
+    this.desktopShortcutExists = false,
+    this.onDesktopShortcut,
   });
 
   final AppSettings settings;
@@ -116,6 +118,12 @@ class SettingsOverlay extends StatefulWidget {
   final VoidCallback? onShowDiagnostics;
   final VoidCallback? onShowSource;
   final int autoWrappedCount;
+
+  /// ★ U6：桌面上有没有「数语引擎」快捷方式（MSIX 装完由应用自己建）
+  final bool desktopShortcutExists;
+
+  /// ★ U6：	rue = 建/重建，alse = 删除
+  final void Function(bool create)? onDesktopShortcut;
 
   @override
   State<SettingsOverlay> createState() => SettingsOverlayState();
@@ -480,6 +488,35 @@ class SettingsOverlayState extends State<SettingsOverlay> {
             child: const Text('清除…',
                 style: TextStyle(fontSize: 12, color: Color(0xFFC53030))),
           ),
+        ),
+      ),
+      // ★★ 2026-10-19（U6）：桌面快捷方式（MSIX 装完由应用自己建；这里能删/重建）
+      SettingRow(
+        title: '桌面快捷方式',
+        subtitle: '第一次启动会自动在桌面放一个图标。若你删掉了它，这里可以再建一个。',
+        dense: true,
+        child: Row(
+          children: <Widget>[
+            Text(
+              widget.desktopShortcutExists ? '已创建' : '不在桌面上',
+              key: const Key('desktop-shortcut-state'),
+              style: TextStyle(
+                  fontSize: 12,
+                  color: widget.desktopShortcutExists
+                      ? const Color(0xFF2F855A)
+                      : const Color(0xFFA0AEC0)),
+            ),
+            const SizedBox(width: 10),
+            OutlinedButton(
+              key: const Key('desktop-shortcut-toggle'),
+              onPressed: widget.onDesktopShortcut == null
+                  ? null
+                  : () => widget.onDesktopShortcut!(!widget.desktopShortcutExists),
+              child: Text(
+                  widget.desktopShortcutExists ? '删除' : '创建',
+                  style: const TextStyle(fontSize: 12)),
+            ),
+          ],
         ),
       ),
     ];

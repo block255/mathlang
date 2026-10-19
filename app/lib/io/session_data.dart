@@ -134,6 +134,7 @@ Map<String, dynamic> appSettingsToJson(AppSettings s) => <String, dynamic>{
       'showCellLabels': s.showCellLabels,
       'autoWordTriggers': s.autoWordTriggers,
       'autoShorthand': s.autoShorthand,
+  'desktopShortcut': s.desktopShortcut,
     };
 
 AppSettings appSettingsFromJson(Map<String, dynamic> m) {
@@ -174,6 +175,7 @@ AppSettings appSettingsFromJson(Map<String, dynamic> m) {
     showCellLabels: pick('showCellLabels', d.showCellLabels),
     autoWordTriggers: pick('autoWordTriggers', d.autoWordTriggers),
     autoShorthand: pick('autoShorthand', d.autoShorthand),
+    desktopShortcut: pick('desktopShortcut', d.desktopShortcut),
   );
 }
 

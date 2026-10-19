@@ -63,6 +63,7 @@ class AppSettings {
     this.showCellLabels = true,
     this.autoWordTriggers = true,
     this.autoShorthand = true,
+    this.desktopShortcut = true, // ★ U6：启动时确保桌面有快捷方式
   });
 
   /// ★ 页面在**可用空间**里的归一化位置：`0` 贴左 · `0.5` 居中 · `1` 贴右
@@ -115,6 +116,10 @@ class AppSettings {
   /// ★★ S4-c：**缩写**（`>=` `<=` `!=` `+-` `->` ⇒ `\ge` `\le` `\ne` `\pm` `\to`）。
   final bool autoShorthand;
 
+  /// ★★ 2026-10-19（U6）：**启动时确保桌面有快捷方式**（MSIX 版靠它，安装包没法建）。
+  /// 用户在设置里删掉后会置 false，免得每次启动又冒出来。
+  final bool desktopShortcut;
+
   /// 手机默认值：状态栏隐藏、面板覆盖
   static const AppSettings forPhone = AppSettings(
     panelMode: PanelMode.overlay,
@@ -159,6 +164,7 @@ class AppSettings {
     bool? showCellLabels,
     bool? autoWordTriggers,
     bool? autoShorthand,
+    bool? desktopShortcut,
   }) =>
       AppSettings(
         pageXDock: pageXDock ?? this.pageXDock,
@@ -176,6 +182,7 @@ class AppSettings {
         showCellLabels: showCellLabels ?? this.showCellLabels,
           autoWordTriggers: autoWordTriggers ?? this.autoWordTriggers,
         autoShorthand: autoShorthand ?? this.autoShorthand,
+        desktopShortcut: desktopShortcut ?? this.desktopShortcut,
       );
 
   /// 实际生效的面板形态（把 [autoPanelMode] 与窗口宽算进来）
