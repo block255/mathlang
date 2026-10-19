@@ -144,6 +144,14 @@ List<VisibleAtom> lexVisibleAtoms(String tex) {
       i += kSlotPadFiller.length;
       continue;
     }
+    // ★★ **环境空格子的预留宽度垫**（`slot_pad.kEnvCellFillTex`）：同一机制 ——
+    //   "0 墨迹 / 1 叶盒"。不认它 ⇒ 那些格子**没有任何原子** ⇒ 配对/网格都量不到它们
+    //   ⇒ 空行空列点不到、画框位置乱（2026-10-19 实测：4×6 矩阵只有 4 个格子有矩形）。
+    if (tex.startsWith(kEnvCellFillTex, i)) {
+      out.add(VisibleAtom(i, i + kEnvCellFillTex.length, 'slotpad'));
+      i += kEnvCellFillTex.length;
+      continue;
+    }
     // ★★ **结构尾垫**（`slot_pad.kStructTailTex`）：同样是"0 原子 / 1 叶盒"的注入物。
     //   原先它由 `injection_map.atomsForHitTest` 事后补出来、再**按源偏移排序**插进去 ——
     //   2026-10-17 探针量出那样做是**错的**：排序会毁掉本函数刻意维持的"渲染顺序"

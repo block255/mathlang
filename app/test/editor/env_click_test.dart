@@ -262,8 +262,11 @@ void main() {
       final int cellStart =
           buf.buf.indexOf(r'\begin{pmatrix}') + r'\begin{pmatrix}'.length;
       final int firstAmp = buf.buf.indexOf('&', cellStart);
-      expect(buf.caret, inInclusiveRange(cellStart, firstAmp),
-          reason: '应落在第一格里（$cellStart..$firstAmp），实际 ${buf.caret}');    });
+      // 允许落在第二格开头（空隙里'归左还是归右'是品味问题）；关键是**不能**被扔到最右列
+      final int secondAmp = buf.buf.indexOf('&', firstAmp + 1);
+      expect(buf.caret, inInclusiveRange(cellStart, secondAmp),
+          reason: '应在第一/第二格之间（..），实际 ${buf.caret}');
+    });
 
     testWidgets('★★ 点整行都空的最后一行 ⇒ 落在那一行',
         (WidgetTester tester) async {
@@ -274,6 +277,33 @@ void main() {
       final int lastSep = buf.buf.lastIndexOf(r'\\');
       expect(buf.caret, greaterThan(lastSep),
           reason: '必须落在最后一个行分隔符**之后**（最后一行），实际 ${buf.caret}、分隔符 $lastSep');
+    });
+  });
+  group('⑩ 大网格（4×6，只填左上 2×2）：每一列都要能点（用户："只会落在第一列"）', () {
+    const String big =
+        r'\begin{pmatrix} a & b & &&& \\ c & d & &&& \\ &&&&& \\ &&&&& \end{pmatrix}';
+
+    testWidgets('★★ 点第 3 列（空）⇒ 不落在第一列', (WidgetTester tester) async {
+      final DocBuffer buf = await _pump(tester, _doc(big));
+      final ({RenderBox root, List<LeafBox> boxes}) r = _rig();
+      final Rect b = r.boxes.firstWhere((LeafBox leaf) => leaf.text == 'b').rect;
+      await _leftClick(tester, r.root, Offset(b.right + 22, b.center.dy));
+      final int row0End = buf.buf.indexOf(r'\\');
+      expect(buf.caret, greaterThan(buf.buf.indexOf('b') + 2),
+          reason: '必须在 b 之后（第 3 列起），实际 ${buf.caret}');
+      expect(buf.caret, lessThan(row0End + 1),
+          reason: '而且仍在第一行里（行分隔符在 $row0End），实际 ${buf.caret}');
+    });
+
+    testWidgets('★ 点最后一列（空）⇒ 落在行末附近', (WidgetTester tester) async {
+      final DocBuffer buf = await _pump(tester, _doc(big));
+      final ({RenderBox root, List<LeafBox> boxes}) r = _rig();
+      final Rect b = r.boxes.firstWhere((LeafBox leaf) => leaf.text == 'b').rect;
+      await _leftClick(tester, r.root,
+          Offset(r.root.size.width - 24, b.center.dy));
+      final int row0End = buf.buf.indexOf(r'\\');
+      expect(buf.caret, greaterThan(row0End - 8),
+          reason: '最后一列应靠近行末（行分隔符 $row0End），实际 ${buf.caret}');
     });
   });
   group('④ 行内矩阵：右键也要能改尺寸', () {

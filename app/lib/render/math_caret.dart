@@ -211,28 +211,35 @@ class _MathWithCaretState extends State<MathWithCaret> {
 
     // ★ 空槽垫子：**当前槽**靠"锚点落在哪个垫子盒里"认出来（实测：空槽里锚点正好在垫子右缘）
     final List<SlotPad> pads = <SlotPad>[...scanSlotPads(root, caretAt: at)];
-    // ★★ 2026-10-19 **重写这段**（用户三张图：框画在"有内容的格子"上、还画到公式外面去了）。
-    //   新判据：**只认环境空格子专用的"填充垫"**（`kEnvCellFillTex`，零高、宽 1em）。
-    //   它只会被注入到**空格子**里 ⇒ 有内容的格子、公式外面都不可能出现框。
+    // ★★★ 2026-10-19（用户："有 a 的位置点上去还是会出框，而且还会把 a 盖住"）：
+    //   框的位置必须来自**光标所在的那一格**（网格模型），而不是"附近有填充垫就画"。
+    //   判据：先用 `envCellHitAt` 定位到格子 → 取该格矩形 → **该格里没有字形**才画框。
     if (at != null && hasEnv(widget.tex)) {
-      LeafBox? fillPad;
-      for (final LeafBox b in scanLeafBoxes(root).eligible) {
-        if (b.kind != LeafBoxKind.pad) continue;
-        if (b.rect.height > 2) continue; // 填充垫是零高
-        if (b.rect.width < widget.fontSize * 0.5) continue; // 结构尾垫只有 3pt，排除
-        if ((b.rect.left - at.dx).abs() > widget.fontSize * 0.9) continue;
-        fillPad = b;
-        break;
-      }
-      if (fillPad != null) {
-        final double h = bar?.height ?? widget.fontSize;
-        pads.add(SlotPad(
-            Rect.fromLTWH(fillPad.rect.left, bar?.top ?? at.dy,
-                fillPad.rect.width, h),
-            current: true));
+      final bool display = widget.mathStyle == MathStyle.display;
+      final EnvCellHit? cell = envCellHitAt(
+          root: root, localPos: at, tex: widget.tex, displayStyle: display);
+      if (cell != null) {
+        final Rect? rect = envCellRectAt(
+            root: root,
+            tex: widget.tex,
+            displayStyle: display,
+            row: cell.row,
+            col: cell.col);
+        if (rect != null) {
+          final List<LeafBox> boxes = scanLeafBoxes(root).eligible;
+          final bool hasGlyph = boxes.any((LeafBox b) =>
+              b.kind == LeafBoxKind.glyph &&
+              (b.text ?? '').trim().isNotEmpty &&
+              rect.inflate(1).contains(b.rect.center));
+          if (!hasGlyph) {
+            final double h = bar?.height ?? widget.fontSize;
+            pads.add(SlotPad(
+                Rect.fromLTWH(rect.left, bar?.top ?? at.dy, rect.width, h),
+                current: true));
+          }
+        }
       }
     }
-
     if (!_samePads(pads, _pads) ||
         _bar != bar ||
         _tick != tick ||
