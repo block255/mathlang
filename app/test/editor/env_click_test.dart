@@ -127,6 +127,26 @@ void main() {
     });
   });
 
+  group('⑧ 行间公式的**外侧**：点左边/右边 ⇒ 落在"公式之前/之后"（用户："外面都点不到"）', () {
+    testWidgets('★★ 点矩阵左右两侧的留白 ⇒ 光标在公式外（不是被吸进第一格）',
+        (WidgetTester tester) async {
+      final DocBuffer buf = await _pump(tester, _doc(kTex));
+      final RenderBox root = _rig().root;
+      final Offset tl = root.localToGlobal(Offset.zero);
+      final double midY = tl.dy + root.size.height / 2;
+      // 左边 12 px
+      buf.setCaret(0);
+      await tester.tapAt(Offset(tl.dx - 12, midY));
+      await tester.pumpAndSettle();
+      expect(buf.caret, 3, reason: '左侧留白 ⇒ 公式**之前**（内容起点 3），实际 ${buf.caret}');
+      // 右边 12 px
+      buf.setCaret(0);
+      await tester.tapAt(Offset(tl.dx + root.size.width + 12, midY));
+      await tester.pumpAndSettle();
+      expect(buf.caret, buf.buf.length - 3,
+          reason: '右侧留白 ⇒ 公式**之后**（内容末尾），实际 ${buf.caret}');
+    });
+  });
   group('② 右键：整块都算（含格子之间的空白）', () {
     testWidgets('★★ 三个位置右键**都要弹面板**（改前：只有字形/括号能弹）',
         (WidgetTester tester) async {

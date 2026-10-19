@@ -781,6 +781,15 @@ class DocViewState extends State<DocView> {
   }) {
     final Offset localPos = (root as RenderBox).globalToLocal(global);
 
+    // ★★ 2026-10-19（用户："外面都点不到"）：**行间公式的外侧**要落在"公式之前 / 之后"。
+    //   原来的兜底是"最近字形 / 最近格子" ⇒ 点左边 40 px 也会被吸进第一格
+    //   （用户看到的就是"点不到外面"）。判据：点落在数学盒的**横向范围之外**。
+    //   行内公式不走这条（它的宽度就是那几个字，外侧属于段落文本，由段落自己管）。
+    if (displayStyle) {
+      if (localPos.dx < -2) return 0;
+      if (localPos.dx > (root as RenderBox).size.width + 2) return tex.length;
+    }
+
     // ★★ 2026-10-18 晚（用户："坏文本导致符号之间点不到的问题依然存在，行列式也有"）：
     //   **先试细粒度命中**（点在字形上 ⇒ 叶盒 ↔ 原子，能落到**符号之间**），
     //   只有"没点在字形上"（格子里的空白 / 空格子 / 竖线）才退回**按格子**判。

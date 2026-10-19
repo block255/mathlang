@@ -225,7 +225,7 @@ class _MathWithCaretState extends State<MathWithCaret> {
       if (cell != null) {
         // 光标右边"一个汉字宽"的范围内没有任何字形 ⇒ 这是一个**空格子**
         final Rect zone = Rect.fromLTWH(
-            at.dx, (bar?.top ?? at.dy), widget.fontSize * 1.4,
+            at.dx, (bar?.top ?? at.dy), widget.fontSize * 0.6,
             bar?.height ?? widget.fontSize);
         final bool emptyCell = !scanLeafBoxes(root).eligible.any((LeafBox b) =>
             b.text != null &&
