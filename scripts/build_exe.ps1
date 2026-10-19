@@ -73,8 +73,35 @@ if ((Test-Path $appSo) -and $newest -and ((Get-Item $appSo).LastWriteTime -lt $n
 }
 
 $distDir = Join-Path $repo ("dist\v" + $version)
+
+# ★★ 2026-10-19：**归档前先检查"应用是不是还开着"**。
+#   以前直接 Remove-Item -Recurse ⇒ dist 里的 flutter_windows.dll 被占用时会**删到一半**
+#   （data\ 已没了、exe 还在）—— 用户看到的就是"重打之后打不开了"。
+#   ⇒ 先探测能不能独占打开；不能就**一个字节都不删**，直接告诉用户关掉应用。
+foreach ($probe in @((Join-Path $distDir 'mathlang.exe'), (Join-Path $distDir 'flutter_windows.dll'))) {
+    if (-not (Test-Path $probe)) { continue }
+    try {
+        $fs = [System.IO.File]::Open($probe, [System.IO.FileMode]::Open, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
+        $fs.Close()
+    } catch {
+        throw "请先**完全关闭**正在运行的「数语引擎」（$([System.IO.Path]::GetFileName($probe)) 被占用）。dist 没有做任何删除。"
+    }
+}
+
+# ★★ 2026-10-19：**保住用户的本地暂存**（mathlang-session.json 就写在 exe 同目录）。
+#   整目录重拷会把它一起删掉 ⇒ 用户下次打开是空白、设置回默认（2026-10-19 真的发生过一次）。
+$sessionKeep = Join-Path $distDir 'mathlang-session.json'
+$sessionTmp = $null
+if (Test-Path $sessionKeep) {
+    $sessionTmp = Join-Path ([System.IO.Path]::GetTempPath()) ('mathlang-session-' + [guid]::NewGuid().ToString('N') + '.json')
+    Copy-Item $sessionKeep $sessionTmp -Force
+}
 if (Test-Path $distDir) { Remove-Item $distDir -Recurse -Force }
 New-Item -ItemType Directory -Path $distDir -Force | Out-Null
+if ($sessionTmp) {
+    Copy-Item $sessionTmp $sessionKeep -Force
+    Remove-Item $sessionTmp -Force
+}
 
 Write-Host '   [4/4] 归档到 dist' -ForegroundColor DarkGray
 Copy-Item $exePath $distDir -Force
@@ -86,7 +113,7 @@ Copy-Item (Join-Path $rel 'data') $distDir -Recurse -Force
 
 # SHA256 清单
 $lines = @()
-Get-ChildItem $distDir -Recurse -File | Where-Object { $_.Name -ne 'SHA256SUMS.txt' } | ForEach-Object {
+Get-ChildItem $distDir -Recurse -File | Where-Object { $_.Name -ne 'SHA256SUMS.txt' -and $_.Name -ne 'mathlang-session.json' } | ForEach-Object {
     $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
     $relPath = $_.FullName.Substring($distDir.Length + 1) -replace '\\', '/'
     $lines += "$hash  $relPath"
