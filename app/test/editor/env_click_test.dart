@@ -234,6 +234,48 @@ void main() {
     });
   });
 
+  group('⑨ 网格落点：空列 / 空行 / 两字之间（2026-10-19 重写 envCellHitAt 之后）', () {
+    const String t3 = r'\begin{pmatrix} a & b & \\ c & d & \\ & & \end{pmatrix}';
+
+    testWidgets('★★ 点最右边的空列 ⇒ 落在**那一列**（不是第二列）',
+        (WidgetTester tester) async {
+      final DocBuffer buf = await _pump(tester, _doc(t3));
+      final ({RenderBox root, List<LeafBox> boxes}) r = _rig();
+      final Rect d = r.boxes.firstWhere((LeafBox b) => b.text == 'd').rect;
+      // d 右边一个 em 左右：就是第三列（空）
+      await _leftClick(tester, r.root, Offset(d.right + 10, d.center.dy));
+      final int rowSep = buf.buf.indexOf(r'\\');
+      expect(buf.caret, greaterThan(buf.buf.indexOf('d')),
+          reason: '要在 d **之后**（第三列），实际 ${buf.caret}');
+      expect(buf.caret, greaterThan(rowSep - 1),
+          reason: '而且已经越过列分隔符 `&`（第三列），实际 ${buf.caret}');
+    });
+
+    testWidgets('★ 点 `a` 与 `b` 之间 ⇒ 落在它们之间（不是被扔到最右列）',
+        (WidgetTester tester) async {
+      final DocBuffer buf = await _pump(tester, _doc(t3));
+      final ({RenderBox root, List<LeafBox> boxes}) r = _rig();
+      final Rect a = r.boxes.firstWhere((LeafBox b) => b.text == 'a').rect;
+      final Rect b = r.boxes.firstWhere((LeafBox leaf) => leaf.text == 'b').rect;
+      await _leftClick(tester, r.root, Offset((a.right + b.left) / 2, a.center.dy));
+      // ★ 字母  /  也出现在环境名 \begin{pmatrix} 里 ⇒ 必须取**最后一个**
+      final int cellStart =
+          buf.buf.indexOf(r'\begin{pmatrix}') + r'\begin{pmatrix}'.length;
+      final int firstAmp = buf.buf.indexOf('&', cellStart);
+      expect(buf.caret, inInclusiveRange(cellStart, firstAmp),
+          reason: '应落在第一格里（$cellStart..$firstAmp），实际 ${buf.caret}');    });
+
+    testWidgets('★★ 点整行都空的最后一行 ⇒ 落在那一行',
+        (WidgetTester tester) async {
+      final DocBuffer buf = await _pump(tester, _doc(t3));
+      final ({RenderBox root, List<LeafBox> boxes}) r = _rig();
+      final Rect c = r.boxes.firstWhere((LeafBox b) => b.text == 'c').rect;
+      await _leftClick(tester, r.root, Offset(c.center.dx, c.center.dy + 26));
+      final int lastSep = buf.buf.lastIndexOf(r'\\');
+      expect(buf.caret, greaterThan(lastSep),
+          reason: '必须落在最后一个行分隔符**之后**（最后一行），实际 ${buf.caret}、分隔符 $lastSep');
+    });
+  });
   group('④ 行内矩阵：右键也要能改尺寸', () {
     testWidgets('★★ 段落里的行内矩阵右键 ⇒ 弹面板（改前：一点反应没有）',
         (WidgetTester tester) async {

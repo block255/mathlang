@@ -211,29 +211,25 @@ class _MathWithCaretState extends State<MathWithCaret> {
 
     // ★ 空槽垫子：**当前槽**靠"锚点落在哪个垫子盒里"认出来（实测：空槽里锚点正好在垫子右缘）
     final List<SlotPad> pads = <SlotPad>[...scanSlotPads(root, caretAt: at)];
-    // ★★ 2026-10-18 晚：**多行环境里的空格子**改成"跟着光标画框"（不注入垫子）。
-    //   注入垫子会让那一列变宽 ⇒ 列间距不均、行列式竖线跟着变（用户实测的"扰动"）。
-    //   判据：光标所在的格子矩形里**一个字形盒都没有**（= 空格子）⇒ 在锚点处画一个
-    //   一个汉字宽 × 行高的框；绝对不占版面。
-    if (at != null && hasEnv(widget.tex) && root is RenderBox && root.hasSize) {
-      final EnvCellHit? cell = envCellHitAt(
-        root: root,
-        localPos: at,
-        tex: widget.tex,
-        displayStyle: widget.mathStyle == MathStyle.display,
-      );
-      if (cell != null) {
-        // 光标右边"一个汉字宽"的范围内没有任何字形 ⇒ 这是一个**空格子**
-        final Rect zone = Rect.fromLTWH(
-            at.dx, (bar?.top ?? at.dy), widget.fontSize * 1.0,
-            bar?.height ?? widget.fontSize);
-        final bool emptyCell = !scanLeafBoxes(root).eligible.any((LeafBox b) =>
-            b.text != null &&
-            b.text!.trim().isNotEmpty &&
-            b.rect.overlaps(zone));
-        if (emptyCell) {
-          pads.add(SlotPad(zone, current: true));
-        }
+    // ★★ 2026-10-19 **重写这段**（用户三张图：框画在"有内容的格子"上、还画到公式外面去了）。
+    //   新判据：**只认环境空格子专用的"填充垫"**（`kEnvCellFillTex`，零高、宽 1em）。
+    //   它只会被注入到**空格子**里 ⇒ 有内容的格子、公式外面都不可能出现框。
+    if (at != null && hasEnv(widget.tex)) {
+      LeafBox? fillPad;
+      for (final LeafBox b in scanLeafBoxes(root).eligible) {
+        if (b.kind != LeafBoxKind.pad) continue;
+        if (b.rect.height > 2) continue; // 填充垫是零高
+        if (b.rect.width < widget.fontSize * 0.5) continue; // 结构尾垫只有 3pt，排除
+        if ((b.rect.left - at.dx).abs() > widget.fontSize * 0.9) continue;
+        fillPad = b;
+        break;
+      }
+      if (fillPad != null) {
+        final double h = bar?.height ?? widget.fontSize;
+        pads.add(SlotPad(
+            Rect.fromLTWH(fillPad.rect.left, bar?.top ?? at.dy,
+                fillPad.rect.width, h),
+            current: true));
       }
     }
 

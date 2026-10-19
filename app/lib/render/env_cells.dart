@@ -21,7 +21,6 @@ import 'package:flutter/rendering.dart';
 import 'caret_sites.dart';
 import 'leaf_boxes.dart';
 import 'leaf_pairing.dart';
-import 'visible_atoms.dart';
 
 /// 一次格子落点的结果：第几行、第几列、落在该格哪一侧。
 class EnvCellHit {
@@ -43,6 +42,13 @@ class EnvCellHit {
 }
 
 /// 命中某个格子；`null` = 这次点击不该按"格子"处理（不是环境 / 量不到几何）。
+///
+/// ★★★ 2026-10-19 **重写**（用户："矩阵和行列式就重写这一块的代码"）。
+/// 旧实现的三个硬伤（探针都复现过）：
+///   ① 格子矩形只认"原子组的**起点**落在我这个槽里"（包含判据）⇒ 有字迹的格子有时算不出来；
+///   ② 列是"扫到第一个命中就返回"⇒ **右边空列永远轮不到**（实测：点空列判成第 2 列）；
+///   ③ 行带 / 列带只由**有墨迹**的格子并出来 ⇒ 空行、空列根本不存在，只能靠"最近"猜。
+/// 新实现 = **网格**：格子矩形（含填充垫）→ 行带 → 列带 → 先选行再选列。
 EnvCellHit? envCellHitAt({
   required RenderObject root,
   required Offset localPos,
@@ -58,61 +64,58 @@ EnvCellHit? envCellHitAt({
 
   final List<LeafBox> boxes = scanLeafBoxes(root).eligible;
   if (boxes.isEmpty) return null;
-  final List<VisibleAtom> atoms =
-      renderOrderAtoms(tex, displayStyle: displayStyle);
-  final LeafPairing pairing =
-      buildLeafPairing(tex: tex, boxes: boxes, atoms: atoms);
+  final LeafPairing pairing = buildLeafPairing(
+    tex: tex,
+    boxes: boxes,
+    atoms: renderOrderAtoms(tex, displayStyle: displayStyle),
+  );
 
   int rowOf(SlotSpan s) => s.path.last.row ?? 0;
   int colOf(SlotSpan s) => s.path.last.col ?? 0;
+  int keyOf(int r, int c) => r * 1000 + c;
 
-  // 每个格子的外框（落在它源区间里的原子组外框的并集）
-  Rect? hullOf(SlotSpan s) {
-    Rect? r;
-    for (final PairGroup g in pairing.groups) {
-      final bool inside = g.srcStart >= s.start && g.srcStart <= s.end;
-      if (!inside) continue;
-      final Rect h = g.hull(boxes);
-      r = r == null ? h : r.expandToInclude(h);
-    }
-    return r;
-  }
-
-  final Map<String, Rect?> hulls = <String, Rect?>{
-    for (final SlotSpan s in cells) '${rowOf(s)},${colOf(s)}': hullOf(s),
-  };
-
-  // 行带 = 该行所有有墨迹格子的并集
-  final Map<int, Rect> rows = <int, Rect>{};
-  hulls.forEach((String k, Rect? r) {
-    if (r == null) return;
-    final int row = int.parse(k.split(',')[0]);
-    rows[row] = rows.containsKey(row) ? rows[row]!.expandToInclude(r) : r;
-  });
-  if (rows.isEmpty) return null;
-
-  // ★★ 2026-10-18 晚（用户实测："如果那一行没有数的话，我鼠标根本点不到那一行"）：
-  //   行带原来只由**有墨迹**的格子并出来 ⇒ **整行都空**的那一行没有带 ⇒ 永远点不到。
-  //   ⇒ 给缺的行按"上一行的底 + 行高"补出一条带（行高取现有带的中位数）。
   final int maxRow =
       cells.map(rowOf).reduce((int a, int b) => a > b ? a : b);
-  final double rowH = estimateRowHeight(rows.values.toList());
+  final int maxCol =
+      cells.map(colOf).reduce((int a, int b) => a > b ? a : b);
+
+  // ① 每个格子的矩形：**区间相交**判据（不再用"起点落在里面"）
+  final Map<int, Rect> cellRect = <int, Rect>{};
+  for (final SlotSpan s in cells) {
+    Rect? r;
+    for (final PairGroup g in pairing.groups) {
+      if (g.srcEnd <= s.start || g.srcStart >= s.end) continue;
+      final Rect h = g.hull(boxes);
+      if (h.width <= 0 && h.height <= 0) continue;
+      r = r == null ? h : r.expandToInclude(h);
+    }
+    if (r != null) cellRect[keyOf(rowOf(s), colOf(s))] = r;
+  }
+
+  // ② 行带 = 该行所有格子矩形（含填充垫）的并集
+  final Map<int, Rect> rowBand = <int, Rect>{};
+  cellRect.forEach((int k, Rect r) {
+    final int row = k ~/ 1000;
+    rowBand[row] =
+        rowBand.containsKey(row) ? rowBand[row]!.expandToInclude(r) : r;
+  });
+  if (rowBand.isEmpty) return null;
+  final double rowH = estimateRowHeight(rowBand.values.toList());
   for (var r = 0; r <= maxRow; r++) {
-    if (rows.containsKey(r)) continue;
-    // 找**下面最近**的有墨迹行当锚，往上/下推
+    if (rowBand.containsKey(r)) continue;
     Rect? anchor;
     var anchorRow = -1;
     for (var q = r + 1; q <= maxRow; q++) {
-      if (rows.containsKey(q)) {
-        anchor = rows[q];
+      if (rowBand.containsKey(q)) {
+        anchor = rowBand[q];
         anchorRow = q;
         break;
       }
     }
     if (anchor == null) {
       for (var q = r - 1; q >= 0; q--) {
-        if (rows.containsKey(q)) {
-          anchor = rows[q];
+        if (rowBand.containsKey(q)) {
+          anchor = rowBand[q];
           anchorRow = q;
           break;
         }
@@ -123,120 +126,123 @@ EnvCellHit? envCellHitAt({
     final double top = anchorRow > r
         ? anchor.top - (anchorRow - r) * h
         : anchor.bottom + (r - anchorRow - 1) * h;
-    rows[r] = Rect.fromLTRB(anchor.left, top, anchor.right, top + h);
+    rowBand[r] = Rect.fromLTRB(anchor.left, top, anchor.right, top + h);
   }
 
-  // ② 认行：先找"竖直含点击点"的带，再退到最近的带
-  int? row;
-  for (final MapEntry<int, Rect> e in rows.entries) {
-    if (localPos.dy >= e.value.top && localPos.dy <= e.value.bottom) {
-      row = e.key;
-      break;
+  // ③ 列带 = 该列所有格子矩形的并集（空列同样补：按邻列 + 列间距外推）
+  final Map<int, Rect> colBand = <int, Rect>{};
+  cellRect.forEach((int k, Rect r) {
+    final int col = k % 1000;
+    colBand[col] =
+        colBand.containsKey(col) ? colBand[col]!.expandToInclude(r) : r;
+  });
+  final List<int> knownCols = colBand.keys.toList()..sort();
+  double colGapEstimate = 0;
+  if (knownCols.length >= 2) {
+    final List<double> gaps = <double>[];
+    for (var i = 1; i < knownCols.length; i++) {
+      final int dc = knownCols[i] - knownCols[i - 1];
+      if (dc <= 0) continue;
+      gaps.add((colBand[knownCols[i]]!.left - colBand[knownCols[i - 1]]!.left) / dc);
+    }
+    if (gaps.isNotEmpty) {
+      gaps.sort();
+      colGapEstimate = gaps[gaps.length ~/ 2];
     }
   }
-  row ??= rows.entries
-      .reduce((MapEntry<int, Rect> a, MapEntry<int, Rect> b) {
-        final double da = (a.value.center.dy - localPos.dy).abs();
-        final double db = (b.value.center.dy - localPos.dy).abs();
-        return da <= db ? a : b;
-      })
-      .key;
-
-  // ③ 认列：这一行里、x 落在哪个格子的矩形里；否则取最近的
-  final List<SlotSpan> rowCells =
-      cells.where((SlotSpan s) => rowOf(s) == row).toList()
-        ..sort((SlotSpan a, SlotSpan b) => colOf(a).compareTo(colOf(b)));
-  if (rowCells.isEmpty) return null;
-
-  SlotSpan? pick;
-  for (final SlotSpan s in rowCells) {
-    final Rect? r = hulls['${rowOf(s)},${colOf(s)}'];
-    if (r == null) continue;
-    // 列向也留一点宽容度（指向两列之间的空白时归左边那列）
-    if (localPos.dx >= r.left - 4 && localPos.dx <= r.right + 4) {
-      pick = s;
-      break;
-    }
-  }
-  if (pick == null) {
-    // 点在该行的空白列：用"同列其它行的 x 边界"求最近列
-    double bestDx = double.infinity;
-    for (final SlotSpan s in rowCells) {
-      final Rect? r = hulls['${rowOf(s)},${colOf(s)}'];
-      final double cx = r?.center.dx ??
-          _columnAnchor(hulls, colOf(s), rows[row]!) ??
-          _extrapolatedColumnX(hulls, colOf(s), rows[row]!) ??
-          rows[row]!.left;
-      final double d = (cx - localPos.dx).abs();
-      if (d < bestDx) {
-        bestDx = d;
-        pick = s;
+  if (colGapEstimate <= 0) colGapEstimate = rowH > 0 ? rowH : 16;
+  for (var c = 0; c <= maxCol; c++) {
+    if (colBand.containsKey(c)) continue;
+    Rect? anchor;
+    var anchorCol = -1;
+    for (var q = c + 1; q <= maxCol; q++) {
+      if (colBand.containsKey(q)) {
+        anchor = colBand[q];
+        anchorCol = q;
+        break;
       }
     }
-  }
-  if (pick == null) return null;
-
-  final Rect? cellRect = hulls['${rowOf(pick)},${colOf(pick)}'];
-  bool atEnd;
-  if (cellRect == null) {
-    // 空格子：点在这列左边 ⇒ 内容首；右边 ⇒ 内容尾
-    final double anchor = _columnAnchor(hulls, colOf(pick), rows[row]!) ??
-        rows[row]!.left;
-    atEnd = localPos.dx > anchor;
-  } else {
-    atEnd = localPos.dx > cellRect.center.dx;
-  }
-  final bool onInk = cellRect != null &&
-      (cellRect.inflate(2).contains(localPos));
-  return EnvCellHit(rowOf(pick), colOf(pick),
-      atEnd: atEnd, onInk: onInk);
-}
-
-/// 某一列在**其它行**里的 x 中心（空格子靠它定位）；都没有 ⇒ null。
-double? _columnAnchor(Map<String, Rect?> hulls, int col, Rect rowBand) {
-  for (final MapEntry<String, Rect?> e in hulls.entries) {
-    final List<String> parts = e.key.split(',');
-    if (int.parse(parts[1]) != col) continue;
-    final Rect? r = e.value;
-    if (r == null) continue;
-    return r.center.dx;
-  }
-  return null;
-}
-
-/// 整列都空（`_columnAnchor` 也找不到）时，按**相邻列**的间距外推这一列的 x 中心。
-///
-/// ★★ 2026-10-18 晚（用户实测："4×4 我只能点到前三列"）：从 2×2 扩大出来的矩阵，
-///   第 3、4 列**一个数都没有** ⇒ 没有矩形、没有锚 ⇒ 旧代码退到 `rowBand.left`
-///   ⇒ 点最右边那列被判成第 0 列。这里用"已知列的 x 中心 + 列间距"线性外推。
-double? _extrapolatedColumnX(Map<String, Rect?> hulls, int col, Rect rowBand) {
-  final Map<int, double> known = <int, double>{};
-  for (final MapEntry<String, Rect?> e in hulls.entries) {
-    final Rect? r = e.value;
-    if (r == null) continue;
-    final List<String> parts = e.key.split(',');
-    known[int.parse(parts[1])] = r.center.dx;
-  }
-  if (known.isEmpty) return null;
-  final List<int> keys = known.keys.toList()..sort();
-  if (keys.length >= 2) {
-    // 列间距取"相邻已知列"的中位间距
-    final List<double> gaps = <double>[];
-    for (var i = 1; i < keys.length; i++) {
-      final int dc = keys[i] - keys[i - 1];
-      if (dc <= 0) continue;
-      gaps.add((known[keys[i]]! - known[keys[i - 1]]!) / dc);
+    if (anchor == null) {
+      for (var q = c - 1; q >= 0; q--) {
+        if (colBand.containsKey(q)) {
+          anchor = colBand[q];
+          anchorCol = q;
+          break;
+        }
+      }
     }
-    if (gaps.isEmpty) return null;
-    gaps.sort();
-    final double gap = gaps[gaps.length ~/ 2];
-    final int last = keys.last;
-    return known[last]! + (col - last) * gap;
+    if (anchor == null) continue;
+    final double w = anchor.width > 0 ? anchor.width : colGapEstimate;
+    final double left = anchorCol > c
+        ? anchor.left - (anchorCol - c) * colGapEstimate
+        : anchor.right + (c - anchorCol - 1) * colGapEstimate;
+    colBand[c] = Rect.fromLTRB(left, anchor.top, left + w, anchor.bottom);
   }
-  // 只有一列有墨迹：用行带宽 / 列数近似
-  return known[keys.first]! + (col - keys.first) * (rowBand.width / 4);
-}
 
+  // ④ 选行：含 → 否则最近（按带中心）
+  var row = 0;
+  var bestD = double.infinity;
+  for (var r = 0; r <= maxRow; r++) {
+    final Rect? band = rowBand[r];
+    if (band == null) continue;
+    if (localPos.dy >= band.top && localPos.dy <= band.bottom) {
+      row = r;
+      break;
+    }
+    final double d = (band.center.dy - localPos.dy).abs();
+    if (d < bestD) {
+      bestD = d;
+      row = r;
+    }
+  }
+
+  // ⑤ 选列：含 → 否则最近
+  var col = 0;
+  bestD = double.infinity;
+  for (var c = 0; c <= maxCol; c++) {
+    final Rect? band = colBand[c];
+    if (band == null) continue;
+    if (localPos.dx >= band.left && localPos.dx <= band.right) {
+      col = c;
+      break;
+    }
+    final double d = (band.center.dx - localPos.dx).abs();
+    if (d < bestD) {
+      bestD = d;
+      col = c;
+    }
+  }
+
+  // ⑥ 该格不存在（理论上不会）⇒ 取最近的已有格子
+  final bool exists =
+      cells.any((SlotSpan s) => rowOf(s) == row && colOf(s) == col);
+  if (!exists) {
+    SlotSpan? near;
+    var nd = double.infinity;
+    for (final SlotSpan s in cells) {
+      final Rect? rb = rowBand[rowOf(s)];
+      final Rect? cb = colBand[colOf(s)];
+      if (rb == null || cb == null) continue;
+      final double d = (rb.center.dy - localPos.dy).abs() +
+          (cb.center.dx - localPos.dx).abs();
+      if (d < nd) {
+        nd = d;
+        near = s;
+      }
+    }
+    if (near == null) return null;
+    row = rowOf(near);
+    col = colOf(near);
+  }
+
+  final Rect? cell = cellRect[keyOf(row, col)];
+  final Rect? cb = colBand[col];
+  final bool atEnd = cell != null
+      ? localPos.dx > cell.center.dx
+      : (cb != null && localPos.dx > cb.center.dx);
+  final bool onInk = cell != null && cell.inflate(2).contains(localPos);
+  return EnvCellHit(row, col, atEnd: atEnd, onInk: onInk);
+}
 /// 把格子坐标换成**源空间**偏移（用于点击落点）。
 ///
 /// ★★ 2026-10-18 晚（用户实测"点矩阵里面一定落在括号外面 / 落在格子之间的 `&` 上"）：

@@ -787,7 +787,7 @@ class DocViewState extends State<DocView> {
     //   行内公式不走这条（它的宽度就是那几个字，外侧属于段落文本，由段落自己管）。
     if (displayStyle) {
       if (localPos.dx < -2) return 0;
-      if (localPos.dx > (root as RenderBox).size.width + 2) return tex.length;
+      if (localPos.dx > root.size.width + 2) return tex.length;
     }
 
     // ★★ 2026-10-18 晚（用户："坏文本导致符号之间点不到的问题依然存在，行列式也有"）：
