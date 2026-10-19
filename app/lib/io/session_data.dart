@@ -132,7 +132,6 @@ Map<String, dynamic> appSettingsToJson(AppSettings s) => <String, dynamic>{
       'fitWidthOnPhone': s.fitWidthOnPhone,
       'showEmptySuggestions': s.showEmptySuggestions,
       'showCellLabels': s.showCellLabels,
-      'autoSlashFraction': s.autoSlashFraction,
       'autoWordTriggers': s.autoWordTriggers,
       'autoShorthand': s.autoShorthand,
     };
@@ -173,7 +172,6 @@ AppSettings appSettingsFromJson(Map<String, dynamic> m) {
     fitWidthOnPhone: pick('fitWidthOnPhone', d.fitWidthOnPhone),
     showEmptySuggestions: pick('showEmptySuggestions', d.showEmptySuggestions),
     showCellLabels: pick('showCellLabels', d.showCellLabels),
-    autoSlashFraction: pick('autoSlashFraction', d.autoSlashFraction),
     autoWordTriggers: pick('autoWordTriggers', d.autoWordTriggers),
     autoShorthand: pick('autoShorthand', d.autoShorthand),
   );

@@ -202,21 +202,26 @@ void main() {
       expect(buf.buf, '甲乙丙');
     });
 
-    testWidgets('★ 未接入的动作（源码视图 Ctrl+Alt+D）**不抢键**',
+    testWidgets('★★ 源码视图（Ctrl+Alt+D）现在**真的开了只读浮层**，且不改正文（U1）',
         (WidgetTester tester) async {
       final (_, DocBuffer buf) = await _pump(tester);
       await _combo(tester, kCtrlAlt, LogicalKeyboardKey.keyD);
-      expect(buf.buf, '甲乙丙');
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('source-dialog')), findsOneWidget,
+          reason: 'U1 之后这条键接上了「高级 → 查看源码」同一个浮层');
+      expect(buf.buf, '甲乙丙', reason: '看源码不许改正文');
+      await tester.tap(find.byKey(const Key('source-close')));
+      await tester.pumpAndSettle();
     });
 
-    test('登记表口径：46 条里 45 条已接入（只剩源码视图等 S5；2026-10-18 新增 ^ 与 / 两条天然键）', () {
+    test('登记表口径：46 条**全部已接入**（U1 把源码视图接成只读浮层）', () {
       expect(kShortcutActions.length, 46);
-      expect(ShortcutSettings.wiredCount, 45);
+      expect(ShortcutSettings.wiredCount, 46);
       final List<String> planned = <String>[
         for (final ShortcutAction a in kShortcutActions)
           if (!a.wired) a.id,
       ];
-      expect(planned, <String>['sourceView']);
+      expect(planned, isEmpty);
     });
 
     test('外壳接的动作必须是"已接入"的（否则说了不做）', () {

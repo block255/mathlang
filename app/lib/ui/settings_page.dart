@@ -13,8 +13,11 @@
 //
 // ★ 与"缩略图预览"相比它**零维护、零失真**（看到的是真文档真重排），代价只是会挡住页面 ⇒ 靠 peek + 关闭解决。
 
+import 'package:flutter/foundation.dart' show defaultTargetPlatform, kIsWeb, TargetPlatform;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 
+import '../app_info.dart';
 import '../core/doc_settings.dart';
 import '../lang/shortcut_registry.dart';
 import '../lang/symbol_library.dart';
@@ -28,13 +31,14 @@ import 'controls/stepper_row.dart';
 import 'shortcut_page.dart';
 
 /// 设置页里的一级分组（顺序 = 用户 2026-10-17 定的九组）
+///
+/// ★★ 2026-10-19（U1）：原来末尾还有一个 `live` 字段（`false` ⇒ 灰显 + 挂「待接入」徽标）。
+/// 现在**九组全部有真内容**（「高级」在本批接上）⇒ 那个机制连同「待接入」徽标一起删掉，
+/// 界面里不再有任何"占位 / 待接入"字样（用户要求：界面内不许出现草稿态的标记）。
 class SettingGroup {
-  const SettingGroup(this.title, this.icon, {this.live = true});
+  const SettingGroup(this.title, this.icon);
   final String title;
   final IconData icon;
-
-  /// `false` ⇒ 本段还没接入（灰显 + 说明），**不假装能用**
-  final bool live;
 }
 
 const List<SettingGroup> kSettingGroups = <SettingGroup>[
@@ -45,7 +49,7 @@ const List<SettingGroup> kSettingGroups = <SettingGroup>[
   SettingGroup('状态栏', Icons.view_headline),
   SettingGroup('快捷键', Icons.keyboard),
   SettingGroup('智能输入', Icons.auto_fix_high),
-  SettingGroup('高级', Icons.build_outlined, live: false),
+  SettingGroup('高级', Icons.build_outlined),
   SettingGroup('关于', Icons.info_outline),
 ];
 
@@ -67,6 +71,10 @@ class SettingsOverlay extends StatefulWidget {
     this.sessionPath = '',
     this.sessionSavedAt,
     this.onClearSession,
+    this.diagnosticsText = '',
+    this.onShowDiagnostics,
+    this.onShowSource,
+    this.autoWrappedCount = 0,
   });
 
   final AppSettings settings;
@@ -98,6 +106,16 @@ class SettingsOverlay extends StatefulWidget {
 
   /// 从"文件 ▾ → 设置"或"关于"进来时直接落到某一组
   final int initialGroup;
+
+  /// ★★ 2026-10-19（U1）：「高级」组的三块外部件 ——
+  /// · [diagnosticsText]：**诊断信息**（版本 / 平台 / 页面几何 / 文档规模 / 暂存位置），只读 + 一键复制；
+  /// · [onShowDiagnostics]：打开**诊断清单**（自动包裹 / 解析失败 / 超页的块，与状态栏同一个对话框）；
+  /// · [onShowSource]：打开**只读源码浮层**（文档存的就是标准 Markdown + LaTeX）；
+  /// · [autoWrappedCount]：最近一次粘贴里自动补了几处 `$…$`（清单的入口气）。
+  final String diagnosticsText;
+  final VoidCallback? onShowDiagnostics;
+  final VoidCallback? onShowSource;
+  final int autoWrappedCount;
 
   @override
   State<SettingsOverlay> createState() => SettingsOverlayState();
@@ -290,11 +308,9 @@ class SettingsOverlayState extends State<SettingsOverlay> {
                 children: <Widget>[
                   Icon(kSettingGroups[i].icon,
                       size: 14,
-                      color: kSettingGroups[i].live
-                          ? (_group == i
-                              ? const Color(0xFF1E88E5)
-                              : const Color(0xFF4A5568))
-                          : const Color(0xFFCBD5E0)),
+                      color: _group == i
+                          ? const Color(0xFF1E88E5)
+                          : const Color(0xFF4A5568)),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
@@ -304,18 +320,12 @@ class SettingsOverlayState extends State<SettingsOverlay> {
                         fontWeight: _group == i
                             ? FontWeight.w700
                             : FontWeight.w400,
-                        color: kSettingGroups[i].live
-                            ? (_group == i
-                                ? const Color(0xFF1E88E5)
-                                : const Color(0xFF2D3748))
-                            : const Color(0xFFA0AEC0),
+                        color: _group == i
+                            ? const Color(0xFF1E88E5)
+                            : const Color(0xFF2D3748),
                       ),
                     ),
                   ),
-                  if (!kSettingGroups[i].live)
-                    const Text('待接入',
-                        style: TextStyle(
-                            fontSize: 9, color: Color(0xFFCBD5E0))),
                 ],
               ),
             ),
@@ -363,10 +373,14 @@ class SettingsOverlayState extends State<SettingsOverlay> {
     );
   }
 
-  /// ⑦ 高级：**本地暂存**的可见性 + 清除（S4-e-①）
+  /// ⑦ 高级：**诊断** ＋ **只读源码** ＋ **本地暂存**（U1，2026-10-19）
   ///
-  /// 为什么放在这里：暂存是"看不见的基础设施"，但用户有权知道**它存在、存在哪、什么时候存的**，
-  /// 也需要一个"我不想让它留着"的按钮（原则 5：可疑要可见）。
+  /// 口径（用户 2026-10-19 拍板）：
+  /// · 诊断清单与状态栏那个入口是**同一个对话框**（不另造一份判据）；
+  /// · **诊断信息**只读、可一键复制 —— 出问题时把这一块粘给我就能定位环境；
+  /// · **源码**只做只读浮层（日常不需要看编码；可选中复制，排查够用）；
+  ///   可编辑的源码视图（原 S5 的三态之一）**不做**，在《后优化清单》里记账；
+  /// · **本地暂存**：位置 + 时间 + 清除（清除会连带设置 ⇒ **二次确认**，并把后果写在框里）。
   List<Widget> _advancedGroup() {
     final DateTime? at = widget.sessionSavedAt;
     final String when = at == null
@@ -374,7 +388,64 @@ class SettingsOverlayState extends State<SettingsOverlay> {
         : '上次暂存 ${at.hour.toString().padLeft(2, '0')}:'
             '${at.minute.toString().padLeft(2, '0')}:'
             '${at.second.toString().padLeft(2, '0')}';
+    final int wrapped = widget.autoWrappedCount;
     return <Widget>[
+      const SettingSection(title: '诊断'),
+      SettingRow(
+        title: '诊断清单',
+        subtitle: wrapped > 0
+            ? '最近一次粘贴里，编辑器替你补了 $wrapped 处 `\$…\$` —— 点开看是哪几处、能跳过去。'
+            : '暂时没有"编辑器替你补的编码"。清单里还会列出解析失败 / 超出一页的块。',
+        dense: true,
+        child: Align(
+          alignment: Alignment.centerLeft,
+          child: OutlinedButton(
+            key: const Key('advanced-diagnostics'),
+            onPressed: widget.onShowDiagnostics,
+            child: const Text('查看清单', style: TextStyle(fontSize: 12)),
+          ),
+        ),
+      ),
+      SettingRow(
+        title: '诊断信息',
+        subtitle: '出问题时把这一整块复制给我（版本 / 平台 / 页面几何 / 文档规模 / 暂存位置）。',
+        dense: true,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            SelectableText(
+              widget.diagnosticsText,
+              key: const Key('advanced-diagnostics-text'),
+              style: const TextStyle(
+                  fontSize: 11,
+                  height: 1.5,
+                  fontFamily: 'monospace',
+                  color: Color(0xFF2D3748)),
+            ),
+            const SizedBox(height: 6),
+            OutlinedButton(
+              key: const Key('advanced-copy-diagnostics'),
+              onPressed: _copyDiagnostics,
+              child: const Text('复制诊断信息', style: TextStyle(fontSize: 12)),
+            ),
+          ],
+        ),
+      ),
+      const SettingSection(title: '源码'),
+      SettingRow(
+        title: '查看源码',
+        subtitle: '只读：文档存的就是这段标准 Markdown + LaTeX（可选中复制）。'
+            '日常不需要看它 —— 数学只以渲染态出现。',
+        dense: true,
+        child: Align(
+          alignment: Alignment.centerLeft,
+          child: OutlinedButton(
+            key: const Key('advanced-source'),
+            onPressed: widget.onShowSource,
+            child: const Text('打开源码', style: TextStyle(fontSize: 12)),
+          ),
+        ),
+      ),
       const SettingSection(title: '本地暂存（刷新 / 崩溃不丢）'),
       SettingRow(
         title: '暂存位置',
@@ -398,23 +469,65 @@ class SettingsOverlayState extends State<SettingsOverlay> {
       ),
       SettingRow(
         title: '清除本地暂存',
-        subtitle: '清掉之后，下次启动不会再恢复这份内容（当前页面里的东西不受影响）。',
+        subtitle: '会清掉两样：① 下次启动自动恢复的那份内容；② 同一份文件里存着的界面 / 排版 / '
+            '快捷键设置（等于恢复出厂）。**你已保存的 .md 文件不受影响。**',
         dense: true,
         child: Align(
           alignment: Alignment.centerLeft,
           child: OutlinedButton(
             key: const Key('session-clear'),
-            onPressed: widget.onClearSession == null
-                ? null
-                : () => widget.onClearSession!(),
-            child: const Text('清除', style: TextStyle(fontSize: 12)),
+            onPressed: widget.onClearSession == null ? null : _confirmClearSession,
+            child: const Text('清除…',
+                style: TextStyle(fontSize: 12, color: Color(0xFFC53030))),
           ),
         ),
       ),
-      const SettingSection(title: '其它'),
-      _pending('高级',
-          '源码视图（S5）· 诊断清单：在**状态栏**点「自动包裹 N 处 · 查看清单 ›」。'),
     ];
+  }
+
+  /// 「复制诊断信息」（U1）：复制成功给一条 SnackBar —— 否则用户不知道按了有没有用
+  Future<void> _copyDiagnostics() async {
+    await Clipboard.setData(ClipboardData(text: widget.diagnosticsText));
+    if (!mounted) return;
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(
+      content: const Text('诊断信息已复制', style: TextStyle(fontSize: 12)),
+      duration: const Duration(milliseconds: 1200),
+      behavior: SnackBarBehavior.floating,
+      width: 200,
+    ));
+  }
+
+  /// 「清除本地暂存」的**二次确认**（U1）：它连带清掉设置 ⇒ 必须把后果写清楚再问一次
+  Future<void> _confirmClearSession() async {
+    final VoidCallback? clear = widget.onClearSession;
+    if (clear == null) return;
+    final bool? ok = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext c) => AlertDialog(
+        key: const Key('session-clear-confirm'),
+        title: const Text('清除本地暂存？', style: TextStyle(fontSize: 16)),
+        content: const Text(
+          '会清掉：\n'
+          '① 下次启动自动恢复的那份内容；\n'
+          '② 同一份文件里存着的**界面 / 排版 / 快捷键设置**（等于恢复出厂）。\n\n'
+          '你**已经保存的 .md 文件不受影响**。',
+          style: TextStyle(fontSize: 12, height: 1.6),
+        ),
+        actions: <Widget>[
+          TextButton(
+            key: const Key('session-clear-cancel'),
+            onPressed: () => Navigator.of(c).pop(false),
+            child: const Text('取消', style: TextStyle(fontSize: 12)),
+          ),
+          FilledButton(
+            key: const Key('session-clear-ok'),
+            onPressed: () => Navigator.of(c).pop(true),
+            child: const Text('清除', style: TextStyle(fontSize: 12)),
+          ),
+        ],
+      ),
+    );
+    if (ok == true && mounted) clear();
   }
 
   /// ⑤ 快捷键（★ **会说实话的表**：39 条里真正接上的 17 条带徽标）
@@ -429,22 +542,17 @@ class SettingsOverlayState extends State<SettingsOverlay> {
     );
   }
 
-  /// ⑥ 智能输入：三个"打字即渲染"的开关 ＋ 词触发表（词是用户自己编的 ⇒ 可加行可删行）
+  /// ⑥ 智能输入：两条"打字即渲染"的开关 ＋ 词触发表（词是用户自己编的 ⇒ 可加行可删行）
+  ///
+  /// ★★ 2026-10-19（U1，用户要求）：**`/` → 分式 不在这里重复给开关** ——
+  /// 它是「快捷键」页那条 `分式（打字 / 自动展开）` 的**启用 / 停用**
+  /// （`ShortcutSettings.isDisabled('typeFracKey')`）。一处语义只留一条写入路径。
   List<Widget> _triggerGroup() {
     final TriggerSettings? t = widget.triggers;
     final AppSettings s = widget.settings;
     void set(AppSettings v) => widget.onSettings(v);
     return <Widget>[
-      const SettingSection(title: '自动展开（S4-c 已接入）'),
-      SwitchRow(
-        key: const Key('auto-slash'),
-        title: '打字「/」就变成分式',
-        subtitle: '光标前那个符号当分子，光标落进分母（Word 的 Autoformat 同款）。'
-            '不想要就关掉 —— 关掉后「/」就是普通斜杠。',
-        value: s.autoSlashFraction,
-        modified: !s.autoSlashFraction,
-        onChanged: (bool v) => set(s.copyWith(autoSlashFraction: v)),
-      ),
+      const SettingSection(title: '自动展开'),
       SwitchRow(
         key: const Key('auto-word'),
         title: '词触发（打字即模板）',
@@ -952,17 +1060,35 @@ class SettingsOverlayState extends State<SettingsOverlay> {
 
   // ---------------- ⑨关于 ----------------
 
+  /// ★★ 2026-10-19（U1）：**不再写"阶段 S4-b②"这种内部批次号**（用户要求：界面里不出现 S4c/S4e/S5）。
+  /// 只留三样真东西：产品名 / 一条原则 / 版本 · 平台 · 渲染引擎（可选中复制，方便你报给我）。
   List<Widget> _aboutGroup() {
     return <Widget>[
-      const SettingSection(title: '数语引擎（mathlang）'),
+      const SettingSection(title: '$kAppName（mathlang）'),
       const Padding(
         padding: EdgeInsets.symmetric(vertical: 4),
         child: Text('用户永远不需要看数学编码 —— 数学只以渲染态出现。',
             style: TextStyle(fontSize: 12, color: Color(0xFF2D3748))),
       ),
-      const Text('阶段 S4-b②（界面与设置）· 平台 web / android · 自研内核 + flutter_math_fork',
-          style: TextStyle(fontSize: 11, color: Color(0xFF718096))),
+      SelectableText(
+        '版本 $kAppVersion · ${_platformLabel()}\n渲染引擎 $kMathEngine',
+        key: const Key('about-version'),
+        style: const TextStyle(fontSize: 11, height: 1.5, color: Color(0xFF718096)),
+      ),
     ];
+  }
+
+  /// 平台名（诊断与关于共用）—— 不写 "web / android" 那种想当然的话，取真实目标平台
+  String _platformLabel() {
+    if (kIsWeb) return 'Web';
+    return switch (defaultTargetPlatform) {
+      TargetPlatform.windows => 'Windows',
+      TargetPlatform.android => 'Android',
+      TargetPlatform.macOS => 'macOS',
+      TargetPlatform.iOS => 'iOS',
+      TargetPlatform.linux => 'Linux',
+      TargetPlatform.fuchsia => 'Fuchsia',
+    };
   }
 }
 

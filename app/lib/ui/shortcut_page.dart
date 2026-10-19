@@ -370,7 +370,7 @@ class WordTriggerView extends StatelessWidget {
         const Padding(
           padding: EdgeInsets.only(bottom: 6),
           child: Text(
-            '○ 还没接入输入链（S4-c）。现在可以先编词表，接入那天按这张表生效。',
+            '○ 还没接入输入链。现在可以先编词表，接入那天按这张表生效。',
             style: TextStyle(fontSize: 10, color: Color(0xFF718096)),
           ),
         ),

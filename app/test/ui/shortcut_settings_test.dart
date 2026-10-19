@@ -53,12 +53,12 @@ Future<void> _capture(WidgetTester tester, String actionId, int index,
 
 void main() {
   group('① 这张表说实话', () {
-    testWidgets('顶部报 已接入 45 / 共 46', (WidgetTester tester) async {
+    testWidgets('顶部报 已接入 46 / 共 46（U1 之后一条未接入都不剩）', (WidgetTester tester) async {
       await _pump(tester);
-      expect(find.text('已接入 45 / 共 46'), findsOneWidget);
+      expect(find.text('已接入 46 / 共 46'), findsOneWidget);
     });
 
-    testWidgets('已接入的（撤销）与未接入的（源码视图）徽标不同',
+    testWidgets('源码视图也已是「已接入」（U1 接成只读浮层）；页面里不再有未接入徽标',
         (WidgetTester tester) async {
       await _pump(tester);
       expect(
@@ -66,14 +66,15 @@ void main() {
               of: find.byKey(const Key('shortcut-status-undo')),
               matching: find.text('已接入')),
           findsOneWidget);
-      // ★ S4-c 之后只剩「源码视图」（S5）未接入
       await tester.ensureVisible(
           find.byKey(const Key('shortcut-status-sourceView')));
       expect(
           find.descendant(
               of: find.byKey(const Key('shortcut-status-sourceView')),
-              matching: find.text('未接入')),
-          findsOneWidget);
+              matching: find.text('已接入')),
+          findsOneWidget,
+          reason: '★★ U1 之后源码视图是"只读浮层"，真接上了');
+      expect(find.text('未接入'), findsNothing);
     });
 
     testWidgets('默认表不报冲突（打开就该是干净的）', (WidgetTester tester) async {

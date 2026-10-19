@@ -61,7 +61,6 @@ class AppSettings {
     this.fitWidthOnPhone = true,
     this.showEmptySuggestions = true,
     this.showCellLabels = true,
-    this.autoSlashFraction = true,
     this.autoWordTriggers = true,
     this.autoShorthand = true,
   });
@@ -107,11 +106,8 @@ class AppSettings {
   /// 面板格子里显不显示中文名（关掉 ⇒ 格子更大、不再被截字）
   final bool showCellLabels;
 
-  /// ★★ S4-c：**`/` → 分式**（Word 的 Autoformat 同款）。
-  ///
-  /// 默认**开**（《S4》§C2 把它列在默认表里，且用户明确"不加护栏、不想用就去设置里关"）。
-  /// 关掉 ⇒ `/` 就是普通斜杠字符。
-  final bool autoSlashFraction;
+  // ★★ 2026-10-19（U1）：`/` → 分式 的开关**不在这里** —— 它是「快捷键」页
+  //   `分式（打字 / 自动展开）` 那条的**启用 / 停用**（一处语义只留一条写入路径）。
 
   /// ★★ S4-c：**词触发**（`sqrt` + 空格/Tab ⇒ `\sqrt{}`）。关掉 ⇒ 只打字母。
   final bool autoWordTriggers;
@@ -161,7 +157,6 @@ class AppSettings {
     bool? fitWidthOnPhone,
     bool? showEmptySuggestions,
     bool? showCellLabels,
-    bool? autoSlashFraction,
     bool? autoWordTriggers,
     bool? autoShorthand,
   }) =>
@@ -179,8 +174,7 @@ class AppSettings {
         fitWidthOnPhone: fitWidthOnPhone ?? this.fitWidthOnPhone,
         showEmptySuggestions: showEmptySuggestions ?? this.showEmptySuggestions,
         showCellLabels: showCellLabels ?? this.showCellLabels,
-        autoSlashFraction: autoSlashFraction ?? this.autoSlashFraction,
-        autoWordTriggers: autoWordTriggers ?? this.autoWordTriggers,
+          autoWordTriggers: autoWordTriggers ?? this.autoWordTriggers,
         autoShorthand: autoShorthand ?? this.autoShorthand,
       );
 

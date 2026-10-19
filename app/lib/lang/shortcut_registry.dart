@@ -196,8 +196,13 @@ const List<ShortcutAction> kShortcutActions = <ShortcutAction>[
   //   ⚠️ 这两条**暂不支持改键**：行为由"打字即渲染"（`lang/auto_expand.dart`）产生，
   //      不由快捷键表分发。要改成可改键，得给编辑器加"动作插入字符"的通道 + **短路去重**
   //      （动作与平台文本通道会各插一次），那是单独一批的事。
-  ShortcutAction(id: 'typeSup', name: '上标（打 ^）', group: '数学类', combo: 'Shift+6', status: ShortcutStatus.wired),
-  ShortcutAction(id: 'typeFracKey', name: '分式（打 /）', group: '数学类', combo: '/', status: ShortcutStatus.wired),
+  //   ★★ 2026-10-19（U1）：这两条就是"**自动展开规则**"本身，本节里**只有"启用/停用"有效**
+  //     （停用 ⇒ `lang/auto_expand.dart` 不再把那个字符展开；组合键只是它吃的那个字符，
+  //      改了不会生效）—— 名字里写清楚，别再让人以为能改键。
+  //   ★ 同一件事不在「智能输入」里重复给开关：`/`→分式 的**唯一开关**就是这一行的停用
+  //     （原来的 `AppSettings.autoSlashFraction` 已删除）。
+  ShortcutAction(id: 'typeSup', name: '上标（打字 ^ 自动展开）', group: '数学类', combo: 'Shift+6', status: ShortcutStatus.wired),
+  ShortcutAction(id: 'typeFracKey', name: '分式（打字 / 自动展开）', group: '数学类', combo: '/', status: ShortcutStatus.wired),
   ShortcutAction(id: 'frac', name: '分式', group: '数学类', combo: 'Ctrl+Alt+F', status: ShortcutStatus.wired),
   ShortcutAction(id: 'sqrt', name: '根号', group: '数学类', combo: 'Ctrl+Alt+R', status: ShortcutStatus.wired),
   ShortcutAction(id: 'sup', name: '上标', group: '数学类', combo: 'Ctrl+ArrowUp', status: ShortcutStatus.wired),
@@ -236,7 +241,9 @@ const List<ShortcutAction> kShortcutActions = <ShortcutAction>[
   ShortcutAction(id: 'open', name: '打开…', group: '编辑类', combo: 'Ctrl+O', status: ShortcutStatus.wired),
   ShortcutAction(id: 'save', name: '保存', group: '编辑类', combo: 'Ctrl+S', status: ShortcutStatus.wired),
   ShortcutAction(id: 'saveAs', name: '另存为…', group: '编辑类', combo: 'Ctrl+Shift+S', status: ShortcutStatus.wired),
-  ShortcutAction(id: 'sourceView', name: '源码视图', group: '编辑类', combo: 'Ctrl+Alt+D', status: ShortcutStatus.planned, note: 'S5'),
+  // ★★ 2026-10-19（U1）：**源码视图接上了** —— 打开「高级 → 查看源码」那个**只读浮层**
+  //   （同一个函数，不会有两份行为）。于是这张表里**再没有"未接入"的行**。
+  ShortcutAction(id: 'sourceView', name: '源码视图（只读）', group: '编辑类', combo: 'Ctrl+Alt+D', status: ShortcutStatus.wired),
 ];
 
 /// 一个动作最多几条键（主键 + 副键）

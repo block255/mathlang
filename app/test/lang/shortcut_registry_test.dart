@@ -9,18 +9,18 @@ import 'package:mathlang/lang/shortcut_registry.dart';
 
 void main() {
   group('① 表本身', () {
-    test('46 条动作，其中 45 条已接入（只剩源码视图等 S5）', () {
+    test('46 条动作，**全部已接入**（源码视图在 U1 接成只读浮层）', () {
       expect(kShortcutActions.length, 46);
       expect(ShortcutSettings.total, 46);
       // ★ 2026-10-18 S4-c：整套 Ctrl+Alt+* / Ctrl+↑↓ / Ctrl+1..3 接线完成
-      expect(ShortcutSettings.wiredCount, 45);
+      expect(ShortcutSettings.wiredCount, 46);
       final List<ShortcutAction> planned = <ShortcutAction>[
         for (final ShortcutAction a in kShortcutActions)
           if (!a.wired) a,
       ];
-      expect(planned.length, 1);
-      expect(planned.single.id, 'sourceView');
-      expect(planned.single.note, contains('S5'));
+      expect(planned, isEmpty,
+          reason: '★★ 2026-10-19（U1）：`sourceView` 接成了「只读源码浮层」⇒ '
+              '表里一条"未接入"都不该剩；将来新增未接入动作时同步改这条');
     });
 
     test('id 唯一、分组都在允许的五个类目里', () {

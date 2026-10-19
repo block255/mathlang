@@ -17,7 +17,8 @@
 import 'dart:async';
 import 'dart:math' as math;
 
-import 'package:flutter/foundation.dart' show kReleaseMode;
+import 'package:flutter/foundation.dart'
+    show kReleaseMode, defaultTargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -39,8 +40,10 @@ import '../io/session_store.dart';
 import '../io/session_store_platform.dart';
 import '../layout/page_metrics.dart';
 import '../spike/s3_edit/s3_edit_page.dart' show kEditSample;
+import '../app_info.dart';
 import 'app_settings.dart';
 import 'diagnostics_panel.dart';
+import 'source_view.dart';
 import 'quick_bar.dart';
 import 'env_size_dialog.dart';
 import '../lang/env_resize.dart';
@@ -70,7 +73,7 @@ const Map<String, String> kShortcutSymbolIds = <String, String>{
 const Set<String> kShellActions = <String>{
   'newdoc', 'open', 'save', 'saveAs', 'settings', 'panelToggle', 'quickSlot',
   'h1', 'h2', 'h3', 'ol', 'ul', 'quote', 'codeblock', 'pagebreak', //
-  'mathDisplay', 'frac', 'sqrt', 'sup', 'sub', 'integral',
+  'mathDisplay', 'frac', 'sqrt', 'sup', 'sub', 'integral', 'sourceView',
   'summ', 'limit', 'aligned', 'cases', 'pmatrix', 'binom',
 };
 
@@ -479,6 +482,44 @@ class EditorPageState extends State<EditorPage> {
       spans: spans,
       onJump: (MathSpan s) => _editKey.currentState?.jumpTo(s.start, s.end),
     );
+  }
+
+  /// ★★ 2026-10-19（U1）：「高级 → 查看源码」打开的**只读浮层**
+  void openSourceView() {
+    showSourceView(context, text: _buf.buf, title: '源码（只读）');
+  }
+
+  /// ★★ 2026-10-19（U1）：**诊断信息** —— 出问题时用户把这一块粘给我就能定位环境。
+  ///
+  /// 口径：**只放"我确实会看"的量**（版本 / 平台 / 页面几何 / 文档规模 / 暂存位置），
+  /// 不放自我表扬式的统计。全部是只读事实，不涉及正文内容（隐私）。
+  String diagnosticsReport() {
+    final double dpr = MediaQuery.of(context).devicePixelRatio;
+    final Size vp = MediaQuery.of(context).size;
+    final PageGeometry geo = PageGeometry.from(_doc);
+    final int pages = _stats.pages <= 0 ? 1 : _stats.pages;
+    final String saved = _sessionSavedAt == null
+        ? '（还没有）'
+        : '${_sessionSavedAt!.hour.toString().padLeft(2, '0')}:'
+            '${_sessionSavedAt!.minute.toString().padLeft(2, '0')}:'
+            '${_sessionSavedAt!.second.toString().padLeft(2, '0')}';
+    final String display = _doc.displayFontSize == null
+        ? '跟随正文'
+        : _doc.displayFontSize!.toStringAsFixed(0);
+    return <String>[
+      '$kAppName $kAppVersion · 渲染引擎 $kMathEngine',
+      '平台 ${defaultTargetPlatform.name} · dpr ${dpr.toStringAsFixed(2)} · '
+          '视口 ${vp.width.toStringAsFixed(0)}×${vp.height.toStringAsFixed(0)}',
+      '页面 A4 ${geo.pageWidth.toStringAsFixed(1)}×${geo.pageHeight.toStringAsFixed(1)} · '
+          '正文宽 ${geo.contentWidth.toStringAsFixed(1)}（固定，任何面板开关都不变）',
+      '文档 $pages 页 · ${_stats.length} 字符 · ${_stats.edits} 次编辑 · '
+          '自动包裹 ${_stats.autoWrapped} 处',
+      '排版 正文字号 ${_doc.bodyFontSize.toStringAsFixed(0)} · 行距 ${_doc.lineHeight} · '
+          '行间公式字号 $display',
+      '设置 面板${_panelOpen ? '开' : '关'} · 快捷栏${_quickOpen ? '开' : '关'} · '
+          '面板形态 ${_s.panelMode.name}',
+      '暂存 ${_sessionPath.isEmpty ? '（尚未确定）' : _sessionPath} · 上次 $saved',
+    ].join('\n');
   }
 
   void _onStats(EditViewStats s) {
@@ -940,6 +981,11 @@ class EditorPageState extends State<EditorPage> {
       case 'settings':
         _settingsOpen ? closeSettings() : openSettings();
         return true;
+      // ★★ 2026-10-19（U1）：`Ctrl+Alt+D` = 打开**只读源码浮层**
+      //   （与「高级 → 查看源码」是同一个函数 ⇒ 不会有两份行为）
+      case 'sourceView':
+        openSourceView();
+        return true;
       case 'panelToggle':
         togglePanel();
         return true;
@@ -1100,6 +1146,11 @@ class EditorPageState extends State<EditorPage> {
                     sessionPath: _sessionPath,
                     sessionSavedAt: _sessionSavedAt,
                     onClearSession: clearSession,
+                    // ★★ 2026-10-19（U1）：「高级」组的三块 —— 诊断清单 / 诊断信息 / 只读源码
+                    diagnosticsText: diagnosticsReport(),
+                    autoWrappedCount: _stats.autoWrapped,
+                    onShowDiagnostics: openDiagnostics,
+                    onShowSource: openSourceView,
                     onShortcuts: (ShortcutSettings v) =>
                         setState(() => _shortcuts = v),
                     onTriggers: (TriggerSettings v) =>
@@ -1464,7 +1515,9 @@ class EditorPageState extends State<EditorPage> {
                 onStats: _onStats,
                 // ★ S4-c：词触发表 + 三个自动展开开关（设置页「智能输入」里改）
                 triggers: _triggers,
-                autoSlashFraction: _s.autoSlashFraction,
+                // ★★ 2026-10-19（U1）：`/` → 分式 的开关 = 「快捷键」页那条
+                //   `分式（打字 / 自动展开）` 的**启用/停用**（不再读 AppSettings —— 那个字段已删）
+                autoSlashFraction: !_shortcuts.isDisabled('typeFracKey'),
                 autoWordTriggers: _s.autoWordTriggers,
                 autoShorthand: _s.autoShorthand,
               ),
