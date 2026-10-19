@@ -176,6 +176,11 @@ class EditViewState extends State<EditView> {
   bool _dragging = false;
   Offset? _pressAt;
 
+  /// ★★ 2026-10-19（L4）：这一按是"连击选单位"（双击选词 / 三击选整块）。
+  /// 父层 `onPointerDown` 的"按下即收起选区"要让开 —— 它跑在子层之后，
+  /// 否则刚选好的词/整块会**当场被收成光标**（实测：双击/三击都选不出东西）。
+  bool _multiSelectPress = false;
+
   /// 这次按下有没有命中到某个偏移（`onTapOffset` 是否被调用过）
   bool _pressHit = false;
 
@@ -1025,15 +1030,20 @@ class EditViewState extends State<EditView> {
   // ---------------- ⑤ 拖选 / 双击 / 三击 ----------------
 
   /// 指针**按下**落在某个偏移上（DocView 命中后回吐）—— 决定这次是"点击"还是"连击"
-  void _onPressHit(int offset) {
+  void _onPressHit(int offset, Offset pos) {
     _pressHit = true;
     _pokeBlink();
-    final Offset? pos = _pressAt;
+    // ★★ 2026-10-19（L4 收尾）：连击的判据必须用**这一按**的位置。
+    //   以前读 `_pressAt` —— 那是父层 `Listener.onPointerDown` 写的，而父层在**子层之后**才跑
+    //   ⇒ 此处拿到的是**上一按**的位置 ⇒ 实测"双击永远只算单击、三击被算成双击"。
     final DateTime now = DateTime.now();
     final bool sameSpot =
-        _lastClickPos != null && pos != null && (pos - _lastClickPos!).distance < 6;
+        _lastClickPos != null && (pos - _lastClickPos!).distance < 6;
     final bool quick = _lastClickAt != null &&
         now.difference(_lastClickAt!) < const Duration(milliseconds: 400);
+    // 这一按是不是"连击选单位"（双击选词 / 三击选整块）——
+    // 父层收选区时要让开，否则刚选好的词/整块会当场被收成光标（实测）。
+    _multiSelectPress = false;
     if (sameSpot && quick) {
       _clickCount = _clickCount >= 3 ? 1 : _clickCount + 1;
     } else {
@@ -1052,12 +1062,14 @@ class EditViewState extends State<EditView> {
       final ({int start, int end}) r = wordRangeAt(_buf.buf, offset);
       _buf.setSelection(r.start, r.end);
       _dragAnchor = null;
+      _multiSelectPress = true;
       return;
     }
     if (_clickCount >= 3) {
       final ({int start, int end}) r = unitRangeAt(_buf.buf, offset);
       _buf.setSelection(r.start, r.end);
       _dragAnchor = null;
+      _multiSelectPress = true;
       return;
     }
     _buf.setCaret(offset);
@@ -1208,12 +1220,20 @@ class EditViewState extends State<EditView> {
               //   ⇒ 改成**按下就收起选区**（点哪儿都收起，包括页边/空隙/标题），
               //   之后如果真的是拖，拖到 >3px 时再按新锚点重新起选区。
               //   `Shift+点击` 例外（那是"扩展选区"的意思）。
-              if (!HardwareKeyboard.instance.isShiftPressed && _buf.hasSelection) {
+              final bool keepSel = _multiSelectPress;
+              _multiSelectPress = false; // 只对**这一按**有效
+              if (!HardwareKeyboard.instance.isShiftPressed &&
+                  _buf.hasSelection &&
+                  !keepSel) {
                 _buf.setCaret(_buf.caret);
               }
               _pressAt = e.position;
               _dragging = false;
-              _pressHit = false;
+              // ★★ 2026-10-19（L4）：**不许在这里清 `_pressHit`** ——
+              //   父层 `onPointerDown` 在**子层之后**才跑，而子层（`_onPressHit`）刚把它置 true。
+              //   在这里清掉 ⇒ 松手时 `_endDrag` 认为"没命中任何单元"⇒
+              //   把刚选好的词/整块**收成光标**（实测：双击/三击都选不出东西）。
+              //   `_pressHit` 的复位放在 `_endDrag` 末尾（那时这一按已经结束）。
             },
             onPointerMove: (PointerMoveEvent e) => _onDragMove(e.position),
             onPointerUp: (PointerUpEvent e) => _endDrag(e.position),
@@ -1222,9 +1242,9 @@ class EditViewState extends State<EditView> {
               key: _docKey,
               buffer: widget.buffer,
               settings: widget.settings,
-              onTapOffset: (int offset) {
+              onTapOffset: (int offset, Offset global) {
                 focusInput(); // 必须在用户手势里拿焦点，浏览器才肯把 IME 接上
-                _onPressHit(offset);
+                _onPressHit(offset, global);
               },
               // ★★ 2026-10-18（PC-5）：行间块上右键 ⇒ 改尺寸（只有多行环境接得住）
               onEnvResizeRequest: _resizeEnvAt,

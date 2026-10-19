@@ -33,7 +33,7 @@ Future<({DocBuffer buf, List<Rect?> carets, List<int> taps})> _pump(
         child: DocView(
           buffer: buf,
           onCaretRect: carets.add,
-          onTapOffset: taps.add,
+          onTapOffset: (int offset, Offset _) => taps.add(offset),
         ),
       ),
     ),

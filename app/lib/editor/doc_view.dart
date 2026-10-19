@@ -86,7 +86,7 @@ class _BlankSlot extends StatefulWidget {
   final double caretHeight;
   final double caretWidth;
   final Color caretColor;
-  final void Function(int at) onTap;
+  final void Function(int at, Offset global) onTap;
   final void Function(String id, RenderBox box) onBox;
 
   /// 竖条是否**贴顶**（末尾槽占整片剩余空白时，光标要紧贴最后一行下面，不浮在中间）
@@ -151,7 +151,7 @@ class _BlankSlotState extends State<_BlankSlot> {
           : (TapDownDetails d) {
               final RenderBox? box = context.findRenderObject() as RenderBox?;
               if (box == null || !box.hasSize) {
-                widget.onTap(widget.offset);
+                widget.onTap(widget.offset, d.globalPosition);
                 return;
               }
               final double dy = box.globalToLocal(d.globalPosition).dy;
@@ -161,9 +161,17 @@ class _BlankSlotState extends State<_BlankSlot> {
                   ? 0
                   : (rel / widget.lineHeight).floor();
               final int i = k.clamp(0, widget.lineOffsets.length - 1);
-              widget.onTap(widget.lineOffsets[i]);
+              widget.onTap(widget.lineOffsets[i], d.globalPosition);
             },
-      onTap: widget.lineOffsets.isEmpty ? () => widget.onTap(widget.offset) : null,
+      onTap: widget.lineOffsets.isEmpty
+          ? () {
+              final RenderBox? box = context.findRenderObject() as RenderBox?;
+              final Offset at = box == null
+                  ? Offset.zero
+                  : box.localToGlobal(box.size.center(Offset.zero));
+              widget.onTap(widget.offset, at);
+            }
+          : null,
       child: MouseRegion(
         cursor: SystemMouseCursors.text,
         child: SizedBox(
@@ -421,7 +429,12 @@ class DocView extends StatefulWidget {
   /// ★ S3-2：点屏幕 → **L0 里的绝对偏移**（调用方负责落光标）。
   /// 文字走 `RenderParagraph.getPositionForOffset` + 段落↔源坐标换算；
   /// 行内公式与行间公式走 S1 验证过的 `hitTestMathTex`（叶盒 ↔ 可见原子）再做位点吸附。
-  final void Function(int offset)? onTapOffset;
+  ///
+  /// ★★ 2026-10-19（L4）：**第二个参数是这一按的全局位置**。
+  ///   为什么必须给：连击（双击选词 / 三击选整块）要看"两次按下的位置是不是同一个"，
+  ///   而父层的 `Listener.onPointerDown` 在**子层之后**才跑 ⇒ 从那里读位置会**滞后一按**
+  ///   （实测：双击永远被算成单击、三击被算成双击）。
+  final void Function(int offset, Offset global)? onTapOffset;
 
   /// 行间块上**右键**时回调（参数 = 该块的源偏移）；多行环境才会被接住（PC-5）
   final void Function(int offset)? onEnvResizeRequest;
@@ -649,10 +662,10 @@ class DocViewState extends State<DocView> {
 
   /// 渲染树里某个单元被点中 → 算出 L0 绝对偏移
   void _handleUnitHit(_Unit u, BuildContext ctx, Offset global) {
-    final void Function(int)? cb = widget.onTapOffset;
+    final void Function(int, Offset)? cb = widget.onTapOffset;
     if (cb == null) return;
     final int? off = _offsetAt(u, ctx.findRenderObject(), global);
-    if (off != null) cb(off);
+    if (off != null) cb(off, global);
   }
 
   /// ★★ 2026-10-19（L18；用户选 **方案 B**）：**公式左缘外侧那 4 px**（行首时落在页边距里）。
@@ -667,7 +680,7 @@ class DocViewState extends State<DocView> {
   /// 把落点换成**该行行首**（在左缘内侧 0.5 px 处求一次 `_offsetAt`）
   /// ⇒ 行首若是公式，换出来就是"公式之前"；若是文字，就是那一行第一个字之前。
   void _onPagePointerDown(PointerDownEvent e) {
-    final void Function(int)? cb = widget.onTapOffset;
+    final void Function(int, Offset)? cb = widget.onTapOffset;
     if (cb == null) return;
     for (final _Unit u in _units) {
       if (u.type == BlockType.math) continue; // 行间块是整块认领的，不走这条
@@ -684,7 +697,7 @@ class DocViewState extends State<DocView> {
       if (e.position.dx < tl.dx - kInlineLeftBandPx) continue;
       final int? off =
           _offsetAt(u, box, Offset(tl.dx + 0.5, e.position.dy));
-      if (off != null) cb(off);
+      if (off != null) cb(off, e.position);
       return;
     }
   }
@@ -906,13 +919,13 @@ class DocViewState extends State<DocView> {
   /// **渲染用的 tex**、以及渲染盒 key）
   void _onMathTap(_Unit u, ProjectionSegment seg, String renderTex, Offset global,
       GlobalKey key) {
-    final void Function(int)? cb = widget.onTapOffset;
+    final void Function(int, Offset)? cb = widget.onTapOffset;
     if (cb == null) return;
     // ★★ §6.1.1（2026-10-18）：**空公式没有字形盒** ⇒ 走不了命中表。
     //   但它是**看得见的对象**（`EmptyMathMark` 那个虚线小框），点它必须"落进公式里"
     //   —— 空公式唯一的内容位点就是它的 contentStart。
     if (seg.tex.trim().isEmpty) {
-      cb(u.renderBase + seg.start);
+      cb(u.renderBase + seg.start, global);
       return;
     }
     final RenderObject? ro = key.currentContext?.findRenderObject();
@@ -928,7 +941,7 @@ class DocViewState extends State<DocView> {
     if (texRel == null) return;
     // ★ 位点吸附：落点必须是合法位点（设计稿 §2.4 的 P3）
     final int rel = buildCaretSites(seg.tex).snap(texRel).offset;
-    cb(u.renderBase + seg.start + rel);
+    cb(u.renderBase + seg.start + rel, global);
   }
 
   /// 找出**内容段落**（而不是列表标记那种小段落）。
@@ -1656,7 +1669,7 @@ class DocViewState extends State<DocView> {
             caretHeight: textCaretHeight(_s.bodyFontSize),
             caretWidth: 1.5,
             caretColor: const Color(kCaretColorValue),
-            onTap: (int at) => widget.onTapOffset?.call(at),
+            onTap: (int at, Offset global) => widget.onTapOffset?.call(at, global),
             onBox: (String id, RenderBox box) => _blankBoxes[id] = box,
           ));
         } else {
@@ -1715,7 +1728,7 @@ class DocViewState extends State<DocView> {
         caretWidth: 1.5,
         caretColor: const Color(kCaretColorValue),
         topAligned: true,
-        onTap: (int at) => _onTailBlankTap(),
+        onTap: (int at, Offset global) => _onTailBlankTap(),
         onBox: (String id, RenderBox box) => _blankBoxes[id] = box,
       ));
     } else if (p == layout.pageCount - 1 && _units.isEmpty) {
@@ -1739,7 +1752,7 @@ class DocViewState extends State<DocView> {
         caretWidth: 1.5,
         caretColor: const Color(kCaretColorValue),
         topAligned: true,
-        onTap: (int at) => widget.onTapOffset?.call(at),
+        onTap: (int at, Offset global) => widget.onTapOffset?.call(at, global),
         onBox: (String id, RenderBox box) => _blankBoxes[id] = box,
       ));
     }
