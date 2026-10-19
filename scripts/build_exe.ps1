@@ -111,6 +111,33 @@ Get-ChildItem $rel -Filter '*.dll' -File | ForEach-Object {
 }
 Copy-Item (Join-Path $rel 'data') $distDir -Recurse -Force
 
+# ★★ 2026-10-19：**给 exe 签名**（自签证书；Windows 11 26200 对未签名 exe 一律拦）。
+#   · 证书在「当前用户\个人」里（`signing\README.md` 有生成/导出/装根的步骤）；
+#   · 用 `Set-AuthenticodeSignature`（不需要 Windows SDK 的 signtool）；
+#   · **带公网时间戳** ⇒ 证书到期后已签的 exe 仍有效。
+#   ★ 必须在生成 SHA256 之前签 —— 签完文件字节变了，校验和要对得上最终产物。
+$signSubject = 'CN=数语引擎（自签）'
+$signCert = Get-ChildItem Cert:\CurrentUser\My -ErrorAction SilentlyContinue |
+    Where-Object { $_.Subject -eq $signSubject -and $_.HasPrivateKey } |
+    Sort-Object NotAfter -Descending | Select-Object -First 1
+$exeInDist = Join-Path $distDir 'mathlang.exe'
+if ($signCert) {
+    try {
+        $sig = Set-AuthenticodeSignature -FilePath $exeInDist -Certificate $signCert `
+            -HashAlgorithm SHA256 -TimestampServer 'http://timestamp.digicert.com'
+        if ($sig.Status -eq 'Valid') {
+            Write-Host "   [签名] √ $($signCert.Subject)  $($signCert.Thumbprint)" -ForegroundColor DarkGray
+        } else {
+            Write-Host "   [签名] × $($sig.Status)：$($sig.StatusMessage)" -ForegroundColor Yellow
+        }
+    } catch {
+        Write-Host "   [签名] × 失败：$($_.Exception.Message)" -ForegroundColor Yellow
+    }
+} else {
+    Write-Host "   [签名] 跳过 —— 没找到自签证书（$signSubject）；" `
+        "按 signing\README.md 生成一次即可（未签名的 exe 在 Win11 上会被 SmartScreen 拦）" -ForegroundColor Yellow
+}
+
 # SHA256 清单
 $lines = @()
 Get-ChildItem $distDir -Recurse -File | Where-Object { $_.Name -ne 'SHA256SUMS.txt' -and $_.Name -ne 'mathlang-session.json' } | ForEach-Object {
