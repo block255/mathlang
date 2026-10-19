@@ -1071,7 +1071,9 @@ class SettingsOverlayState extends State<SettingsOverlay> {
             style: TextStyle(fontSize: 12, color: Color(0xFF2D3748))),
       ),
       SelectableText(
-        '版本 $kAppVersion · ${_platformLabel()}\n渲染引擎 $kMathEngine',
+        // ★★ 2026-10-19（U2，用户问"这个 +1 是什么意思"）：**关于只显示版本名**
+        //   （`1.0.0`）；构建号 `+1` 只在「诊断信息」里出现（定位问题要看构建号）。
+        '版本 $kAppVersionName · ${_platformLabel()}\n渲染引擎 $kMathEngine',
         key: const Key('about-version'),
         style: const TextStyle(fontSize: 11, height: 1.5, color: Color(0xFF718096)),
       ),

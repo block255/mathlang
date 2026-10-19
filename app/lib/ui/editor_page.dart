@@ -630,16 +630,21 @@ class EditorPageState extends State<EditorPage> {
     }
     if (f == null) return;
 
-    final String ext = DocumentFile.extensionOf(f.name);
     final String raw = f.text;
     var text = raw;
     var wrapped = 0;
-    if (ext == 'txt') {
-      // 纯文本 ≈ "用户手上的一段话" ⇒ 与粘贴同一条口径（A2 智能包裹）
-      final SmartWrapPlan plan = planSmartWrap(raw);
-      wrapped = plan.runs.length;
-      if (plan.runs.isNotEmpty) text = applySmartWrap(raw, plan);
-    }
+    // ★★ 2026-10-19（U2，用户拍板方案 E）：**导入 md 也走智能包裹** —— 与粘贴**同一条链**。
+    //
+    // 为什么改（原来的口径是"md 原样、只有 txt 包裹"）：现实中 AI 给的答案**常常是
+    // "md + 裸 LaTeX"**（`\varepsilon` / `\left| \sum…\right| \le …` 都不带 `$`）。
+    // 实测用户那份 `作业辅导1.md`（1539 字符）扫出 **38 处**裸公式 —— 原样进来就是满屏编码，
+    // 直接违反原则 2（用户永远不需要看数学编码）。
+    // 而 `planSmartWrap` 本身就是**保守**的（证据驱动：`\命令` / 上下标 / 数学关系符才包；
+    // 纯英文与已有 `$…$` 一律不碰）⇒ 已经规范的 md **一处都不会改**。
+    // 兜底：整篇替换 = **一步撤销**；补了几处在 SnackBar 与状态栏「自动包裹 N 处」里都可见。
+    final SmartWrapPlan plan = planSmartWrap(raw);
+    wrapped = plan.runs.length;
+    if (plan.runs.isNotEmpty) text = applySmartWrap(raw, plan);
     _buf.loadDocument(text);
     _savedText = _buf.buf;
     final DocumentFile df =
@@ -649,8 +654,11 @@ class EditorPageState extends State<EditorPage> {
       _title = df.title;
     });
     _editKey.currentState?.focusInput();
+    // ★★ 2026-10-19（U2）：文案**只说真事** ——
+    //   `loadDocument` 会**清撤销栈**（导入 = 新文档，不参与撤销），所以这里**不许**承诺 Ctrl+Z；
+    //   安全网是另一条真事：**导入从不写回源文件**（原件一直没动，不满意可以重新导入）。
     _snack(wrapped > 0
-        ? '已导入 ${f.name}（智能包裹 $wrapped 处，可在状态栏查看）'
+        ? '已导入 ${f.name}：智能包裹 $wrapped 处（原文件没动，可重新导入）'
         : '已导入 ${f.name}');
   }
 

@@ -77,7 +77,7 @@ void main() {
       final SelectableText t = tester.widget<SelectableText>(
           find.byKey(const Key('advanced-diagnostics-text')));
       final String s = t.data ?? '';
-      expect(s, contains(kAppVersion), reason: '要有版本号');
+      expect(s, contains(kAppVersion), reason: '诊断信息要有完整版本（含构建号 +1）');
       expect(s, contains('正文宽'), reason: '要有正文宽（657.6 那条不变量）');
       expect(s, contains('页'), reason: '要有页数');
       expect(s, contains('暂存'), reason: '要有暂存位置');
@@ -179,7 +179,9 @@ void main() {
       final SelectableText t =
           tester.widget<SelectableText>(find.byKey(const Key('about-version')));
       final String s = t.data ?? '';
-      expect(s, contains(kAppVersion));
+      // ★★ U2：**关于只显示版本名**（1.0.0），构建号 +1 留给诊断信息
+      expect(s, contains(kAppVersionName));
+      expect(s, isNot(contains('+')), reason: '关于页不显示构建号（用户问过 +1 是什么）');
       expect(s, contains(kMathEngine));
       expect(s, isNot(contains('web / android')));
     });
