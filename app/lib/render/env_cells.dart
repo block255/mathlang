@@ -76,9 +76,26 @@ EnvGrid? buildEnvGrid({
   double? fontSize,
 }) {
   final CaretSiteTable t = buildCaretSites(tex);
+  // ★★★ 2026-10-19（L20；用户："矩阵/行列式里放进**带子位点的结构**（根号等）⇒
+  //   那个结构的子位点点不到 / 有的格子点不到 / 点不到里面"）。
+  //   真根因：**格子坐标不能取"path 里任意带 row/col 的步骤"**。
+  //   格子里放 `\sqrt{…}` / `x^2` / `\frac{}{}` 时，**结构自己的槽**会作为**嵌套位点**出现，
+  //   它的 path 末尾是 `(row: null, col: null)`。实测（3×3，第 1 行第 2 列放 `\sqrt{2}`）：
+  //
+  //     slot r0c0 [52,54)  path=(r0,c0)           → 22.2..32.8   ← 真正的 `a`
+  //     slot r0c0 [62,78)  path=(r0,c1)(null,null) → 74.2..90.2   ← ★ 顶掉上面那一格
+  //     slot r0c1 [55,80)  path=(r0,c1)           → 74.2..90.2
+  //
+  //   原因是旧判据 `s.path.any(row != null || col != null)` + `?? 0` ⇒ 那个尾垫槽被当成
+  //   **第 0 列**的格子、并把它的矩形**覆盖**掉 ⇒ 列带重叠（col0 17.5..90.2 vs col1 63.8..90.2）
+  //   ⇒ 命中按"第一个包含的列"取 ⇒ **点中间列落到第 0 列**。
+  //   ⇒ 只认**真正的格子槽**：`path` 的**最后一步**同时有 row 和 col。
+  //     （嵌套子槽永远不是格子；它的内容已经落在外层格子的区间里。）
   final List<SlotSpan> cells = t.slots
       .where((SlotSpan s) =>
-          s.path.any((SlotStep st) => st.row != null || st.col != null))
+          s.path.isNotEmpty &&
+          s.path.last.row != null &&
+          s.path.last.col != null)
       .toList();
   if (cells.isEmpty) return null;
   final List<LeafBox> boxes = scanLeafBoxes(root).eligible;
@@ -296,21 +313,25 @@ Rect? envCellRectAt({
 ///     `!atEnd` 给内容开头。空格子（没有内容）⇒ 首=尾=那个空位置本身。
 int? envCellOffset(String sourceTex, EnvCellHit hit) {
   final CaretSiteTable t = buildCaretSites(sourceTex);
+  // ★★ 2026-10-19（L20）：只认**最后一步是 (row, col)** 的槽，并且在多个匹配里取
+  //   **最外层那个**（区间最宽）—— 格子里放结构时会有嵌套子槽，别让它们冒充格子。
+  SlotSpan? best;
   for (final SlotSpan s in t.slots) {
-    final int? row = s.path.last.row;
-    final int? col = s.path.last.col;
-    if (row != hit.row || col != hit.col) continue;
-    var a = s.start;
-    while (a < s.end && (sourceTex[a] == ' ' || sourceTex[a] == '\t')) {
-      a++;
-    }
-    var b = s.end;
-    while (b > a && (sourceTex[b - 1] == ' ' || sourceTex[b - 1] == '\t')) {
-      b--;
-    }
-    return hit.atEnd ? b : a;
+    if (s.path.isEmpty) continue;
+    final SlotStep st = s.path.last;
+    if (st.row != hit.row || st.col != hit.col) continue;
+    if (best == null || (s.end - s.start) > (best.end - best.start)) best = s;
   }
-  return null;
+  if (best == null) return null;
+  var a = best.start;
+  while (a < best.end && (sourceTex[a] == ' ' || sourceTex[a] == '\t')) {
+    a++;
+  }
+  var b = best.end;
+  while (b > a && (sourceTex[b - 1] == ' ' || sourceTex[b - 1] == '\t')) {
+    b--;
+  }
+  return hit.atEnd ? b : a;
 }
 
 /// 供调用方判断"这段 tex 里有没有多行环境"

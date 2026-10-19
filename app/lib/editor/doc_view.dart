@@ -549,6 +549,14 @@ class DocViewState extends State<DocView> {
   /// （元素里平时是空的，宽度不影响插入符位置）。
   static const double _kCaretBoxWidth = 160.0;
 
+  /// ★★ 2026-10-19（L18；用户选 **方案 B**）：**行内公式左边缘的命中带宽度 = 4 px**。
+  ///
+  /// 两处用到（**都是命中层，不改排版**）：
+  /// · 公式**内部**的最左 4 px ⇒ 段首（`_mathTapTexOffset`）；
+  /// · 公式**外侧**的 4 px（行首时那一片属于页边距，谁也不认领）⇒ 段首（`_onPagePointerDown`）。
+  /// 实测依据：物理边界；文字的左缘也是"前一个字之后"，不是按比例切。
+  static const double kInlineLeftBandPx = 4.0;
+
   bool _caretRectScheduled = false;
 
   void _scheduleCaretRect() {
@@ -645,6 +653,40 @@ class DocViewState extends State<DocView> {
     if (cb == null) return;
     final int? off = _offsetAt(u, ctx.findRenderObject(), global);
     if (off != null) cb(off);
+  }
+
+  /// ★★ 2026-10-19（L18；用户选 **方案 B**）：**公式左缘外侧那 4 px**（行首时落在页边距里）。
+  ///
+  /// 探针实测（行内公式在**行首**、光标先在文末）：点它左缘
+  /// **−2 / −4 / −6 / −10 / −16 px ⇒ 光标一动不动** —— 那几像素既不在段落盒里、
+  /// 也不在公式的 `WidgetSpan` 里 ⇒ **谁都不认领**。而点它自己最左 0 px 则落进公式内部。
+  /// ⇒ 行首公式的"左边"根本没有落点，与"文字左边 = 前一个字之后"**不同权**。
+  ///
+  /// 做法：页面级 `Listener`（页边距那一片本来没人接指针，所以**不会抢任何东西**），
+  /// 只在"**某个单元左缘 − 4 px … 左缘**之间 + 竖直落在该单元内"时生效：
+  /// 把落点换成**该行行首**（在左缘内侧 0.5 px 处求一次 `_offsetAt`）
+  /// ⇒ 行首若是公式，换出来就是"公式之前"；若是文字，就是那一行第一个字之前。
+  void _onPagePointerDown(PointerDownEvent e) {
+    final void Function(int)? cb = widget.onTapOffset;
+    if (cb == null) return;
+    for (final _Unit u in _units) {
+      if (u.type == BlockType.math) continue; // 行间块是整块认领的，不走这条
+      final RenderBox? box = _unitBoxes[u.id];
+      if (box == null || !box.attached || !box.hasSize) continue;
+      final Offset tl = box.localToGlobal(Offset.zero);
+      if (e.position.dy < tl.dy || e.position.dy > tl.dy + box.size.height) {
+        continue;
+      }
+      // 落在单元**里面** ⇒ 单元自己的命中盒已经处理了，这里必须让开（否则会算两次）
+      if (e.position.dx >= tl.dx && e.position.dx <= tl.dx + box.size.width) {
+        return;
+      }
+      if (e.position.dx < tl.dx - kInlineLeftBandPx) continue;
+      final int? off =
+          _offsetAt(u, box, Offset(tl.dx + 0.5, e.position.dy));
+      if (off != null) cb(off);
+      return;
+    }
   }
 
   /// ★★ ⑤ 拖选要用的**纯查询**：某个全局坐标落在哪个偏移上（不改任何状态）。
@@ -791,6 +833,13 @@ class DocViewState extends State<DocView> {
     if (displayStyle) {
       if (localPos.dx < -2) return 0;
       if (localPos.dx > root.size.width + 2) return tex.length;
+    } else {
+      // ★★ 2026-10-19（L18；用户选 **方案 B**：**行内公式左边缘 4 px 命中带**）——
+      //   探针实测（行内公式在**行首**）：点它左缘 **0 px** ⇒ 落进公式**内部**（offset 7）；
+      //   点 −2 … −16 px ⇒ **光标一动不动**（那几像素谁都不认领，见下面 `_onPagePointerDown`）。
+      //   而文字左边是"前一个字之后" ⇒ 公式的左缘也该是"**公式之前**"（**物理边界**，不是 1/3 比例）。
+      //   只改命中层：`dx < 4` ⇒ 段首，**一个像素都不动排版**。
+      if (localPos.dx < kInlineLeftBandPx) return 0;
     }
 
     // ★★ 2026-10-18 晚（用户："坏文本导致符号之间点不到的问题依然存在，行列式也有"）：
@@ -1695,15 +1744,23 @@ class DocViewState extends State<DocView> {
       ));
     }
 
-    return PageSheet(
-      settings: _s,
-      metrics: _m,
-      pageNumber: p + 1,
-      pageCount: layout.pageCount,
-      warnings: warnings,
-      // ★ S4-d③：图片集 / 图片式 PDF 的抓取点（同一棵子树 = 同一张图）
-      sheetKey: _sheetKeyOf(p),
-      children: children,
+    return Listener(
+      // ★★ 2026-10-19（L18）：页边距那一片（含"行首公式左边 4 px"）原来**没人接指针**
+      //   ⇒ 点它什么都不发生。`opaque` 让这一页**整片**都进命中路径（页边距也算），
+      //   具体判断在 `_onPagePointerDown` 里（只在左缘带内才动手，其余一律让开）。
+      //   ★ `Listener` 只"听"指针、不参加手势竞技场 ⇒ 不影响滚动、不影响单元自己的点击。
+      behavior: HitTestBehavior.opaque,
+      onPointerDown: _onPagePointerDown,
+      child: PageSheet(
+        settings: _s,
+        metrics: _m,
+        pageNumber: p + 1,
+        pageCount: layout.pageCount,
+        warnings: warnings,
+        // ★ S4-d③：图片集 / 图片式 PDF 的抓取点（同一棵子树 = 同一张图）
+        sheetKey: _sheetKeyOf(p),
+        children: children,
+      ),
     );
   }
 
