@@ -111,7 +111,7 @@ EnvGrid? buildEnvGrid({
     final int row = k ~/ 1000;
     rowBand[row] = rowBand.containsKey(row) ? rowBand[row]!.expandToInclude(r) : r;
   });
-  final double rowH = estimateRowHeight(rowBand.values.toList());
+  double rowH = estimateRowHeight(rowBand.values.toList());
   for (var r = 0; r <= maxRow; r++) {
     if (rowBand.containsKey(r)) continue;
     Rect? anchor;
@@ -140,6 +140,28 @@ EnvGrid? buildEnvGrid({
       if (r.height >= rowH * 0.4) continue;
       rowBand[e.key] = Rect.fromLTRB(r.left, r.top, r.right, r.top + rowH);
     }
+  }
+
+  // ★★★ 2026-10-19：把行带**规整成等距网格**。
+  //   环境里每行高度相同，但"整行都空"的行只有零高填充垫 ⇒ 量出来的 y 挤在一起，
+  //   于是一点第三、四行就落到第二行上（用户实测"光标和框都跑到上面去了，把 d 盖住"）。
+  //   做法：以**第一行有墨迹的带**为基准，行距取各带高度的中位数，逐行等距排开。
+  final List<double> heights = rowBand.values
+      .map((Rect r) => r.height)
+      .where((double h) => h > 1)
+      .toList()
+    ..sort();
+  if (heights.isNotEmpty) {
+    final double pitch = heights[heights.length ~/ 2];
+    final double top0 = rowBand[0]!.top;
+    for (var r = 0; r <= maxRow; r++) {
+      rowBand[r] = Rect.fromLTRB(
+          rowBand[r]?.left ?? rowBand[0]!.left,
+          top0 + r * pitch,
+          rowBand[r]?.right ?? rowBand[0]!.right,
+          top0 + (r + 1) * pitch);
+    }
+    rowH = pitch;
   }
 
   // ③ 列带 + 补缺列
@@ -278,3 +300,24 @@ List<Rect> groupRowBands(List<Rect> rects) {
 
 /// 夹取工具（避免调用方自己写 clamp 时搞错边界）
 int clampOffset(int v, int length) => math.max(0, math.min(v, length));
+/// 第 (row, col) 格的**可视框**（给"画占位框"用）：x/宽取格子矩形，y/高取**行带**。
+///
+/// ★ 为什么 y 取行带而不取格子矩形：空格子只有零高的填充垫 ⇒ 自己的 y 没有意义；
+///   行带是"那一行"的完整高度 ⇒ 框是规整的矩形，不会忽高忽低（用户实测的"框高度不一样"）。
+Rect? envCellBoxAt({
+  required RenderObject root,
+  required String tex,
+  required bool displayStyle,
+  required int row,
+  required int col,
+}) {
+  final EnvGrid? g = buildEnvGrid(root: root, tex: tex, displayStyle: displayStyle);
+  if (g == null) return null;
+  final Rect? band = g.rowBand[row];
+  if (band == null) return null;
+  final Rect? cell = g.cell(row, col);
+  final Rect? cb = g.colBand[col];
+  final double left = cell?.left ?? cb?.left ?? band.left;
+  final double right = cell?.right ?? cb?.right ?? band.right;
+  return Rect.fromLTRB(left, band.top, right, band.bottom);
+}

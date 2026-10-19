@@ -17,6 +17,7 @@
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mathlang/core/doc_buffer.dart';
 import 'package:mathlang/editor/edit_view.dart';
@@ -304,6 +305,57 @@ void main() {
       final int row0End = buf.buf.indexOf(r'\\');
       expect(buf.caret, greaterThan(row0End - 8),
           reason: '最后一列应靠近行末（行分隔符 $row0End），实际 ${buf.caret}');
+    });
+  });
+  group('⑪ 占位框：高度统一 / 只在空格子 / 公式外面不出现（用户 2026-10-19 四张图）', () {
+    const String det5 =
+        r'\begin{vmatrix} a & b & & & \\ c & d & & & \\ & & & & \\ & & & & \\ & & & & \end{vmatrix}';
+
+    List<Rect> envPads(WidgetTester tester) {
+      final List<Rect> out = <Rect>[];
+      for (final RenderObject ro in tester.allRenderObjects) {
+        if (ro is RenderCustomPaint && ro.foregroundPainter is MathCaretPainter) {
+          for (final SlotPad p
+              in (ro.foregroundPainter! as MathCaretPainter).pads) {
+            // 只挑"环境格框"：宽 > 0.5 字号
+            if (p.rect.width > 6) out.add(p.rect);
+          }
+        }
+      }
+      return out;
+    }
+
+    testWidgets('★★ 不同行/列的框**高度一致**（改前：有的矮有的方）',
+        (WidgetTester tester) async {
+      final DocBuffer buf = await _pump(tester, _doc(det5));
+      final RenderBox root = _rig().root;
+      final Offset tl = root.localToGlobal(Offset.zero);
+      buf.setCaret(0);
+      await tester.tapAt(Offset(tl.dx + 17.5 + 3 * 40 + 10, tl.dy + 12));
+      await tester.pumpAndSettle();
+      final List<Rect> a = envPads(tester);
+      buf.setCaret(0);
+      await tester.tapAt(Offset(tl.dx + 17.5 + 40 + 10, tl.dy + 12 + 3 * 24));
+      await tester.pumpAndSettle();
+      final List<Rect> b = envPads(tester);
+      expect(a, isNotEmpty, reason: '第一处应当有格框');
+      expect(b, isNotEmpty, reason: '第二处应当有格框');
+      expect((a.first.height - b.first.height).abs(), lessThan(1.5),
+          reason: '两处框高必须一致（实测 ${a.first.height} vs ${b.first.height}）');
+      expect((a.first.width - b.first.width).abs(), lessThan(1.5),
+          reason: '两处框宽必须一致（实测 ${a.first.width} vs ${b.first.width}）');
+    });
+
+    testWidgets('★ 点公式**后面**：光标落在外面，且**不出现**格框',
+        (WidgetTester tester) async {
+      final DocBuffer buf = await _pump(tester, _doc(det5));
+      final RenderBox root = _rig().root;
+      final Offset tl = root.localToGlobal(Offset.zero);
+      buf.setCaret(0);
+      await tester.tapAt(Offset(tl.dx + root.size.width + 12, tl.dy + 12));
+      await tester.pumpAndSettle();
+      expect(buf.caret, buf.buf.length - 3, reason: '应在公式之后，实际 ${buf.caret}');
+      expect(envPads(tester), isEmpty, reason: '公式外面不该冒格框（用户第 4 张图）');
     });
   });
   group('④ 行内矩阵：右键也要能改尺寸', () {

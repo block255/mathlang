@@ -211,32 +211,28 @@ class _MathWithCaretState extends State<MathWithCaret> {
 
     // ★ 空槽垫子：**当前槽**靠"锚点落在哪个垫子盒里"认出来（实测：空槽里锚点正好在垫子右缘）
     final List<SlotPad> pads = <SlotPad>[...scanSlotPads(root, caretAt: at)];
-    // ★★★ 2026-10-19（用户："有 a 的位置点上去还是会出框，而且还会把 a 盖住"）：
-    //   框的位置必须来自**光标所在的那一格**（网格模型），而不是"附近有填充垫就画"。
-    //   判据：先用 `envCellHitAt` 定位到格子 → 取该格矩形 → **该格里没有字形**才画框。
+    // ★★★ 2026-10-19（用户实测三条："框高度不一样"、"点下面空行时框和光标跑到上面把 d 盖住"、
+    //   "点公式后面时里面也冒出一个框"）：
+    //   框 = **光标所在那一格的"格框"**（x/宽取格子矩形，y/高取行带），
+    //   而且**只有光标锚点真的落在这一格里**才画 ⇒ 不会跑到别的行/别的列，也不会在公式外面乱入。
     if (at != null && hasEnv(widget.tex)) {
       final bool display = widget.mathStyle == MathStyle.display;
       final EnvCellHit? cell = envCellHitAt(
           root: root, localPos: at, tex: widget.tex, displayStyle: display);
       if (cell != null) {
-        final Rect? rect = envCellRectAt(
+        final Rect? box = envCellBoxAt(
             root: root,
             tex: widget.tex,
             displayStyle: display,
             row: cell.row,
             col: cell.col);
-        if (rect != null) {
+        if (box != null && box.inflate(3).contains(at)) {
           final List<LeafBox> boxes = scanLeafBoxes(root).eligible;
           final bool hasGlyph = boxes.any((LeafBox b) =>
               b.kind == LeafBoxKind.glyph &&
               (b.text ?? '').trim().isNotEmpty &&
-              rect.inflate(1).contains(b.rect.center));
-          if (!hasGlyph) {
-            final double h = bar?.height ?? widget.fontSize;
-            pads.add(SlotPad(
-                Rect.fromLTWH(rect.left, bar?.top ?? at.dy, rect.width, h),
-                current: true));
-          }
+              box.inflate(1).contains(b.rect.center));
+          if (!hasGlyph) pads.add(SlotPad(box, current: true));
         }
       }
     }
