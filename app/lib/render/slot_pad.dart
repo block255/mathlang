@@ -100,4 +100,4 @@ const String kStructTailTex = r'\rule{3pt}{0pt}';
 /// （列间距不均、行列式竖线跟着变）；完全撤掉又变成"框没地方画、贴着别的内容"。
 /// 正解是**排版时就预留**这块宽度：不管光标在不在、画不画框，列宽恒定 ⇒ 排版一个像素都不动。
 /// ★ 零高：不影响行高与对齐；★ 用 `em`：随正文号缩放。
-const String kEnvCellFillTex = r'\rule{0.6em}{0pt}';
+const String kEnvCellFillTex = r'\rule{1em}{0pt}';
