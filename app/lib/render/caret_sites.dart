@@ -82,6 +82,19 @@ class SlotSpan {
 
   bool get isEmpty => start >= end;
 
+  /// ★★★ 2026-10-19（L20 / L22）：**这个槽是不是"多行环境的一个格子"**。
+  ///
+  /// 判据只看 **`path` 的最后一步**同时有 row 和 col —— **不许用 `any(...)`**：
+  /// 格子里放 `\sqrt{…}` / `x^2` / `\frac{}{}` 时，结构自己的槽是**嵌套位点**
+  /// （`path` = `[(r0,c1), (null,null)]`）。同一个 `any(...)` 曾惹出三处错：
+  /// · `env_cells` 把它们算成 `(row, 0)` 的格子 ⇒ **顶掉第 0 列**（"点中间列落到第 0 列"，L20）；
+  /// · `slot_marks._shouldDrawEmptySlot` 不给它们画**占位框**（以为"格子有自己的画法"）
+  ///   ⇒ 格子里看不到空槽的虚线框（L22）；
+  /// · `slot_marks` 反而给它们注入**格子填充垫** `\rule{1em}{0pt}` ⇒ 根号 / 上标被撑成 1em 宽
+  ///   （"渲染不太对、跟外面不一样"，L22）。
+  bool get isEnvCell =>
+      path.isNotEmpty && path.last.row != null && path.last.col != null;
+
   @override
   String toString() =>
       '${path.map((SlotStep s) => s.label).join(" › ")}[$start,$end)${isEmpty ? " 空" : ""}';

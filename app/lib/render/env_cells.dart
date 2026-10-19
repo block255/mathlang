@@ -91,12 +91,9 @@ EnvGrid? buildEnvGrid({
   //   ⇒ 命中按"第一个包含的列"取 ⇒ **点中间列落到第 0 列**。
   //   ⇒ 只认**真正的格子槽**：`path` 的**最后一步**同时有 row 和 col。
   //     （嵌套子槽永远不是格子；它的内容已经落在外层格子的区间里。）
-  final List<SlotSpan> cells = t.slots
-      .where((SlotSpan s) =>
-          s.path.isNotEmpty &&
-          s.path.last.row != null &&
-          s.path.last.col != null)
-      .toList();
+  //   ⇒ 判据收进 `SlotSpan.isEnvCell`（只看 path 的**最后一步**，见 caret_sites 里的说明）。
+  final List<SlotSpan> cells =
+      t.slots.where((SlotSpan s) => s.isEnvCell).toList();
   if (cells.isEmpty) return null;
   final List<LeafBox> boxes = scanLeafBoxes(root).eligible;
   if (boxes.isEmpty) return null;

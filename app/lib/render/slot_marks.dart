@@ -143,7 +143,7 @@ SlotMarkResult injectSlotMarks(String tex, {required int caretRel}) {
     //     （`& a &` 的格子文本是 `" a "`）⇒ 旧判据对空格子是**永不成立**的（实测：一个垫子都没注入）。
     //     改成"**trim 后为空**"。
     for (final SlotSpan s in t.slots)
-      if (s.path.any((SlotStep st) => st.row != null || st.col != null) &&
+      if (s.isEnvCell &&
           tex.substring(s.start, s.end).trim().isEmpty)
         _Ins(s.start, kEnvCellFillTex, shiftAt: true),
     // ② ★ 尾垫（§11.18）：插在**内容末尾**、花括号**之内** ⇒ 装饰跟着内容变长
@@ -190,7 +190,7 @@ bool _shouldDrawEmptySlot(
   //   ⇒ 列间距不均、行列式的竖线跟着变长（用户看到的"扰动"）。
   //   ⇒ 空格子的"看得见"改由**自绘层跟着光标画**（`math_caret` 里按格子矩形画一个框），
   //     纯绘制、不占版面 ⇒ 切换格子时排版一个像素都不动。
-  if (s.path.any((SlotStep st) => st.row != null || st.col != null)) {
+  if (s.isEnvCell) {
     return false;
   }
 
