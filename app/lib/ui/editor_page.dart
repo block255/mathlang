@@ -39,7 +39,6 @@ import '../io/session_data.dart';
 import '../io/session_store.dart';
 import '../io/session_store_platform.dart';
 import '../layout/page_metrics.dart';
-import '../spike/s3_edit/s3_edit_page.dart' show kEditSample;
 import '../app_info.dart';
 import 'app_settings.dart';
 import 'diagnostics_panel.dart';
@@ -105,7 +104,11 @@ class EditorPage extends StatefulWidget {
 }
 
 class EditorPageState extends State<EditorPage> {
-  late final DocBuffer _buf = widget.buffer ?? DocBuffer(kEditSample);
+  // ★★ 2026-10-19（用户："初次打开时编辑面应该是空白，不过目前好像是我们开发时的基准文档"）：
+  //   初始文档 = **空白** —— `kEditSample` 是开发期的基准样例，不该出现在产品里。
+  //   空白文档的可编辑性早有兜底（P3：零单元也分页 + 满页空行槽 ⇒ 点得出光标）。
+  //   还想看样例：`spike/s3_edit` 页仍在（Web 实验台里）。
+  late final DocBuffer _buf = widget.buffer ?? DocBuffer('');
 
   /// 进页面时缓冲区里的内容 —— 只有"还没人动过"时才允许被暂存覆盖
   late final String _initialBuffer = _buf.buf;
