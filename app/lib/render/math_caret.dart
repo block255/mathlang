@@ -211,6 +211,8 @@ class _MathWithCaretState extends State<MathWithCaret> {
 
     // ★ 空槽垫子：**当前槽**靠"锚点落在哪个垫子盒里"认出来（实测：空槽里锚点正好在垫子右缘）
     final List<SlotPad> pads = <SlotPad>[...scanSlotPads(root, caretAt: at)];
+    // ★ 环境空格子的"格框"（算出来后，竖条要跟它**完全重合**，见下面的覆盖）
+    Rect? envBox;
     // ★★★ 2026-10-19（用户实测三条："框高度不一样"、"点下面空行时框和光标跑到上面把 d 盖住"、
     //   "点公式后面时里面也冒出一个框"）：
     //   框 = **光标所在那一格的"格框"**（x/宽取格子矩形，y/高取行带），
@@ -232,9 +234,19 @@ class _MathWithCaretState extends State<MathWithCaret> {
               b.kind == LeafBoxKind.glyph &&
               (b.text ?? '').trim().isNotEmpty &&
               box.inflate(1).contains(b.rect.center));
-          if (!hasGlyph) pads.add(SlotPad(box, current: true));
+          if (!hasGlyph) {
+            envBox = box;
+            pads.add(SlotPad(box, current: true));
+          }
         }
       }
+    }
+    // ★★★ 2026-10-19（用户："点不同行会出现不同程度的光标和占位框分离"）：
+    //   竖条的 y 原来由"光标所在层级"推（`findLocalRowBox`），在空格子里它会落到**相邻行**；
+    //   既然格框已经算准，竖条就直接**贴进格框**（同 top、同高）⇒ 光标与框永远重合。
+    if (envBox != null && at != null) {
+      bar = Rect.fromLTWH(at.dx, envBox.top, widget.caretWidth, envBox.height);
+      tick = null;
     }
     if (!_samePads(pads, _pads) ||
         _bar != bar ||
