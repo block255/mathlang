@@ -219,15 +219,16 @@ class _MathWithCaretState extends State<MathWithCaret> {
     //   而且**只有光标锚点真的落在这一格里**才画 ⇒ 不会跑到别的行/别的列，也不会在公式外面乱入。
     if (at != null && hasEnv(widget.tex)) {
       final bool display = widget.mathStyle == MathStyle.display;
-      final EnvCellHit? cell = envCellHitAt(
-          root: root, localPos: at, tex: widget.tex, displayStyle: display);
-      if (cell != null) {
-        final Rect? box = envCellBoxAt(
-            root: root,
-            tex: widget.tex,
-            displayStyle: display,
-            row: cell.row,
-            col: cell.col);
+      // ★★ 2026-10-19（L19）：**一次建网格**，命中与画框走同一份几何
+      //   （以前这里各建一次 ⇒ 每帧两遍叶盒扫描 + 两遍配对；也保证两者不会各判一套）。
+      final EnvGrid? grid = buildEnvGrid(
+          root: root,
+          tex: widget.tex,
+          displayStyle: display,
+          fontSize: widget.fontSize);
+      final EnvCellHit? cell = grid == null ? null : envCellHitIn(grid, at);
+      if (grid != null && cell != null) {
+        final Rect? box = envCellBoxIn(grid, cell.row, cell.col);
         if (box != null && box.inflate(3).contains(at)) {
           final List<LeafBox> boxes = scanLeafBoxes(root).eligible;
           final bool hasGlyph = boxes.any((LeafBox b) =>

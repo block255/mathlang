@@ -708,6 +708,8 @@ class DocViewState extends State<DocView> {
         root: mr,
         global: global,
         displayStyle: true,
+        // ★ 行距兜底用（环境里量不出行距时 ×1.2）；行间块的字号是"行间字号"
+        fontSize: _s.effectiveDisplayFontSize,
       );
       if (texRel == null) return null;
       return u.renderBase + buildCaretSites(rawTex).snap(texRel).offset;
@@ -778,6 +780,7 @@ class DocViewState extends State<DocView> {
     required RenderObject root,
     required Offset global,
     required bool displayStyle,
+    double? fontSize,
   }) {
     final Offset localPos = (root as RenderBox).globalToLocal(global);
 
@@ -813,6 +816,7 @@ class DocViewState extends State<DocView> {
         localPos: localPos,
         tex: renderTex,
         displayStyle: displayStyle,
+        fontSize: fontSize,
       );
       if (cell != null) {
         // ★★ 点在**这一格有墨迹的内容上**（字与字之间也算）⇒ 用细粒度落点，
@@ -870,6 +874,7 @@ class DocViewState extends State<DocView> {
       root: ro,
       global: global,
       displayStyle: false, // ★ 行内 = text 样式（`\sum` 的上下限退回脚本位）
+      fontSize: _s.bodyFontSize,
     );
     if (texRel == null) return;
     // ★ 位点吸附：落点必须是合法位点（设计稿 §2.4 的 P3）

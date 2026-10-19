@@ -67,11 +67,13 @@ class EnvGrid {
 /// 旧实现三个硬伤：① 格子矩形用**包含**判据（起点落在槽里）⇒ 有字迹的格子有时算不出来；
 /// ② 列是"扫到第一个命中就返回"⇒ 右边空列永远轮不到；
 /// ③ 行带/列带只由有墨迹的格子并出来 ⇒ 空行、空列根本不存在。
-/// 新实现：格子矩形（含填充垫）→ 行带 → 列带；缺的行列按**中位间距**外推。
+/// 新实现：格子矩形（含填充垫）→ 列带 → **行带 = 基线 + 行距**（见下面 ③ 的探针数据）；
+/// 缺的行列按**中位间距**外推。★ [fontSize] 只在"量不出行距"时兜底（1.2 × 字号）。
 EnvGrid? buildEnvGrid({
   required RenderObject root,
   required String tex,
   required bool displayStyle,
+  double? fontSize,
 }) {
   final CaretSiteTable t = buildCaretSites(tex);
   final List<SlotSpan> cells = t.slots
@@ -105,59 +107,7 @@ EnvGrid? buildEnvGrid({
   final int maxCol = cells.map(colOf).reduce((int a, int b) => a > b ? a : b);
   if (cellRect.isEmpty) return null;
 
-  // ② 行带 + 补缺行
-  final Map<int, Rect> rowBand = <int, Rect>{};
-  cellRect.forEach((int k, Rect r) {
-    final int row = k ~/ 1000;
-    rowBand[row] = rowBand.containsKey(row) ? rowBand[row]!.expandToInclude(r) : r;
-  });
-  double rowH = estimateRowHeight(rowBand.values.toList());
-  for (var r = 0; r <= maxRow; r++) {
-    if (rowBand.containsKey(r)) continue;
-    Rect? anchor;
-    var anchorRow = -1;
-    for (var q = r + 1; q <= maxRow; q++) {
-      if (rowBand.containsKey(q)) { anchor = rowBand[q]; anchorRow = q; break; }
-    }
-    if (anchor == null) {
-      for (var q = r - 1; q >= 0; q--) {
-        if (rowBand.containsKey(q)) { anchor = rowBand[q]; anchorRow = q; break; }
-      }
-    }
-    if (anchor == null) continue;
-    final double h = rowH > 0 ? rowH : anchor.height;
-    final double top = anchorRow > r
-        ? anchor.top - (anchorRow - r) * h
-        : anchor.bottom + (r - anchorRow - 1) * h;
-    rowBand[r] = Rect.fromLTRB(anchor.left, top, anchor.right, top + h);
-  }
-
-  // ★★ 2026-10-19：**只有填充垫的行**会量出零高度的带（垫子是零高的）⇒ 给它一个行高，
-  //   否则"整行都空"的那一行仍然点不到（用户："点下面两行也只会落在第一列"）。
-  if (rowH > 0) {
-    for (final MapEntry<int, Rect> e in rowBand.entries.toList()) {
-      final Rect r = e.value;
-      if (r.height >= rowH * 0.4) continue;
-      rowBand[e.key] = Rect.fromLTRB(r.left, r.top, r.right, r.top + rowH);
-    }
-  }
-
-  // ★★★ 2026-10-19（用户："部分填了的那一行的下一空行，行距判定有问题；框和光标偏下"）：
-  //   **不要**把行等距铺开 —— 矩阵里"整行都空"的行在排版上是**零高度**的（这一行会塌陷，
-  //   所有空行挤在同一个 y 上）。等距铺开会把第 3、4 行推到下面去 ⇒ 框和光标偏下。
-  //   正确做法 = **堆叠**：空行从**上一行的底**开始，高取一个行高（它一旦有字就会长这么高）。
-  for (var r = 1; r <= maxRow; r++) {
-    final Rect? band = rowBand[r];
-    final Rect? prev = rowBand[r - 1];
-    final bool collapsed = band == null || band.height < (rowH > 0 ? rowH * 0.4 : 4);
-    if (!collapsed) continue;
-    final double top = prev?.bottom ?? (band?.top ?? 0);
-    final double left = band?.left ?? prev?.left ?? 0;
-    final double right = band?.right ?? prev?.right ?? 0;
-    rowBand[r] = Rect.fromLTRB(left, top, right, top + (rowH > 0 ? rowH : 20));
-  }
-
-  // ③ 列带 + 补缺列  // ③ 列带 + 补缺列
+  // ② 列带 + 补缺列（先算：行带的左右界也用它）
   final Map<int, Rect> colBand = <int, Rect>{};
   cellRect.forEach((int k, Rect r) {
     final int col = k % 1000;
@@ -174,14 +124,107 @@ EnvGrid? buildEnvGrid({
     }
     if (gaps.isNotEmpty) { gaps.sort(); gap = gaps[gaps.length ~/ 2]; }
   }
-  if (gap <= 0) gap = rowH > 0 ? rowH : 16;
+  if (gap <= 0) gap = (fontSize != null && fontSize > 0) ? fontSize : 16;
   final Rect base = colBand[known.first]!;
   for (var c = 0; c <= maxCol; c++) {
     if (colBand.containsKey(c)) continue;
     final double left = base.left + (c - known.first) * gap;
     colBand[c] = Rect.fromLTRB(left, base.top, left + (base.width > 0 ? base.width : gap), base.bottom);
   }
+
+  // ③ 行几何 = **基线 + 行距**（独占区间）
+  //
+  // ★★★ 2026-10-19（L19；用户四张图："部分填写的空位框与空行的框**高度不一样**"、
+  //   "第 4、5 行再次出现框和光标**偏下**"、"最下行的框**一半跑出去**"）。
+  //   探针量到的三件事（4 列 5 行、display、字号 20；数据见 `notes\后优化清单.md` §九）：
+  //   ① **空格子的填充垫 `\rule{1em}{0pt}` 的 y 就是那一行的基线** ——
+  //      逐行 16.8 / 40.8 / 64.8 / 88.8 / 112.8 ⇒ **行距恰好 24.0 = 1.2 × 字号**
+  //      （行内 text 样式同样成立：19.2 = 1.2 × 16）；
+  //   ② **矩阵根盒高 = 行数 × 行距**（5×24 = 120、6×24 = 144、2×24.03 = 48.1），
+  //      而首行基线在 16.8 = **0.7 × 行距** ⇒ **引擎自己把一格切成 0.7 上 / 0.3 下**；
+  //   ③ 旧代码把"内容字形盒的并集"当行带 ⇒ 有字的行 21~25 高、**空行只有零高的垫子** ⇒ 带高 0，
+  //      补出来的带**顶在基线上**（比字形顶低 18.9 px）⇒ 框与光标偏下、最后一行按"基线 + 行高"铺到
+  //      根盒之外（实测底 133.8 > 根盒 120、括号墨迹 133.2）。
+  //   ⇒ 正解：`rowBand[r] = [基线_r − 0.7·行距, +1 行距)` —— **高度恒等于行距、行与行不重叠**，
+  //     正好铺满引擎自己的行格（探针验证：第 0 行顶 = 0.0、最后一行底 = 根盒底，逐像素相等）。
+  //   ★ 基线不必靠"字形"推：**每一个空格子都有一个垫子**，所以只要这一行还有一格是空的，就有精确基线。
+  final Map<int, List<double>> anchorOfRow = <int, List<double>>{};
+  final Map<int, List<Rect>> inkOfRow = <int, List<Rect>>{};
+  cellRect.forEach((int k, Rect r) {
+    final int row = k ~/ 1000;
+    if (r.height.abs() < 0.5) {
+      (anchorOfRow[row] ??= <double>[]).add(r.top); // 零高 ⇒ 垫子 ⇒ 基线
+    } else {
+      (inkOfRow[row] ??= <Rect>[]).add(r);
+    }
+  });
+  final Map<int, double> baseline = <int, double>{
+    for (final MapEntry<int, List<double>> e in anchorOfRow.entries)
+      e.key: _medianOf(e.value),
+  };
+  final List<int> anchors = baseline.keys.toList()..sort();
+  double pitch = 0;
+  if (anchors.length >= 2) {
+    pitch = _medianOf(<double>[
+      for (var i = 1; i < anchors.length; i++)
+        if (anchors[i] > anchors[i - 1])
+          (baseline[anchors[i]]! - baseline[anchors[i - 1]]!) /
+              (anchors[i] - anchors[i - 1]),
+    ]);
+  }
+  if (pitch <= 0 && inkOfRow.length >= 2) {
+    // 只有一个基线锚点（其余行全填满了）⇒ 用"有内容的那几行"的**字形顶**差估行距。
+    // ★ 量出来 `cases` = 24、`aligned` = **30**（它有额外的行间距）⇒ 这里**不能写死 1.2em**。
+    final List<int> rows = inkOfRow.keys.toList()..sort();
+    final Map<int, double> topOf = <int, double>{
+      for (final int r in rows)
+        r: inkOfRow[r]!.map((Rect x) => x.top).reduce((double a, double b) => a < b ? a : b),
+    };
+    pitch = _medianOf(<double>[
+      for (var i = 1; i < rows.length; i++)
+        if (rows[i] > rows[i - 1])
+          (topOf[rows[i]]! - topOf[rows[i - 1]]!) / (rows[i] - rows[i - 1]),
+    ]);
+  }
+  if (pitch <= 0 && fontSize != null && fontSize > 0) pitch = fontSize * 1.2;
+  final Map<int, Rect> rowBand = <int, Rect>{};
+  if (pitch > 0 && anchors.isNotEmpty) {
+    // 缺基线的行（整行都填满的）按最近锚点 + 行距外推
+    for (var r = 0; r <= maxRow; r++) {
+      if (baseline.containsKey(r)) continue;
+      int best = anchors.first;
+      for (final int a in anchors) {
+        if ((a - r).abs() < (best - r).abs()) best = a;
+      }
+      baseline[r] = baseline[best]! + (r - best) * pitch;
+    }
+    final double ascent = 0.7 * pitch;
+    var left = double.infinity;
+    var right = -double.infinity;
+    for (final Rect r in cellRect.values) {
+      if (r.left < left) left = r.left;
+      if (r.right > right) right = r.right;
+    }
+    for (var r = 0; r <= maxRow; r++) {
+      final double top = baseline[r]! - ascent;
+      rowBand[r] = Rect.fromLTRB(left, top, right, top + pitch);
+    }
+  } else {
+    // 兜底（整行都填满的环境 ⇒ 一个垫子都没有、量不出基线）：退回"字形盒并集"当行带。
+    // 这种环境里**没有空格子** ⇒ 不画框；行带只服务于命中。
+    cellRect.forEach((int k, Rect r) {
+      final int row = k ~/ 1000;
+      rowBand[row] = rowBand.containsKey(row) ? rowBand[row]!.expandToInclude(r) : r;
+    });
+  }
   return EnvGrid(cellRect, rowBand, colBand, maxRow, maxCol);
+}
+
+/// 中位数（空表 ⇒ 0）
+double _medianOf(List<double> xs) {
+  if (xs.isEmpty) return 0;
+  final List<double> s = List<double>.of(xs)..sort();
+  return s[s.length ~/ 2];
 }
 
 /// 命中某个格子；`null` = 这次点击不该按"格子"处理。
@@ -190,16 +233,22 @@ EnvCellHit? envCellHitAt({
   required Offset localPos,
   required String tex,
   required bool displayStyle,
+  double? fontSize,
 }) {
-  final EnvGrid? g = buildEnvGrid(root: root, tex: tex, displayStyle: displayStyle);
-  if (g == null) return null;
-  // 选行：含 → 否则最近中心
+  final EnvGrid? g = buildEnvGrid(
+      root: root, tex: tex, displayStyle: displayStyle, fontSize: fontSize);
+  return g == null ? null : envCellHitIn(g, localPos);
+}
+
+/// 已经在网格上的命中（省一次重建：画框与命中走**同一份**几何）。
+EnvCellHit? envCellHitIn(EnvGrid g, Offset localPos) {
+  // 选行：含 → 否则最近中心（★ 行带现在是**独占区间**，含判据唯一）
   var row = 0;
   var best = double.infinity;
   for (var r = 0; r <= g.maxRow; r++) {
     final Rect? band = g.rowBand[r];
     if (band == null) continue;
-    if (localPos.dy >= band.top && localPos.dy <= band.bottom) { row = r; break; }
+    if (localPos.dy >= band.top && localPos.dy < band.bottom) { row = r; break; }
     final double d = (band.center.dy - localPos.dy).abs();
     if (d < best) { best = d; row = r; }
   }
@@ -231,8 +280,10 @@ Rect? envCellRectAt({
   required bool displayStyle,
   required int row,
   required int col,
+  double? fontSize,
 }) {
-  final EnvGrid? g = buildEnvGrid(root: root, tex: tex, displayStyle: displayStyle);
+  final EnvGrid? g = buildEnvGrid(
+      root: root, tex: tex, displayStyle: displayStyle, fontSize: fontSize);
   return g?.cell(row, col);
 }
 /// 把格子坐标换成**源空间**偏移（用于点击落点）。
@@ -297,15 +348,22 @@ int clampOffset(int v, int length) => math.max(0, math.min(v, length));
 ///
 /// ★ 为什么 y 取行带而不取格子矩形：空格子只有零高的填充垫 ⇒ 自己的 y 没有意义；
 ///   行带是"那一行"的完整高度 ⇒ 框是规整的矩形，不会忽高忽低（用户实测的"框高度不一样"）。
+/// ★★ 2026-10-19：行带已是**基线 + 行距**的独占区间 ⇒ 框高恒等于行距、不越出矩阵。
 Rect? envCellBoxAt({
   required RenderObject root,
   required String tex,
   required bool displayStyle,
   required int row,
   required int col,
+  double? fontSize,
 }) {
-  final EnvGrid? g = buildEnvGrid(root: root, tex: tex, displayStyle: displayStyle);
-  if (g == null) return null;
+  final EnvGrid? g = buildEnvGrid(
+      root: root, tex: tex, displayStyle: displayStyle, fontSize: fontSize);
+  return g == null ? null : envCellBoxIn(g, row, col);
+}
+
+/// 已经在网格上的格框。
+Rect? envCellBoxIn(EnvGrid g, int row, int col) {
   final Rect? band = g.rowBand[row];
   if (band == null) return null;
   final Rect? cell = g.cell(row, col);
