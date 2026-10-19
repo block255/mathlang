@@ -142,29 +142,22 @@ EnvGrid? buildEnvGrid({
     }
   }
 
-  // ★★★ 2026-10-19：把行带**规整成等距网格**。
-  //   环境里每行高度相同，但"整行都空"的行只有零高填充垫 ⇒ 量出来的 y 挤在一起，
-  //   于是一点第三、四行就落到第二行上（用户实测"光标和框都跑到上面去了，把 d 盖住"）。
-  //   做法：以**第一行有墨迹的带**为基准，行距取各带高度的中位数，逐行等距排开。
-  final List<double> heights = rowBand.values
-      .map((Rect r) => r.height)
-      .where((double h) => h > 1)
-      .toList()
-    ..sort();
-  if (heights.isNotEmpty) {
-    final double pitch = heights[heights.length ~/ 2];
-    final double top0 = rowBand[0]!.top;
-    for (var r = 0; r <= maxRow; r++) {
-      rowBand[r] = Rect.fromLTRB(
-          rowBand[r]?.left ?? rowBand[0]!.left,
-          top0 + r * pitch,
-          rowBand[r]?.right ?? rowBand[0]!.right,
-          top0 + (r + 1) * pitch);
-    }
-    rowH = pitch;
+  // ★★★ 2026-10-19（用户："部分填了的那一行的下一空行，行距判定有问题；框和光标偏下"）：
+  //   **不要**把行等距铺开 —— 矩阵里"整行都空"的行在排版上是**零高度**的（这一行会塌陷，
+  //   所有空行挤在同一个 y 上）。等距铺开会把第 3、4 行推到下面去 ⇒ 框和光标偏下。
+  //   正确做法 = **堆叠**：空行从**上一行的底**开始，高取一个行高（它一旦有字就会长这么高）。
+  for (var r = 1; r <= maxRow; r++) {
+    final Rect? band = rowBand[r];
+    final Rect? prev = rowBand[r - 1];
+    final bool collapsed = band == null || band.height < (rowH > 0 ? rowH * 0.4 : 4);
+    if (!collapsed) continue;
+    final double top = prev?.bottom ?? (band?.top ?? 0);
+    final double left = band?.left ?? prev?.left ?? 0;
+    final double right = band?.right ?? prev?.right ?? 0;
+    rowBand[r] = Rect.fromLTRB(left, top, right, top + (rowH > 0 ? rowH : 20));
   }
 
-  // ③ 列带 + 补缺列
+  // ③ 列带 + 补缺列  // ③ 列带 + 补缺列
   final Map<int, Rect> colBand = <int, Rect>{};
   cellRect.forEach((int k, Rect r) {
     final int col = k % 1000;
