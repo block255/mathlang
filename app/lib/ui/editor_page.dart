@@ -15,6 +15,7 @@
 //   ② 面板 / 快捷栏 / 状态栏 / 设置页**都不进 `DocView` 的排版树** ⇒ 开合不改变分页。
 
 import 'dart:async';
+import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart'
@@ -220,6 +221,9 @@ class EditorPageState extends State<EditorPage> {
   /// 失败不打扰用户（写诊断输出即可）；设置 → 高级 里能看到状态并能删/重建。
   void _ensureDesktopShortcutOnFirstFrame() {
     WidgetsBinding.instance.addPostFrameCallback((_) async {
+      // ★ 2026-10-20：**测试环境里绝不去碰桌面**（`flutter test` 会设 FLUTTER_TEST=true）。
+      //   否则 `Process.run(powershell)` 会留下 pending timer，把无关的 widget 测试打红。
+      if (Platform.environment['FLUTTER_TEST'] == 'true') return;
       if (_disposed || !_s.desktopShortcut) return;
       if (desktopShortcutExists()) {
         if (mounted) setState(() {}); // 让设置页显示"已创建"
