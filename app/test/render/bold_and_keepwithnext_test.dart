@@ -15,6 +15,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mathlang/core/doc_buffer.dart';
 import 'package:mathlang/editor/edit_view.dart';
 import 'package:mathlang/layout/paginator.dart';
+import 'package:mathlang/render/inline_math_text.dart';
 import 'package:mathlang/render/projection.dart';
 
 import '../support/math_fonts.dart';
@@ -90,6 +91,48 @@ void main() {
               reason: 'caret=$caret 时星号露出来了："${s.text}"');
         }
       }
+    });
+  });
+
+  group('㉞b 强调段的选区（用户实测「不成立。」没高亮）', () {
+    testWidgets('★★ 整段选中时，粗体那几个字也必须被高亮', (WidgetTester tester) async {
+      await loadMathFonts();
+      const String src = '甲**不成立。**当乙';
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: InlineMathText(
+            source: src,
+            baseOffset: 0,
+            selStart: 0,
+            selEnd: src.length,
+            mathFontSize: 16,
+            onMathTap: null,
+            onMathRightClick: null,
+          ),
+        ),
+      ));
+      await tester.pumpAndSettle();
+      final List<String> hl = <String>[];
+      void walk(InlineSpan s) {
+        if (s is TextSpan) {
+          if (s.style?.backgroundColor != null && (s.text ?? '').isNotEmpty) {
+            hl.add(s.text!);
+          }
+          for (final InlineSpan c in s.children ?? const <InlineSpan>[]) {
+            walk(c);
+          }
+        }
+      }
+
+      for (final Text t in tester.widgetList<Text>(find.byType(Text))) {
+        final InlineSpan? s = t.textSpan;
+        if (s != null) walk(s);
+      }
+      final String joined = hl.join();
+      expect(joined.contains('不成立。'), isTrue,
+          reason: '粗体那截必须被高亮（实际：$hl）');
+      expect(joined.contains('甲'), isTrue);
+      expect(joined.contains('当乙'), isTrue);
     });
   });
 

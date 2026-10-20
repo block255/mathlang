@@ -225,7 +225,11 @@ class _InlineMathTextState extends State<InlineMathText> {
     CaretPlacement? pl,
   ) {
     const TextStyle bold = TextStyle(fontWeight: FontWeight.bold);
-    final int abs0 = widget.baseOffset + s.start;
+    // ★★ 2026-10-20（用户实测：拖选时「不成立。」三个字没高亮）：
+    //   `widget.selStart/selEnd` 是**本单元源坐标里的相对偏移**（`DocView._localSelFor` 算的），
+    //   所以这里和 `_runs` 一样必须用段内相对的 `s.start`，**不能**再加 `baseOffset`
+    //   （加了就整段错位，正好漏掉粗体那一截）。
+    final int abs0 = s.start;
     final String txt = s.text;
     // 选区（绝对偏移 → 段内正文偏移；两端标记不算正文）
     final int? sa = widget.selStart;

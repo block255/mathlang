@@ -402,17 +402,121 @@ List<Rect> selectionBands({
       owner[i] = g;
     }
   }
+  // ★★ 2026-10-20（用户实测"整段拖选时个别数学块漏底"）：**没有归属的盒按"就近归属"处理**。
+  //   配对（`buildLeafPairing`）在某些结构上（例如 `\bigcup_{i=1}^{n}U_{x_i}` 这种
+  //   "大算符 + 上下限 + 下标"叠在一起的 display 块）会把一部分叶盒**配不上组**，
+  //   旧代码 `if (g == null) continue;` 就把这些盒直接丢掉了 ⇒ 用户看到"这一块里几个字没被选中"。
+  //   现在：没主的盒跟**最近的有主盒**（先向前找、找不到再向后找）走 —— 视觉上连续，
+  //   而"是否落在选区里"仍由**那个组**的源区间决定（不会把选区外的盒也涂上）。
+  final List<PairGroup?> near = List<PairGroup?>.filled(boxes.length, null);
+  PairGroup? prevGroup;
+  for (var i = 0; i < boxes.length; i++) {
+    final PairGroup? g0 = owner[i];
+    if (g0 != null) prevGroup = g0;
+    near[i] = prevGroup;
+  }
+  PairGroup? nextGroup;
+  for (var i = boxes.length - 1; i >= 0; i--) {
+    final PairGroup? g0 = owner[i];
+    if (g0 != null) nextGroup = g0;
+    if (near[i] == null) near[i] = nextGroup;
+  }
+  final List<bool> picked = List<bool>.filled(boxes.length, false);
   for (var i = 0; i < boxes.length; i++) {
     final LeafBox b = boxes[i];
     // 垫子 / 空字盒没有墨迹 ⇒ 不铺（它们不是"字符"）
     if (b.kind == LeafBoxKind.pad) continue;
     if ((b.text ?? '').isEmpty) continue;
-    final PairGroup? g = owner[i];
+    final PairGroup? g = owner[i] ?? near[i];
     if (g == null) continue;
     final int a = renderToSourceOffset(tex, g.srcStart);
     final int bb = renderToSourceOffset(tex, g.srcEnd);
     if (bb <= from || a >= to) continue;
+    picked[i] = true;
     out.add(b.rect);
+  }
+  // ★★ 2026-10-20（第三轮实测：`x\in[a,b]` 里的 `∈` 仍然没有底色）：
+  //   极少数盒**连"就近归属"都拿不到组**（配对算法在这类紧凑结构上会漏），
+  //   于是无论怎么挑都轮不到它 ⇒ 视觉上就是"夹在两个蓝块中间的一个白字"。
+  //   兜底：**紧邻已选中盒的墨迹盒**跟着一起铺（选区本来就是连续的字符区间，
+  //   不可能"选了两个邻居却漏掉中间这一个"）。只传播一轮，避免越界扩大选区。
+  for (var i = 0; i < boxes.length; i++) {
+    if (picked[i]) continue;
+    final LeafBox b = boxes[i];
+    if (b.kind == LeafBoxKind.pad) continue;
+    if ((b.text ?? '').isEmpty) continue;
+    final bool neighbour = (i > 0 && picked[i - 1]) ||
+        (i + 1 < boxes.length && picked[i + 1]);
+    if (!neighbour) continue;
+    picked[i] = true;
+    out.add(b.rect);
+  }
+  // ★★ 2026-10-20（用户实测"拖选时看着漏字"）：**把同一行相邻的块并成一条**。
+  //   每个字形盒单独铺色 ⇒ 盒与盒之间总有 1px 左右的缝，放大看就是"字与字之间漏了"。
+  //   合并只按 (top,bottom) 相同的行内、且间隙 ≤0.75px 的块做 —— 上下标/上下限的**行不同**，
+  //   所以不会被错误地并成一大块（"按原子铺"这条原则不变，只是把同一行的接上）。
+  return mergeBands(out);
+}
+
+/// ★★ 2026-10-20（第三轮）：把一个公式的底色**按"视觉行"合成整条**。
+///
+/// 为什么还要这一步：逐字铺色总会留下"字与字之间的白缝"，而用户拖选时看到的
+/// 就是**一条连续的蓝底**。这里把垂直中心落在同一行的块合成一条
+/// （分数/上下限/上下标是**不同的行**，各自成条 —— "按原子铺"的层级不变）。
+List<Rect> rowBands(List<Rect> rects) {
+  if (rects.length < 2) return rects;
+  final List<Rect> sorted = <Rect>[...rects]
+    ..sort((Rect a, Rect b) => a.center.dy.compareTo(b.center.dy));
+  final List<List<Rect>> rows = <List<Rect>>[];
+  for (final Rect r in sorted) {
+    if (rows.isEmpty) {
+      rows.add(<Rect>[r]);
+      continue;
+    }
+    final List<Rect> cur = rows.last;
+    final double mid =
+        cur.fold<double>(0, (double a, Rect e) => a + e.center.dy) / cur.length;
+    final double h = cur.first.height > r.height ? cur.first.height : r.height;
+    if ((r.center.dy - mid).abs() <= 0.45 * h) {
+      cur.add(r);
+    } else {
+      rows.add(<Rect>[r]);
+    }
+  }
+  return <Rect>[
+    for (final List<Rect> row in rows)
+      Rect.fromLTRB(
+        row.map((Rect r) => r.left).reduce((double a, double b) => a < b ? a : b),
+        row.map((Rect r) => r.top).reduce((double a, double b) => a < b ? a : b),
+        row.map((Rect r) => r.right).reduce((double a, double b) => a > b ? a : b),
+        row.map((Rect r) => r.bottom).reduce((double a, double b) => a > b ? a : b),
+      ),
+  ];
+}
+
+/// 同一行内相邻/重叠的底色块合并成一条（纯几何，不改任何尺寸）。
+List<Rect> mergeBands(List<Rect> rects) {
+  if (rects.length < 2) return rects;
+  final Map<String, List<Rect>> rows = <String, List<Rect>>{};
+  for (final Rect r in rects) {
+    final String k = '${r.top.round()}_${r.bottom.round()}';
+    (rows[k] ??= <Rect>[]).add(r);
+  }
+  final List<Rect> out = <Rect>[];
+  for (final List<Rect> row in rows.values) {
+    row.sort((Rect a, Rect b) => a.left.compareTo(b.left));
+    Rect cur = row.first;
+    for (var i = 1; i < row.length; i++) {
+      final Rect r = row[i];
+      if (r.left <= cur.right + 1.5) {
+        cur = Rect.fromLTRB(cur.left, cur.top, r.right > cur.right ? r.right : cur.right,
+            cur.bottom);
+      } else {
+        out.add(cur);
+        cur = r;
+      }
+    }
+    out.add(cur);
   }
   return out;
 }
