@@ -72,6 +72,28 @@ void main() {
       await tester.pumpAndSettle();
       expect(buf.buf, '甲乙丙\n丁', reason: '选正文 ⇒ 标记消失，文字一个字不动');
     });
+
+    // ★★ 2026-10-20（T-A 实测 F1）：光标在**行间公式块内部**时整个下拉禁用。
+    //   改前：点了照样弹菜单、选了照样执行 ⇒ `# ` 插进 tex ⇒ 红字 `[公式不完整]`、公式散架。
+    testWidgets('★ F1：光标在行间公式块内部 ⇒ 下拉禁用 + 点了不弹菜单',
+        (WidgetTester tester) async {
+      final (EditorPageState st, DocBuffer buf) = await _pump(tester, '\$\$\n\n\$\$');
+      st.openSettings();
+      st.closeSettings();
+      await tester.pumpAndSettle();
+      buf.setCaret(3); // 两道 `$$` 之间那一行 = 行间公式块内部
+      await tester.pumpAndSettle();
+
+      final PopupMenuButton<BlockType> btn = tester.widget<PopupMenuButton<BlockType>>(
+          find.byKey(const Key('block-type-menu')));
+      expect(btn.enabled, isFalse, reason: '整块内部没有"段落类型"这回事');
+
+      await tester.tap(find.byKey(const Key('block-type-menu')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('block-type-paragraph')), findsNothing,
+          reason: '改前这里会弹出菜单（点了就执行）');
+      expect(buf.buf, '\$\$\n\n\$\$', reason: '文档一个字都不许动');
+    });
   });
 
   group('㉘ 块标记"设置语义"的纯函数（U6）', () {

@@ -1315,6 +1315,10 @@ class EditorPageState extends State<EditorPage> {
 
   Widget _blockTypeMenu() {
     final BlockType cur = _caretLineType();
+    // ★★ 2026-10-20（T-A 实测 F1）：光标在**行间公式块 / 代码块内部**时整个下拉禁用 ——
+    //   那里没有"段落类型"这回事；从前点了照样执行 ⇒ `# ` 插进 tex ⇒ 公式散架
+    //   （页面上出现红字 `[公式不完整]`）。
+    final bool canSet = canSetLineMarker(_buf.buf, _buf.caret);
     const List<BlockType> items = <BlockType>[
       BlockType.paragraph,
       BlockType.heading1,
@@ -1323,7 +1327,8 @@ class EditorPageState extends State<EditorPage> {
     ];
     return PopupMenuButton<BlockType>(
       key: const Key('block-type-menu'),
-      tooltip: '段落类型（正文 / 标题 1-3）',
+      enabled: canSet,
+      tooltip: canSet ? '段落类型（正文 / 标题 1-3）' : '行间公式 / 代码块内部没有段落类型',
       onSelected: (BlockType t) {
         // 已经是这一类 ⇒ 什么都不做（下拉是"设置"，不是"切换"）
         if (t == _caretLineType()) return;
@@ -1354,8 +1359,15 @@ class EditorPageState extends State<EditorPage> {
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
         child: Row(
           children: <Widget>[
-            Text(_blockLabel(cur), style: const TextStyle(fontSize: 12)),
-            const Icon(Icons.arrow_drop_down, size: 16),
+            Text(_blockLabel(cur),
+                style: TextStyle(
+                    fontSize: 12,
+                    color: canSet
+                        ? const Color(0xFF2D3748)
+                        : const Color(0xFFA0AEC0))),
+            Icon(Icons.arrow_drop_down,
+                size: 16,
+                color: canSet ? null : const Color(0xFFCBD5E0)),
           ],
         ),
       ),
@@ -1514,9 +1526,15 @@ class EditorPageState extends State<EditorPage> {
       height: 36,
       child: Row(
         children: <Widget>[
-          SizedBox(
-            width: 76,
+          // ★★ 2026-10-20（T-A 实测 F4）：原来是**固定 76 px 的宽度盒子**，
+          //   于是导出菜单里那些长标签（`PDF（图片式 + md 附件）`）被折成两三行
+          //   （实测菜单只有 112 px 宽，`Markdown` / `(.md)` 分成两行）。
+          //   改成"**最小 76、可以更宽**"：菜单宽度由最长的那一项自然撑开，
+          //   文件名菜单那几项的右对齐快捷键列也照样对齐。
+          ConstrainedBox(
+            constraints: const BoxConstraints(minWidth: 76),
             child: Text(label,
+                softWrap: false,
                 style: TextStyle(fontSize: 12, color: fg)),
           ),
           Text(shortcut,

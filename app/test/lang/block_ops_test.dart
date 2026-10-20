@@ -172,6 +172,94 @@ void main() {
       }
     });
   });
+
+  // ★★★ 2026-10-20（T-A 实战测试 F1，用户可见）：**行间公式块内部不许改行首标记**。
+  //
+  // 改前现场：面板插「行间公式」⇒ 光标落在 `$$\n‖\n$$` 中间 ⇒ 顶栏「块类型 → 标题 1」
+  // 照样执行 ⇒ 文档变成 `$$\n# \n$$`（`#` 跑进 tex）⇒ 页面上出现红字 `[公式不完整]`，公式散架。
+  // 判据只用块模型（[caretInWholeBlock]），不另写一套。
+  group('★ F1：整块语义（行间公式 / 代码块）内部不许设行首标记', () {
+    const String disp = '\$\$\nx=1\n\$\$';       // 内容行 = 第 1 行
+    const String code = '```\ncode\n```';        // 内容行 = 第 1 行
+
+    test('行间公式的**内容行** ⇒ null（改前会插 `# ` 进 tex）', () {
+      final int at = disp.indexOf('x=1') + 1;
+      expect(caretInWholeBlock(disp, at), isTrue);
+      expect(planLineMarkerSet(disp, at, '# '), isNull);
+      expect(planBlockOp(disp, at, BlockOp.h1), isNull);
+      expect(blockOpApplies(disp, at, BlockOp.h1), isFalse);
+      expect(canSetLineMarker(disp, at), isFalse);
+    });
+
+    test('行间公式的**围栏行** ⇒ 依然 null（既有口径不许退化）', () {
+      expect(planLineMarkerSet(disp, 1, '# '), isNull);
+      expect(planLineMarkerSet(disp, disp.length - 1, '# '), isNull);
+    });
+
+    test('代码块的内容行 ⇒ null', () {
+      final int at = code.indexOf('code') + 1;
+      expect(caretInWholeBlock(code, at), isTrue);
+      expect(planLineMarkerSet(code, at, '# '), isNull);
+    });
+
+    test('★ 不误伤：正文行 / 标题行照样能设', () {
+      expect(caretInWholeBlock('甲乙丙', 1), isFalse);
+      expect(planLineMarkerSet('甲乙丙', 1, '# '), isNotNull);
+      expect(planLineMarkerSet('# 标题', 3, '## '), isNotNull);
+      // 公式**后面**那一行也是正文
+      expect(planLineMarkerSet('\$\$\nx\n\$\$\n后', 9, '# '), isNotNull);
+    });
+
+    test('★ 全域：光标在整块内部 ⇒ 一律 null；块外的正文行 ⇒ 一律非 null', () {
+      const List<String> corpus = <String>[
+        '\$\$\nx=1\n\$\$',
+        '前\n\n\$\$\n\\frac{a}{b}\n\$\$\n\n后',
+        '```\ncode\n```',
+        '前\n\$\$x=1\$\$\n后',
+        '前\n\n<!-- pagebreak -->\n\n后',
+      ];
+      for (final String doc in corpus) {
+        final BlockIndex idx = BlockIndex.parse(doc);
+        for (var at = 0; at <= doc.length; at++) {
+          final int line = idx.lines.lineOf(at);
+          var inWhole = false;
+          for (final Block b in idx.blocks) {
+            if (line < b.lineFrom || line >= b.lineTo) continue;
+            if (b.type == BlockType.math || b.type == BlockType.code) {
+              inWhole = true;
+            }
+          }
+          final BlockOpResult? r = planLineMarkerSet(doc, at, '# ');
+          if (inWhole) {
+            expect(r, isNull,
+                reason: '整块内部 @ $at on "${doc.replaceAll('\n', r'\n')}" 不许改标记');
+          }
+          // 落地之后，块模型里那个公式块的内容一个字都不许变
+          if (r != null) {
+            final String out = applyBlockOpTo(doc, r);
+            for (final Block b in idx.blocks) {
+              if (b.type != BlockType.math) continue;
+              final String before = idx.lines.text(b.lineFrom + 1);
+              final BlockIndex out2 = BlockIndex.parse(out);
+              expect(
+                out2.blocks.where((Block x) => x.type == BlockType.math).length,
+                idx.blocks.where((Block x) => x.type == BlockType.math).length,
+                reason: '改了标记不许把公式块改没（或改多）',
+              );
+              // 只在"落点不在这个块里"时才检查内容不变（在块里已经被上面拦住了）
+              if (!inWhole) {
+                expect(
+                  out.contains(before) || before.isEmpty,
+                  isTrue,
+                  reason: '公式内容被改动了：$before',
+                );
+              }
+            }
+          }
+        }
+      }
+    });
+  });
 }
 
 /// 每一行的 `$` 成对，而且 `$$` 不被劈成单数

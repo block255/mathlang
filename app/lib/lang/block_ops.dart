@@ -105,7 +105,8 @@ BlockOpResult? _planLineMarker(String doc, int caret, BlockOp op, String marker)
   final String text = lines.text(line);
   // ★ 整块语义的行（`$$` 围栏 / 代码围栏 / 分隔线 / 分页符）**不许**改行首标记：
   //   改了就等于把那个块拆了（`$$` 少两个字符 ⇒ 数学块塌成段落）。
-  if (_isWholeBlockLine(text)) return null;
+  //   ★★ 2026-10-20（F1）：**围栏内部的行**同样不许 —— 见 [caretInWholeBlock]。
+  if (caretInWholeBlock(doc, caret)) return null;
   final int lineStart = lines.starts[line];
   final int oldLen = BlockMarkers.markerLength(text);
   final String oldMarker = text.substring(0, oldLen);
@@ -134,7 +135,7 @@ BlockOpResult? planLineMarkerSet(String doc, int caret, String desired) {
   final LineIndex lines = LineIndex.of(doc);
   final int line = lines.lineOf(caret.clamp(0, doc.length));
   final String text = lines.text(line);
-  if (_isWholeBlockLine(text)) return null;
+  if (caretInWholeBlock(doc, caret.clamp(0, doc.length))) return null;
   final int lineStart = lines.starts[line];
   final int oldLen = BlockMarkers.markerLength(text);
   final String oldMarker = text.substring(0, oldLen);
@@ -156,6 +157,31 @@ bool _isWholeBlockLine(String text) =>
     BlockMarkers.isMathFence(text) ||
     BlockMarkers.isDivider(text) ||
     BlockMarkers.isPageBreak(text);
+
+/// ★★★ 2026-10-20（T-A 实测 F1，用户报"公式散架"）：**光标这一行属于"整块语义"吗**？
+///
+/// 为什么不能只看"这一行本身像不像整块语法"：行间公式块 = `$$` / 中间若干行 / `$$`，
+/// **中间那些行本身什么都不像**（可能就是空的）—— 而往里面插 `# ` 会把 tex 改成
+/// `\n# \n` ⇒ KaTeX 当场报错 ⇒ 页面上出现红字 `[公式不完整]`，公式散架
+/// （实测复现：面板插「行间公式」⇒ 光标在块内 ⇒ 块类型 → 标题 1 ⇒ 文档变成 `$$\n# \n$$`）。
+///
+/// 判据一律借块模型（[BlockIndex]），**不在这里另写一套**：
+///   · 行间公式块（`BlockType.math`）与代码块（`BlockType.code`）内部的任何一行都算；
+///   · 单行的整块语法（`$$` 围栏行 / ```` ``` ```` / 分隔线 / 分页符）仍然算（见 [_isWholeBlockLine]）。
+bool caretInWholeBlock(String doc, int caret) {
+  final LineIndex lines = LineIndex.of(doc);
+  final int c = caret.clamp(0, doc.length);
+  final int line = lines.lineOf(c);
+  if (_isWholeBlockLine(lines.text(line))) return true;
+  for (final Block b in BlockIndex.parse(doc).blocks) {
+    if (line < b.lineFrom || line >= b.lineTo) continue;
+    if (b.type == BlockType.math || b.type == BlockType.code) return true;
+  }
+  return false;
+}
+
+/// 顶栏「块类型」下拉要不要**禁用**（光标在行间公式 / 代码块内部 ⇒ 那里没有"段落类型"）。
+bool canSetLineMarker(String doc, int caret) => !caretInWholeBlock(doc, caret);
 
 // ---------------------------------------------------------------------------
 // 代码块

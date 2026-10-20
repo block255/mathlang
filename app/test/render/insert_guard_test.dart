@@ -115,4 +115,71 @@ void main() {
       expect(planInsert(kInline, -5, '\n\n').moved, isFalse);
     });
   });
+
+  // ★★★ 2026-10-20（T-A 实战测试 F7，用户可见）：**分页符行里不许落载荷**。
+  //
+  // 改前现场：插入分页后光标停在标记行末（`block_ops._planPageBreak` 故意这么放，
+  // 好让顶栏立刻变成"取消分页"）⇒ 接着从符号面板插一个符号 ⇒ 文档变成
+  // `<!-- pagebreak -->$\frac{}{}$` ⇒ 那一行不再是"整行正好是标记" ⇒ 渲染退回普通段落
+  // ⇒ **页面上直接露出 HTML 注释编码**。
+  //
+  // 判据（全域）：任何落点 × 任何载荷，落地之后**分页符那一行必须还是一个完好的分页符**。
+  group('★ F7：分页符行不是载荷的合法落点（会把标记吃掉、露出编码）', () {
+    const String pb = '\n<!-- pagebreak -->\n';
+    final int atMarkerEnd = pb.indexOf('-->') + 3; // = 插入分页后的光标位置
+    final int nextLine = pb.indexOf('\n', 1) + 1;
+
+    test('标记行末（最常见路径）⇒ 挪到该行之后', () {
+      final InsertPlan p = planInsert(pb, atMarkerEnd, r'$\frac{}{}$');
+      expect(p.moved, isTrue);
+      expect(p.offset, nextLine);
+      final String out =
+          pb.replaceRange(p.offset, p.offset, p.padText(r'$\frac{}{}$'));
+      expect(out.split('\n').contains('<!-- pagebreak -->'), isTrue);
+      expect(out, '\n<!-- pagebreak -->\n'
+          r'$\frac{}{}$');
+    });
+
+    test('标记行首 / 行中间 ⇒ 也挪到该行之后', () {
+      for (final int at in <int>[1, 5, 12]) {
+        final InsertPlan p = planInsert(pb, at, 'x');
+        final String out = pb.replaceRange(p.offset, p.offset, p.padText('x'));
+        expect(out.split('\n').contains('<!-- pagebreak -->'), isTrue,
+            reason: '@$at ⇒ ${out.replaceAll('\n', r'\n')}');
+      }
+    });
+
+    test('文末那一行分页符（后面没有换行）⇒ 挪到行尾 + 补一个换行', () {
+      const String tail = 'x\n<!-- pagebreak -->';
+      final InsertPlan p = planInsert(tail, tail.length - 3, 'y');
+      final String out =
+          tail.replaceRange(p.offset, p.offset, p.padText('y'));
+      expect(out.split('\n').contains('<!-- pagebreak -->'), isTrue,
+          reason: out.replaceAll('\n', r'\n'));
+      expect(out.contains('<!-- pagebreak -->y'), isFalse);
+    });
+
+    test('★ 全域：每个落点 × 五种载荷 ⇒ 分页符行永远是完好的标记', () {
+      const List<String> payloads = <String>[
+        'x',
+        r'$\frac{}{}$',
+        r'$\sum_{i=1}^{n}a_i$',
+        'a\nb',
+        '  \n',
+      ];
+      for (final String payload in payloads) {
+        for (var at = 0; at <= pb.length; at++) {
+          final InsertPlan p = planInsert(pb, at, payload);
+          final String out =
+              pb.replaceRange(p.offset, p.offset, p.padText(payload));
+          expect(
+            out.split('\n').contains('<!-- pagebreak -->'),
+            isTrue,
+            reason: 'payload="${payload.replaceAll('\n', r'\n')}" @ $at ⇒ '
+                '"${out.replaceAll('\n', r'\n')}"',
+          );
+        }
+      }
+    });
+  });
 }

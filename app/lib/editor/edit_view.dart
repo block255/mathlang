@@ -207,6 +207,12 @@ class EditViewState extends State<EditView> {
 
   int _edits = 0;
 
+  /// ★★ 2026-10-20（T-A 实测 F2）：上次看到的"文档载入序号"（`DocBuffer.docEpoch`）。
+  ///
+  /// 为什么不能只看 `didUpdateWidget`：`newDocument()` / `openDocument()` 是**同一个 buffer
+  /// 实例整篇换掉**（`loadDocument`）⇒ 那个钩子看不到 ⇒ 状态栏"0 字符 · 2 次编辑"。
+  int _docEpoch = 0;
+
   /// ★ S4-a A2：最近一次**粘贴**里智能包裹了几处（0 = 没包裹 / 已被后续编辑清掉）
   int _autoWrapped = 0;
 
@@ -237,6 +243,7 @@ class EditViewState extends State<EditView> {
     _input.addListener(_onInputChanged);
     _buf.addListener(_onBufferChanged);
     _focus.addListener(_onFocusChanged);
+    _docEpoch = _buf.docEpoch;
     // 首帧之后补发一次统计（否则外部状态栏在用户敲第一个字之前一直显示 0）
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _emitStats();
@@ -251,6 +258,7 @@ class EditViewState extends State<EditView> {
       widget.buffer.addListener(_onBufferChanged);
       // 换了一份文档 = 新的一次编辑会话
       _edits = 0;
+      _docEpoch = widget.buffer.docEpoch;
       // ★ 必须补报一次：新缓冲区的内容不会自己 notify，
       //   否则外部状态栏会一直停在**旧文档**的数字上（实测过：换文档后显示 0）
       _emitStats();
@@ -1009,6 +1017,13 @@ class EditViewState extends State<EditView> {
 
   void _onBufferChanged() {
     if (!_alive) return;
+    // ★★ 2026-10-20（F2）：**同一实例整篇换掉**（新建 / 打开）也算"新的一次编辑会话"。
+    if (_buf.docEpoch != _docEpoch) {
+      _docEpoch = _buf.docEpoch;
+      _edits = 0;
+      _autoWrapped = 0;
+      _autoWrappedSpans = const <MathSpan>[];
+    }
     _pokeBlink();
     _emitStats();
     if (mounted) setState(() {});

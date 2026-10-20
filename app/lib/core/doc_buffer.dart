@@ -34,6 +34,7 @@ class DocBuffer {
   String _buf;
   int _caret = 0;
   int _anchor = 0;
+  int _epoch = 0;
   final List<Edit> _undoStack = <Edit>[];
   final List<Edit> _redoStack = <Edit>[];
   final List<void Function()> _listeners = <void Function()>[];
@@ -42,6 +43,14 @@ class DocBuffer {
 
   String get buf => _buf;
   int get length => _buf.length;
+
+  /// ★★ 2026-10-20（T-A 实测抓到的 F2）：**"这一份文档是第几次载入"**。
+  ///
+  /// 为什么需要它：`newDocument()` / `openDocument()` 走的是 [loadDocument]（**同一个实例**
+  /// 整篇换掉），而编辑层（`EditView`）的"次编辑"计数只在**换 buffer 实例**时才归零
+  /// （`didUpdateWidget`）⇒ 新建之后状态栏显示「0 字符 · 2 次编辑」，数字自相矛盾。
+  /// [loadDocument] 把它 +1，编辑层看到它变了就把计数清零。
+  int get docEpoch => _epoch;
   int get caret => _caret;
   int get anchor => _anchor;
   bool get hasSelection => _caret != _anchor;
@@ -212,6 +221,7 @@ class DocBuffer {
     _anchor = 0;
     _undoStack.clear();
     _redoStack.clear();
+    _epoch++; // 换了一份文档 ⇒ 编辑层的"次编辑"要归零（见 [docEpoch]）
     _notify();
   }
 

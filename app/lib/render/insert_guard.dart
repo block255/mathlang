@@ -231,8 +231,34 @@ InsertPlan _settle(String src, InsertPlan p, String text) {
     }
   }
 
+  // ★★ 规则 ⑥（2026-10-20 T-A 实测 F7，用户可见）：**落点在分页符行里 ⇒ 挪到该行之后**。
+  //   `<!-- pagebreak -->` 只有"**整行正好是标记**"才算分页符；在它里面插任何字符
+  //   （哪怕只是一个 `$`）都会让那一行退化成普通段落 ⇒ 页面上**直接露出 HTML 注释编码**。
+  //   实测路径：插入分页后光标停在标记行末（见 `block_ops._planPageBreak`），
+  //   接着从符号面板插一个符号 ⇒ 文档变成 `<!-- pagebreak -->$\frac{}{}$`
+  //   ⇒ 用户看到一行 `<!-- pagebreak -->` 连同一个公式盒子。
+  bool forcePrefixNewline = false;
+  if (BlockMarkers.isPageBreak(_lineAt(src, at))) {
+    final int nl = src.indexOf('\n', _lineStartOf(src, at));
+    if (nl >= 0) {
+      at = nl + 1;
+      why = '落点在分页符行里（会把 `<!-- pagebreak -->` 吃掉、页面上露出编码）'
+          ' ⇒ 挪到该行之后';
+    } else {
+      // 分页符就是**文末那一行**（后面没有换行）⇒ 挪到行尾，并在载荷前补一个换行
+      at = src.length;
+      forcePrefixNewline = true;
+      why = '落点在文末那一行分页符里 ⇒ 挪到行尾并补一个换行，别把标记吃掉';
+    }
+    moved = true;
+  }
+
   // ★★ 规则 ④⑤：把载荷边界补成行边界（口径 =「D 保守」，用户 2026-10-17 拍板）
-  final InsertPadding pad = padForRange(src, at, at, text);
+  final InsertPadding basePad = padForRange(src, at, at, text);
+  final InsertPadding pad = forcePrefixNewline
+      ? InsertPadding(
+          prefixNewline: true, suffixNewline: basePad.suffixNewline)
+      : basePad;
   if (pad.any) {
     moved = true;
     why = '${why ?? '载荷边界会造出坏行（整行语法/围栏行/`\$` 粘连）'}'
@@ -316,11 +342,15 @@ String _nextLineAt(String src, int o) {
 
 /// 位置 [o]（字符之间的缝）所在的那一行；取 `o-1` 所在行 ⇒ `o` 在行末时也算"这一行"。
 String _lineAt(String src, int o) {
-  final int a = o <= 0 ? 0 : src.lastIndexOf('\n', o - 1) + 1;
+  final int a = _lineStartOf(src, o);
   int b = src.indexOf('\n', a);
   if (b < 0) b = src.length;
   return src.substring(a, b);
 }
+
+/// 位置 [o] 所在那一行的行首（`o` 在行末时仍是**这一行**的行首）
+int _lineStartOf(String src, int o) =>
+    o <= 0 ? 0 : src.lastIndexOf('\n', o - 1) + 1;
 
 bool _isFenceLineAt(String src, int o) => _isFenceLine(_lineAt(src, o));
 
