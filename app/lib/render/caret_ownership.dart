@@ -120,13 +120,17 @@ CaretPlacement? caretPlacement(String source, int caretRel) {
       units += 1;
       continue;
     }
-    if (c >= s.start && c <= s.end) {
+    // ★★ 2026-10-20（方案 B）：**强调段**两端各多认领两格（`**`），
+    //   与数学段"多认领一格"同一套理由 —— 否则光标停在星号里会"没人认领"。
+    //   正文本体照文字段处理（每个字符一格）。
+    final int lead = s.isEmphasis ? 2 : 0;
+    if (c >= s.start - lead && c <= s.end + lead) {
       return CaretPlacement(
         segIndex: i,
         isMath: false,
         segStart: s.start,
-        localRel: c - s.start,
-        paragraphPos: units + (c - s.start),
+        localRel: (c - s.start).clamp(0, s.text.length),
+        paragraphPos: units + (c - s.start).clamp(0, s.text.length),
       );
     }
     units += s.text.length;

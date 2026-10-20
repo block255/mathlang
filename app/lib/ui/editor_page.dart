@@ -1249,7 +1249,7 @@ class EditorPageState extends State<EditorPage> {
             _blockTypeMenu(),
             const SizedBox(width: 2),
             // 手动分页（★ 2026-10-20：用户发现"手动分页只有 Ctrl+Enter，界面里没入口"）
-            _pageBreakButton(),
+            _pageBreakMenu(),
             const SizedBox(width: 4),
             const Spacer(),
             _toggleButton(
@@ -1362,63 +1362,81 @@ class EditorPageState extends State<EditorPage> {
     );
   }
 
-  // ---------------- 手动分页（2026-10-20）----------------
+  // ---------------- 手动分页（2026-10-20，方案甲：下拉 + 接缝带）----------------
 
-  /// 光标所在行**是不是分页符**（`<!-- pagebreak -->`）
-  bool _caretOnPageBreak() {
-    final String doc = _buf.buf;
-    final int c = _buf.caret.clamp(0, doc.length);
-    final int start = c <= 0 ? 0 : doc.lastIndexOf('\n', c - 1) + 1;
-    int end = doc.indexOf('\n', c);
-    if (end < 0) end = doc.length;
-    return BlockMarkers.isPageBreak(doc.substring(start, end));
-  }
+  /// 光标是否落在"两页之间那道缝"上（分页符行 ± 上下连续空行）
+  bool _caretInSeam() => seamBand(_buf.buf, _buf.caret) != null;
 
-  /// ★★ 手动分页按钮：**一键插入 / 一键取消**（同一颗按钮的两种语义）
+  /// 分页下拉：**插入分页** / **删除分页**（并列；删除在光标不在接缝带时灰显）
   ///
-  /// 为什么要有它：手动分页原来**只有 `Ctrl+Enter`**，界面里没有任何入口 ——
-  /// 普通用户根本发现不了（和"标题行"是同一类毛病）。
-  /// 语义做成**切换**：光标所在行不是分页符 ⇒ 插入；已经是 ⇒ **删掉这一行**（含它自己那一行）。
-  Widget _pageBreakButton() {
-    final bool onBreak = _caretOnPageBreak();
-    return Tooltip(
-      message: onBreak
-          ? '取消分页（删掉光标所在的这行分页符）'
-          : '在光标后插入分页（Ctrl+Enter）',
-      child: InkWell(
-        key: const Key('page-break-button'),
-        onTap: () {
-          if (_caretOnPageBreak()) {
-            // 兜底：**整行删掉**（不留下空行），光标落在原位置
-            _editKey.currentState?.setLineMarker('');
-            _editKey.currentState?.removePageBreakAtCaret();
-          } else {
-            _blockOp(BlockOp.pagebreak);
-          }
-          _editKey.currentState?.focusInput();
-          setState(() {});
-        },
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-          child: Row(
-            children: <Widget>[
-              Icon(onBreak ? Icons.horizontal_split : Icons.vertical_split_outlined,
-                  size: 15,
-                  color: onBreak ? const Color(0xFFC53030) : const Color(0xFF4A5568)),
-              const SizedBox(width: 4),
-              Text(onBreak ? '取消分页' : '分页',
-                  style: TextStyle(
-                      fontSize: 12,
-                      color: onBreak
-                          ? const Color(0xFFC53030)
-                          : const Color(0xFF2D3748))),
-            ],
-          ),
+  /// 为什么从"同一颗按钮切换"改成下拉（用户 2026-10-20）：
+  /// 原来的取消按钮只在"光标正好在分页符行"时出现，而用户**根本不知道分页符行在哪**
+  /// ⇒ 做了别的操作之后就再也找不回取消入口。下拉把两种行为并列摆出来，
+  /// 并用**接缝带**（两页之间的缝，含上下空行）判断"能不能删"。
+  Widget _pageBreakMenu() {
+    final bool canRemove = _caretInSeam();
+    return PopupMenuButton<String>(
+      key: const Key('page-break-menu'),
+      tooltip: '分页（插入 / 删除）',
+      onSelected: (String v) {
+        if (v == 'insert') {
+          _blockOp(BlockOp.pagebreak);
+        } else {
+          _editKey.currentState?.removePageBreakAtCaret();
+          _snack('已删除这道分页（Ctrl+Z 可撤销）');
+        }
+        _editKey.currentState?.focusInput();
+        setState(() {});
+      },
+      itemBuilder: (BuildContext c) => <PopupMenuEntry<String>>[
+        const PopupMenuItem<String>(
+          key: Key('page-break-insert'),
+          value: 'insert',
+          height: 34,
+          child: Row(children: <Widget>[
+            Icon(Icons.vertical_split_outlined, size: 15, color: Color(0xFF4A5568)),
+            SizedBox(width: 6),
+            Text('插入分页', style: TextStyle(fontSize: 12)),
+            Spacer(),
+            Text('Ctrl+Enter', style: TextStyle(fontSize: 10, color: Color(0xFFA0AEC0))),
+          ]),
         ),
+        PopupMenuItem<String>(
+          key: const Key('page-break-remove'),
+          value: 'remove',
+          height: 34,
+          enabled: canRemove,
+          child: Row(children: <Widget>[
+            Icon(Icons.horizontal_split,
+                size: 15,
+                color: canRemove ? const Color(0xFFC53030) : const Color(0xFFCBD5E0)),
+            const SizedBox(width: 6),
+            Text('删除分页',
+                style: TextStyle(
+                    fontSize: 12,
+                    color: canRemove ? const Color(0xFFC53030) : const Color(0xFFA0AEC0))),
+          ]),
+        ),
+        if (!canRemove)
+          const PopupMenuItem<String>(
+            enabled: false,
+            height: 30,
+            child: Text('（把光标放到两页交界处，这一项才可用）',
+                style: TextStyle(fontSize: 10, color: Color(0xFFA0AEC0))),
+          ),
+      ],
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        child: Row(children: <Widget>[
+          const Icon(Icons.vertical_split_outlined, size: 15, color: Color(0xFF4A5568)),
+          const SizedBox(width: 4),
+          const Text('分页', style: TextStyle(fontSize: 12, color: Color(0xFF2D3748))),
+          Icon(Icons.arrow_drop_down,
+              size: 16, color: canRemove ? const Color(0xFFC53030) : const Color(0xFF718096)),
+        ]),
       ),
     );
   }
-
   Widget _fileMenu() {
     return PopupMenuButton<String>(
       key: const Key('file-menu'),

@@ -542,10 +542,11 @@ class EditViewState extends State<EditView> {
     });
   }
 
-  /// ★★ 2026-10-20：**取消光标所在行的分页符**（整行删掉，一步撤销）
+  /// ★★ 2026-10-20（接缝带口径）：**删除光标所在的"两页之间的缝"**
+  /// （分页符行 + 上下连续空行 ⇒ 换成一个空行；文首/文末那一侧没有正文就抹干净）。
   void removePageBreakAtCaret() {
     _breakUndoGroup();
-    final BlockOpResult? r = planRemovePageBreak(_buf.buf, _buf.caret);
+    final BlockOpResult? r = planRemoveSeam(_buf.buf, _buf.caret);
     if (r == null || r.isNoop) return;
     final String out = applyBlockOpTo(_buf.buf, r);
     final int caret = r.caret.clamp(0, out.length);

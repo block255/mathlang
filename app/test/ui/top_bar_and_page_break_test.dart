@@ -1,9 +1,11 @@
-// ★★ 2026-10-20 守卫：顶栏顺序（用户拍板）+ 手动分页的"插入/取消"与兜底
+// ★★ 2026-10-20 守卫：顶栏顺序 + 手动分页（方案甲：下拉 + **接缝带**）
 //
-// 用户原话（2026-10-20）：
-//   「文件 导入 保存 导出 都是属于文件级操作，可以放一起排在左边；然后是已恢复卡片；
-//     之后是文档名；再之后是 正文/标题 的按钮，然后才是分页的按钮」
-//   「能手动分页，我们是不是也需要能手动取消下面的分页」+「做好相关的兜底」
+// 用户原话：
+//   「文件 导入 保存 导出 都是文件级操作，放一起排左边；然后已恢复卡片；之后文档名；
+//     再之后是 正文/标题 的按钮，然后才是分页的按钮」
+//   「用户怎么知道分页符行在哪？…… 光标落在下一页的第一个字符之前或上一页的最后一个字符之后
+//     （包括下面的空行）时 —— 这样才符合人类习惯」
+// ⇒ 「删除分页」的判据 = **接缝带**（分页符行 ± 上下连续空行）。
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -14,13 +16,13 @@ import 'package:mathlang/ui/editor_page.dart';
 
 import '../support/symbol_fixture.dart';
 
-Future<(EditorPageState, DocBuffer)> _pump(WidgetTester tester,
-    {String doc = '甲乙丙\n丁戊'}) async {
+Future<(EditorPageState, DocBuffer)> _pump(WidgetTester tester, String doc,
+    {int? caret}) async {
   tester.view.physicalSize = const Size(1500, 1000);
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
-  final DocBuffer buf = DocBuffer(doc)..setCaret(doc.length);
+  final DocBuffer buf = DocBuffer(doc)..setCaret(caret ?? doc.length);
   await tester.pumpWidget(MaterialApp(
     home: EditorPage(library: testSymbolLibrary(), buffer: buf),
   ));
@@ -33,83 +35,104 @@ double _left(WidgetTester tester, String key) =>
 
 void main() {
   group('㉜ 顶栏顺序（用户 2026-10-20 定）', () {
-    testWidgets('★★ 文件级动作靠左且相邻：文件 < 导入 < 保存 < 导出', (WidgetTester tester) async {
-      await _pump(tester);
-      final double file = _left(tester, 'file-menu');
-      final double imp = _left(tester, 'import-button');
-      final double save = _left(tester, 'save-button');
-      final double exp = _left(tester, 'export-menu');
-      expect(file, lessThan(imp), reason: '「文件」在「导入」左边');
-      expect(imp, lessThan(save), reason: '「导入」在「保存」左边');
-      expect(save, lessThan(exp), reason: '「保存」在「导出」左边');
-      // 这四个必须是**挨着的**（中间不夹文档名/块类型）
-      final double title = _left(tester, 'doc-title');
-      expect(exp, lessThan(title), reason: '文件级动作全在文档名左边');
+    testWidgets('★★ 文件级动作靠左且相邻：文件 < 导入 < 保存 < 导出 < 文档名',
+        (WidgetTester tester) async {
+      await _pump(tester, '甲乙');
+      expect(_left(tester, 'file-menu'), lessThan(_left(tester, 'import-button')));
+      expect(_left(tester, 'import-button'), lessThan(_left(tester, 'save-button')));
+      expect(_left(tester, 'save-button'), lessThan(_left(tester, 'export-menu')));
+      expect(_left(tester, 'export-menu'), lessThan(_left(tester, 'doc-title')));
     });
 
-    testWidgets('★★ 文档名之后才是 块类型 → 分页', (WidgetTester tester) async {
-      await _pump(tester);
-      final double title = _left(tester, 'doc-title');
-      final double blockType = _left(tester, 'block-type-menu');
-      final double pageBreak = _left(tester, 'page-break-button');
-      expect(title, lessThan(blockType), reason: '文档名在块类型左边');
-      expect(blockType, lessThan(pageBreak), reason: '块类型在分页左边');
+    testWidgets('★★ 文档名 → 块类型 → 分页', (WidgetTester tester) async {
+      await _pump(tester, '甲乙');
+      expect(_left(tester, 'doc-title'), lessThan(_left(tester, 'block-type-menu')));
+      expect(_left(tester, 'block-type-menu'), lessThan(_left(tester, 'page-break-menu')));
     });
   });
 
-  group('㉝ 手动分页：插入 / 取消 / 兜底', () {
-    testWidgets('★★ 点一次「分页」⇒ 插入分页符；光标落在分页符行 ⇒ 按钮变「取消分页」',
-        (WidgetTester tester) async {
-      final (EditorPageState st, DocBuffer buf) = await _pump(tester);
-      st.openSettings();
-      st.closeSettings();
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const Key('page-break-button')));
-      await tester.pumpAndSettle();
-      expect(buf.buf.contains(kPageBreakMarker), isTrue, reason: '插入分页符');
-      expect(find.text('取消分页'), findsOneWidget, reason: '光标在分页符行上 ⇒ 按钮该变成取消');
+  group('㉝ 接缝带：判断"光标在不在两页之间"', () {
+    test('★★ 分页符行本身、上下空行都算接缝带；隔了正文就不算', () {
+      const String doc = '甲\n\n<!-- pagebreak -->\n\n乙';
+      final int brk = doc.indexOf('<!--');
+      for (final int caret in <int>[
+        doc.indexOf('甲') + 1,
+        brk,
+        brk + 3,
+        doc.indexOf('乙'),
+      ]) {
+        expect(seamBand(doc, caret), isNotNull, reason: 'caret=$caret 应当算接缝带');
+      }
+      // 正文中间（离得远）⇒ 不是接缝带
+      expect(seamBand('甲甲\n\n甲甲', 1), isNull);
     });
 
-    testWidgets('★★ 再点一次 ⇒ 分页符被删掉（整行删，不留空行）',
-        (WidgetTester tester) async {
-      final (EditorPageState st, DocBuffer buf) = await _pump(tester);
-      st.openSettings();
-      st.closeSettings();
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const Key('page-break-button')));
-      await tester.pumpAndSettle();
-      final String afterInsert = buf.buf;
-      await tester.tap(find.byKey(const Key('page-break-button')));
-      await tester.pumpAndSettle();
-      expect(buf.buf.contains(kPageBreakMarker), isFalse, reason: '取消分页');
-      expect(buf.buf.length, lessThan(afterInsert.length));
-      expect(buf.buf.contains('\n\n\n'), isFalse, reason: '不许留下连续三个空行');
-    });
-
-    test('★ 兜底：连续插分页符不叠加（同一处只认一个）', () {
-      const String doc = '甲乙\n丙';
-      final BlockOpResult? r1 = planBlockOp(doc, 2, BlockOp.pagebreak);
-      expect(r1, isNotNull);
-      final String once = applyBlockOpTo(doc, r1);
-      // 光标落回同一位置再插一次 ⇒ 应该被幂等规则挡住
-      final BlockOpResult? r2 = planBlockOp(once, 2, BlockOp.pagebreak);
-      expect(r2 == null || r2.isNoop, isTrue, reason: '连按不许堆一串分页符');
-    });
-
-    test('★ 取消分页：中间行删「行+换行」，末行删「前面的换行」', () {
-      const String mid = '甲\n<!-- pagebreak -->\n乙';
-      final BlockOpResult? r = planRemovePageBreak(mid, 4);
+    test('★★ 删除接缝：两侧正文之间**只剩一个空行**，分页符消失', () {
+      const String doc = '甲\n\n<!-- pagebreak -->\n\n乙';
+      final int brk = doc.indexOf('<!--');
+      final BlockOpResult? r = planRemoveSeam(doc, brk);
       expect(r, isNotNull);
-      expect(applyBlockOpTo(mid, r), '甲\n乙');
-
-      const String last = '甲\n<!-- pagebreak -->';
-      final BlockOpResult? r2 = planRemovePageBreak(last, 3);
-      expect(r2, isNotNull);
-      expect(applyBlockOpTo(last, r2), '甲');
+      final String out = applyBlockOpTo(doc, r);
+      expect(out.contains(kPageBreakMarker), isFalse);
+      expect(out, '甲\n乙');
     });
 
-    test('★ 光标不在分页符行 ⇒ 取消什么都不做', () {
-      expect(planRemovePageBreak('甲\n乙', 0), isNull);
+    test('★ 文首/文末的接缝：删完不留空行', () {
+      const String head = '<!-- pagebreak -->\n\n乙';
+      final String h = applyBlockOpTo(head, planRemoveSeam(head, 0));
+      expect(h.trimLeft().startsWith('乙'), isTrue, reason: '文首接缝删完不该留空行：${h.replaceAll('\n', '⏎')}');
+
+      final String tail = '甲\n\n<!-- pagebreak -->\n';
+      final String t = applyBlockOpTo(tail, planRemoveSeam(tail, 4));
+      expect(t.trimRight(), '甲', reason: '文末接缝删完不该留空行');
+    });
+
+    test('★ 连续两个分页符：删一次只清一条（另一条还在，不会留下半截）', () {
+      const String doc = '甲\n\n<!-- pagebreak -->\n<!-- pagebreak -->\n\n乙';
+      final String out = applyBlockOpTo(doc, planRemoveSeam(doc, 4));
+      expect(kPageBreakMarker.allMatches(out).length, 1,
+          reason: '一次只删一道缝，但绝不能留下半截标记');
+    });
+  });
+
+  group('㉞ 分页下拉（插入 / 删除 并列）', () {
+    testWidgets('★★ 下拉里两项都在；光标不在接缝带时「删除分页」禁用',
+        (WidgetTester tester) async {
+      await _pump(tester, '甲\n\n<!-- pagebreak -->\n\n乙', caret: 0);
+      await tester.tap(find.byKey(const Key('page-break-menu')));
+      await tester.pumpAndSettle();
+      expect(find.text('插入分页'), findsOneWidget);
+      expect(find.text('删除分页'), findsOneWidget);
+      final PopupMenuItem<String> remove =
+          tester.widget<PopupMenuItem<String>>(find.byKey(const Key('page-break-remove')));
+      expect(remove.enabled, isFalse, reason: '光标在文首，离接缝很远 ⇒ 删除项该灰显');
+    });
+
+    testWidgets('★★ 光标在接缝带（分页符下面的空行）⇒「删除分页」可用并真的删掉',
+        (WidgetTester tester) async {
+      // caret 放在分页符**下面**那个空行上（用户说的"下一页第一个字之前"）
+      const String doc = '甲\n\n<!-- pagebreak -->\n\n乙';
+      final int caret = doc.indexOf('<!--') + kPageBreakMarker.length + 1;
+      final (EditorPageState st, DocBuffer buf) = await _pump(tester, doc, caret: caret);
+      expect(st, isNotNull);
+      await tester.tap(find.byKey(const Key('page-break-menu')));
+      await tester.pumpAndSettle();
+      final PopupMenuItem<String> remove =
+          tester.widget<PopupMenuItem<String>>(find.byKey(const Key('page-break-remove')));
+      expect(remove.enabled, isTrue, reason: '光标在接缝带里 ⇒ 删除项可用');
+      await tester.tap(find.byKey(const Key('page-break-remove')));
+      await tester.pumpAndSettle();
+      expect(buf.buf.contains(kPageBreakMarker), isFalse);
+    });
+
+    testWidgets('★★ 点「插入分页」⇒ 分页符出现在缓冲区里', (WidgetTester tester) async {
+      final (_, DocBuffer buf) = await _pump(tester, '甲乙\n丙丁', caret: 2);
+      await tester.tap(find.byKey(const Key('page-break-menu')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('page-break-insert')));
+      await tester.pumpAndSettle();
+      expect(buf.buf.contains(kPageBreakMarker), isTrue);
+      expect(buf.canUndo, isTrue, reason: '插入必须可撤销');
     });
   });
 }

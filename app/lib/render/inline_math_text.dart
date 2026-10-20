@@ -160,6 +160,10 @@ class _InlineMathTextState extends State<InlineMathText> {
         }
         continue;
       }
+      if (s.isEmphasis) {
+        children.addAll(_emphasisSpansWithCaret(s, i, pl));
+        continue;
+      }
       children.addAll(_textSpansWithCaret(s, i, pl));
     }
 
@@ -200,66 +204,68 @@ class _InlineMathTextState extends State<InlineMathText> {
     if (txt.isEmpty) return const <InlineSpan>[];
     final int? a = widget.selStart;
     final int? b = widget.selEnd;
-    if (a == null || b == null || b <= a) return _boldify(txt, null);
+    if (a == null || b == null || b <= a) return <InlineSpan>[TextSpan(text: txt)];
     final int from = (a - srcStart).clamp(0, txt.length);
     final int to = (b - srcStart).clamp(0, txt.length);
-    if (to <= from) return _boldify(txt, null);
+    if (to <= from) return <InlineSpan>[TextSpan(text: txt)];
     final TextStyle sel = TextStyle(backgroundColor: const Color(kSelectionColorValue));
     return <InlineSpan>[
-      if (from > 0) ..._boldify(txt.substring(0, from), null),
-      ..._boldify(txt.substring(from, to), sel),
-      if (to < txt.length) ..._boldify(txt.substring(to), null),
+      if (from > 0) TextSpan(text: txt.substring(0, from)),
+      TextSpan(text: txt.substring(from, to), style: sel),
+      if (to < txt.length) TextSpan(text: txt.substring(to)),
     ];
   }
 
-  /// ★★ 2026-10-20（N4，用户拍板"可以支持"）：**行内粗体 `**…**`**。
+  /// ★★ 2026-10-20（方案 B）：**强调段**（`**…**`）—— 正文按粗体画，两个标记不画。
   ///
-  /// 口径（三条要记住）：
-  ///   ① 存储就是**原样**（L0 里仍是 `**文字**`）—— 与"唯一真相在 L0"一致，导出 md 也还是它；
-  ///   ② 两个星号**不消失、只是缩到看不见**（`fontSize: 0.01` + 透明色）——
-  ///      **偏移一个字都不许变**：光标、选区、点击反查全靠"渲染串长度 == 源码长度"；
-  ///   ③ 只认**成对**的 `**`：落单的星号原样显示（宁可显示，也不要吃掉用户的字）。
-  /// 局限（诚实）：粗体只作用在**同一个文字段**内 —— 跨行内公式的 `**` 不会生效。
-  static const TextStyle _boldMarker = TextStyle(
-    fontSize: 0.01,
-    color: Color(0x00000000),
-    height: 1,
-  );
+  /// 标记由**投影层**认领（`ProjectionSegment.emphasis`），这里只管正文：
+  /// 于是光标切分也只会在**正文**里切，永远劈不到星号（这就是方案 B 的收益）。
+  List<InlineSpan> _emphasisSpansWithCaret(
+    ProjectionSegment s,
+    int i,
+    CaretPlacement? pl,
+  ) {
+    const TextStyle bold = TextStyle(fontWeight: FontWeight.bold);
+    final int abs0 = widget.baseOffset + s.start;
+    final String txt = s.text;
+    // 选区（绝对偏移 → 段内正文偏移；两端标记不算正文）
+    final int? sa = widget.selStart;
+    final int? sb = widget.selEnd;
+    final int selFrom =
+        (sa == null || sb == null || sb <= sa) ? 0 : (sa - abs0).clamp(0, txt.length);
+    final int selTo =
+        (sa == null || sb == null || sb <= sa) ? 0 : (sb - abs0).clamp(0, txt.length);
+    final TextStyle selStyle = const TextStyle(
+        backgroundColor: Color(kSelectionColorValue),
+        fontWeight: FontWeight.bold);
 
-  List<InlineSpan> _boldify(String txt, TextStyle? extra) {
-    if (!txt.contains('**')) {
-      return <InlineSpan>[TextSpan(text: txt, style: extra)];
-    }
-    final List<InlineSpan> out = <InlineSpan>[];
-    var i = 0;
-    var plainStart = 0;
-    while (i < txt.length - 1) {
-      if (txt[i] == '*' && txt[i + 1] == '*') {
-        final int close = txt.indexOf('**', i + 2);
-        if (close > i + 2) {
-          if (i > plainStart) {
-            out.add(TextSpan(text: txt.substring(plainStart, i), style: extra));
-          }
-          out.add(const TextSpan(text: '**', style: _boldMarker));
-          out.add(TextSpan(
-            text: txt.substring(i + 2, close),
-            style: (extra ?? const TextStyle())
-                .merge(const TextStyle(fontWeight: FontWeight.bold)),
-          ));
-          out.add(const TextSpan(text: '**', style: _boldMarker));
-          i = close + 2;
-          plainStart = i;
-          continue;
-        }
+    /// 把正文 [from, to) 画出来（粗体 + 视情况铺选区底色）
+    List<InlineSpan> body(int from, int to) {
+      if (to <= from) return const <InlineSpan>[];
+      final List<InlineSpan> out = <InlineSpan>[];
+      final int a = from < selFrom ? selFrom.clamp(from, to) : from;
+      final int b = to > selTo ? selTo.clamp(from, to) : to;
+      if (b > a) {
+        if (a > from) out.add(TextSpan(text: txt.substring(from, a), style: bold));
+        out.add(TextSpan(text: txt.substring(a, b), style: selStyle));
+        if (b < to) out.add(TextSpan(text: txt.substring(b, to), style: bold));
+      } else {
+        out.add(TextSpan(text: txt.substring(from, to), style: bold));
       }
-      i++;
+      return out;
     }
-    if (plainStart < txt.length) {
-      out.add(TextSpan(text: txt.substring(plainStart), style: extra));
-    }
-    return out;
-  }
 
+    if (!caretOwnedBy(pl, i, isMath: false)) {
+      return body(0, txt.length);
+    }
+    final int r = pl!.localRel.clamp(0, txt.length);
+    return <InlineSpan>[
+      ...body(0, r),
+      _caretBar(),
+      if (widget.composingText.isNotEmpty) _composingSpan(),
+      ...body(r, txt.length),
+    ];
+  }
   /// 把本 widget 的 `source` 选区换算成**这个公式段**的 tex 相对区间。
   ///
   /// `$tex$` 的内容从 `s.start + 1` 开始；选区碰到 `$` 就算"到边"。

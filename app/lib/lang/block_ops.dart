@@ -272,7 +272,59 @@ BlockOpResult? planRemovePageBreak(String doc, int caret) {
   );
 }
 
-/// 把结果落到一段文本上（纯函数，测试与编辑层共用；名字带 `To` 免得和编辑层的方法同名）。
+/// ★★ 2026-10-20（用户拍板"接缝带"）：判断光标是否落在**两页之间的那道缝**上。
+///
+/// 用户的洞察：「用户怎么知道分页符行在哪？实际效果就是根本不知道点哪里才出取消按钮」
+/// ⇒ 判据不能是"光标正好在 `<!-- pagebreak -->` 那一行"，而应是**接缝带**：
+///   · 分页符行本身；
+///   · 它**上面的连续空行**（属于上一页末尾）；
+///   · 它**下面的连续空行**（属于下一页开头）。
+///
+/// 返回接缝带覆盖的 `[from, to)`（**不含**两侧正文行）；光标不在接缝带里 ⇒ `null`。
+({int from, int to, int breakLine})? seamBand(String doc, int caret) {
+  final LineIndex lines = LineIndex.of(doc);
+  final int c = caret.clamp(0, doc.length);
+  // ★★ 用户口径（2026-10-20）：接缝 = **上一页最后一个字符之后 .. 下一页第一个字符之前**
+  //   （含中间的空行与分页符行）。所以判据就一条：**光标落在这一段闭区间里**。
+  //   这样"光标停在正文末尾/下一页开头"都算，而正文中间不算 —— 符合人的直觉，
+  //   也不用让用户知道"分页符那一行"长什么样。
+  for (var i = 0; i < lines.count; i++) {
+    if (!BlockMarkers.isPageBreak(lines.text(i))) continue;
+    var above = i - 1;
+    while (above >= 0 && lines.text(above).trim().isEmpty) {
+      above--;
+    }
+    var below = i + 1;
+    while (below < lines.count && lines.text(below).trim().isEmpty) {
+      below++;
+    }
+    final int from =
+        above >= 0 ? lines.starts[above] + lines.text(above).length : 0;
+    final int to = below < lines.count ? lines.starts[below] : doc.length;
+    if (c >= from && c <= to) {
+      return (from: from, to: to, breakLine: i);
+    }
+  }
+  return null;
+}
+/// 删掉"接缝带"（见 [seamBand]）：两侧都有正文 ⇒ 换成一个换行（一个段落边界）；
+/// 有一侧没有正文 ⇒ 直接抹掉，不留开头/结尾的空行。**一步撤销**。
+BlockOpResult? planRemoveSeam(String doc, int caret) {
+  final ({int from, int to, int breakLine})? band = seamBand(doc, caret);
+  if (band == null) return null;
+  final bool hasBefore = doc.substring(0, band.from).trim().isNotEmpty;
+  final bool hasAfter = doc.substring(band.to).trim().isNotEmpty;
+  final String insert = (hasBefore && hasAfter) ? '\n' : '';
+  final int from = band.from;
+  final int to = band.to;
+  return BlockOpResult(
+    from: from,
+    to: to,
+    insert: insert,
+    caret: (from + insert.length).clamp(0, doc.length - (to - from) + insert.length),
+    op: BlockOp.pagebreak,
+  );
+}
 String applyBlockOpTo(String doc, BlockOpResult? r) {
   if (r == null || r.isNoop) return doc;
   return doc.replaceRange(r.from, r.to, r.insert);

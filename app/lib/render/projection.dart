@@ -18,14 +18,25 @@ class ProjectionSegment {
     this.isMath,
     this.isDisplayMath,
     this.text,
-    this.tex,
-  );
+    this.tex, {
+    this.isEmphasis = false,
+  });
 
   factory ProjectionSegment.text(int start, String text) =>
       ProjectionSegment._(start, false, false, text, '');
 
   factory ProjectionSegment.math(int start, String tex) =>
       ProjectionSegment._(start, true, false, '', tex);
+
+  /// ★★ 2026-10-20（用户拍板方案 B）：**行内强调段** `**…**`。
+  ///
+  /// [start] 指向**第一个正文字符**（与数学段"指向 tex[0]"同一口径）：
+  /// 于是开标记 `**` 在 `start-2`、闭标记在 `end..end+2`，两端像数学段一样**由段自己隐藏**。
+  /// 为什么不继续在渲染层"把星号缩到看不见"：那样光标切分文本时会把一对星号**劈开**
+  /// （用户实测：点标题左右两侧，星号就被显示出来、还随光标闪动）——
+  /// 投影层认领之后，光标只能在段内移动，**结构上**不可能劈开。
+  factory ProjectionSegment.emphasis(int start, String text) =>
+      ProjectionSegment._(start, false, false, text, '', isEmphasis: true);
 
   /// 行间块（`$$…$$`）：[start] 指向**开围栏之后**那一格，[tex] 是围栏**之内**的原文。
   factory ProjectionSegment.displayMath(int start, String tex) =>
@@ -46,6 +57,9 @@ class ProjectionSegment {
   /// 数学段的 tex，**不含定界符**（文字段为空串）
   final String tex;
 
+  /// 是不是**行内强调段**（`**…**`；[text] 只有正文，两个标记不在这段里）
+  final bool isEmphasis;
+
   int get length => isMath ? tex.length : text.length;
 
   /// 在 source 内的结束偏移（不含）。
@@ -55,7 +69,9 @@ class ProjectionSegment {
   @override
   String toString() => isMath
       ? '${isDisplayMath ? 'DisplayMath' : 'Math'}($start..$end, "$tex")'
-      : 'Text($start..$end, "$text")';
+      : (isEmphasis
+          ? 'Emphasis($start..$end, "$text")'
+          : 'Text($start..$end, "$text")');
 }
 
 /// 把一段 L0 文本投影成「文字段 / 行内数学段 / 行间数学段」序列。
@@ -75,41 +91,57 @@ List<ProjectionSegment> projectInline(String source) {
   final out = <ProjectionSegment>[];
   var i = 0;
   var textStart = 0;
-  while (i < source.length) {
-    if (source[i] != r'$') {
-      i++;
-      continue;
+
+  void flushText(int end) {
+    if (end > textStart) {
+      out.add(ProjectionSegment.text(textStart, source.substring(textStart, end)));
     }
+  }
+
+  while (i < source.length) {
+    final String ch = source[i];
     // ① 行间围栏（`$$` 独占行首、且有闭合）—— 整块当一个 displayMath 段
-    final int? fenceEnd = displayFenceEnd(source, i);
-    if (fenceEnd != null) {
-      if (i > textStart) {
-        out.add(ProjectionSegment.text(textStart, source.substring(textStart, i)));
+    if (ch == r'$') {
+      final int? fenceEnd = displayFenceEnd(source, i);
+      if (fenceEnd != null) {
+        flushText(i);
+        out.add(ProjectionSegment.displayMath(
+          i + 2,
+          source.substring(i + 2, fenceEnd - 2),
+        ));
+        i = fenceEnd;
+        textStart = i;
+        continue;
       }
-      out.add(ProjectionSegment.displayMath(
-        i + 2,
-        source.substring(i + 2, fenceEnd - 2),
-      ));
-      i = fenceEnd;
+      // ② 行内 `$…$`
+      final int close = source.indexOf(r'$', i + 1);
+      if (close < 0) break; // 未闭合 → 余下全是文字
+      flushText(i);
+      out.add(ProjectionSegment.math(i + 1, source.substring(i + 1, close)));
+      i = close + 1;
       textStart = i;
       continue;
     }
-    // ② 行内 `$…$`
-    final close = source.indexOf(r'$', i + 1);
-    if (close < 0) break; // 未闭合 → 余下全是文字
-    if (i > textStart) {
-      out.add(ProjectionSegment.text(textStart, source.substring(textStart, i)));
+    // ①.5 **行内强调** `**…**`（用户 2026-10-20 拍板方案 B：投影层独立段）
+    //   成对才算（`**` 之间至少一个字）；落单的星号原样当文字。
+    if (ch == '*' && i + 1 < source.length && source[i + 1] == '*') {
+      final int emphClose = source.indexOf('**', i + 2);
+      if (emphClose > i + 2) {
+        flushText(i);
+        out.add(ProjectionSegment.emphasis(
+          i + 2,
+          source.substring(i + 2, emphClose),
+        ));
+        i = emphClose + 2;
+        textStart = i;
+        continue;
+      }
     }
-    out.add(ProjectionSegment.math(i + 1, source.substring(i + 1, close)));
-    i = close + 1;
-    textStart = i;
+    i++;
   }
-  if (textStart < source.length) {
-    out.add(ProjectionSegment.text(textStart, source.substring(textStart)));
-  }
+  flushText(source.length);
   return out;
 }
-
 /// 若 [at] 处是**行间围栏**的开头，返回"覆盖整个块之后"的偏移（= 闭合 `$$` 之后）；
 /// 不是围栏（或**未闭合**）返回 null。
 ///
