@@ -1250,6 +1250,7 @@ class DocViewState extends State<DocView> {
           onMathTap: onMathTap,
           onMathRightClick: onMathRight,
           textStyle: TextStyle(
+            fontFamilyFallback: kCjkFallback,
             fontSize: size,
             fontWeight: FontWeight.bold,
             height: 1.35,
@@ -1364,7 +1365,15 @@ class DocViewState extends State<DocView> {
                 ? null
                 : (TapDownDetails _) =>
                     widget.onEnvResizeRequest!(u.renderBase),
-            child: MathWithCaret(
+            // ★★ 2026-10-20（N1）：**行间公式超宽时等比缩小到正文宽**。
+            //   用户实测：一条长推导（`limsup{x_n+y_n}=lim(sup{…})≤…`）会顶出页面右缘、
+            //   画出 Flutter 的溢出条纹，PDF 里也会被截断。
+            //   为什么用 FittedBox 而不是"折行"：折行要判断在哪个关系符处断，
+            //   语义与间距都会变；而**等比缩小**只影响这一行的视觉大小，语义不变、位置不变。
+            //   FittedBox 的命中测试是逆变换过的（`RenderFittedBox.hitTestChildren`）⇒
+            //   点公式、光标进公式这些交互仍然准。`scaleDown` 保证**不会放大**小公式。
+            child: LayoutBuilder(builder: (BuildContext c, BoxConstraints cons) {
+              final Widget math = MathWithCaret(
               tex: tex,
             // ★ ⑤ 选区：行间公式整块是一个对象（用户拍板）—— 被选中就铺整块
             selFrom: selFrom,
@@ -1385,7 +1394,14 @@ class DocViewState extends State<DocView> {
                 style: TextStyle(color: Color(0xFFB08968), fontSize: 13),
               ),
             ),
-            ),
+            );
+            if (!cons.maxWidth.isFinite) return math;
+            return FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.center,
+              child: math,
+            );
+            }),
           ),
         );
 

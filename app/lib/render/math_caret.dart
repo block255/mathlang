@@ -34,6 +34,8 @@ import 'hit_map.dart';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+
+
 import 'package:flutter/rendering.dart';
 import 'package:flutter_math_fork/flutter_math.dart';
 
@@ -295,7 +297,13 @@ class _MathWithCaretState extends State<MathWithCaret> {
         widget.tex,
         key: widget.mathKey,
         mathStyle: widget.mathStyle,
-        textStyle: TextStyle(fontSize: widget.fontSize),
+        // ★★ 2026-10-20（N2/N3）：**中日韩与符号字体的回退链**。
+        //   KaTeX 自带字体没有 CJK 字形 ⇒ `\text{中文}` 会变豆腐块；正文也缺 ⟺ 这类符号。
+        //   加上 fallback 后由系统字体兜底（Windows 上就是雅黑/宋体/Segoe UI Symbol）。
+        textStyle: TextStyle(
+          fontSize: widget.fontSize,
+          fontFamilyFallback: kCjkFallback,
+        ),
         onErrorFallback: widget.onErrorFallback,
       ),
     );
@@ -819,3 +827,11 @@ void _dashLine(Canvas canvas, Offset a, Offset b, Paint p, double dash, double g
     t = end + gap;
   }
 }
+
+/// 字数/符号缺字形时的**系统字体回退链**（N2/N3，2026-10-20）
+const List<String> kCjkFallback = <String>[
+  'Microsoft YaHei',
+  'SimSun',
+  'Segoe UI Symbol',
+  'Segoe UI Emoji',
+];
