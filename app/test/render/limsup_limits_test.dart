@@ -14,23 +14,22 @@ import '../support/math_fonts.dart';
 
 void main() {
   group('㊱ withOperandLimits（纯函数）', () {
-    test('★★ `\limsup` / `\liminf` 都补 `\limits`', () {
+    test(r'★★ 两个算符都补 limits', () {
       expect(withOperandLimits(r'\limsup_{n}').tex, r'\limsup\limits_{n}');
       expect(withOperandLimits(r'\liminf_{n}').tex, r'\liminf\limits_{n}');
     });
 
-    test('★ 已经有 `\limits` / `\nolimits` 的不重复插', () {
+    test(r'★ 已经有 limits / nolimits 的不重复插', () {
       expect(withOperandLimits(r'\limsup\limits_{n}').tex, r'\limsup\limits_{n}');
       expect(withOperandLimits(r'\limsup\nolimits_{n}').tex, r'\limsup\nolimits_{n}');
     });
 
-    test('★ 别的命令不动（`\lim` 本来就堆叠；`\limsup` 出现在名字里也要判"命令名到此为止"）', () {
+    test(r'★ 别的命令不动（lim 本来就堆叠；limsupfoo 不是命令名）', () {
       expect(withOperandLimits(r'\lim_{n}').tex, r'\lim_{n}');
       expect(withOperandLimits(r'\limsupfoo').tex, r'\limsupfoo');
     });
 
-    test('★★ 偏移映射：插入点之前的偏移不变，之后的右移 7', () {
-      //           0123456789...
+    test('★★ 偏移映射：插入点之前的偏移不变，之后的右移（= limits 的长度）', () {
       const String src = r'\limsup_{n}';
       final FixedTex f = withOperandLimits(src);
       expect(f.mapOffset(0), 0);
@@ -46,9 +45,8 @@ void main() {
     });
   });
 
-  group('㊲ 渲染高度：修正后必须比"侧标"高（= 真的堆叠了）', () {
-    testWidgets('★★ MathWithCaret 走修正 ⇒ 高度接近 `\lim\limits`，而不是侧标的高度',
-        (WidgetTester tester) async {
+  group('㊲ 渲染高度：修正后必须真的堆叠（比侧标高）', () {
+    testWidgets(r'★★ 修正后高度接近堆叠版，而不是侧标高度', (WidgetTester tester) async {
       await loadMathFonts();
       Future<double> h(String tex) async {
         await tester.pumpWidget(MaterialApp(
