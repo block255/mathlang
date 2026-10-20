@@ -62,6 +62,34 @@ void main() {
       }
     });
 
+    // ★★ 2026-10-20（T-D 实测，用户粘贴 AI 答案时看到"编码露出来"）：
+    //   **多行推导的续行**以 `=` 开头（`=\lim_{x\to0}\frac{…}{…}`），
+    //   原先"首尾挂运算符一律不包"把它们整行漏掉 ⇒ 页面上露出 LaTeX。
+    //   口径：**段里有强证据（`\` / `^` / `_`）时，首尾的 `=` 不算悬空** —— 那是"接着上一行写"。
+    test('★ 续行：`=\\lim…` / `=-\\frac{…}` ⇒ 照旧包（强证据优先）', () {
+      const List<String> lines = <String>[
+        r'=\lim_{x\to 0}\frac{\alpha x}{x}',
+        r'=-\frac{1}{2\times 2\times 3}',
+        r'=\alpha',
+        r'=\lim_{t\to 1}\frac{t^{2}(t-1)}{(1+t^{6})(1-t)}',
+      ];
+      for (final String line in lines) {
+        final SmartWrapPlan p = planSmartWrap(line);
+        expect(p.runs.length, 1, reason: line);
+        final String out = applySmartWrap(line, p);
+        expect(out.contains(r'$'), isTrue, reason: line);
+        expect(out.contains(line), isTrue, reason: '原文必须一字不差：$out');
+        // 整行只有一个式子 + 有显示倾向（`=` / `\lim`）⇒ 升成行间块
+        expect(out.contains(r'$$'), isTrue, reason: '整行式子应升成行间：$out');
+      }
+    });
+
+    test('★ 但"没有强证据"的悬空运算符仍然不包（F13 那条不许退化）', () {
+      for (final String s in <String>['a 大于 b >', '先 < 后', 'b >']) {
+        expect(planSmartWrap(s).isEmpty, isTrue, reason: s);
+      }
+    });
+
     test('★ 不误伤：真公式一个都不许漏', () {
       const List<String> good = <String>[
         r'所以 a_n = (-1)^n 有界',

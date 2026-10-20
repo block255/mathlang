@@ -152,6 +152,15 @@ bool _hasDanglingOperator(String s) {
   return false;
 }
 
+/// 强证据：段里有 `\命令` / 上下标 ⇒ **一定是数学**，哪怕首尾挂着运算符。
+///
+/// ★★ 2026-10-20（T-D 实测，用户粘贴 AI 答案时看到"编码露出来"）：多行推导的**续行**
+/// 就是 `=\lim_{x\to 0}\frac{…}{…}` 这种，整行以 `=` 开头。若"首尾挂运算符一律不包"，
+/// 那种续行就原样露出 LaTeX（实测三行 `=\lim…` 一个都没包）。
+/// ⇒ 让强证据优先：段里有 `\` / `^` / `_` 时，首尾的 `=` 就是"接着上一行写"，照旧包。
+bool _hasStrongMathEvidence(String s) =>
+    s.contains(r'\') || s.contains('_') || s.contains('^');
+
 /// 纯英文（含空格的单词序列，如 "Cauchy Criterion"）⇒ **不是**数学
 bool _looksLikePlainEnglish(String s) {
   final String t = s.trim();
@@ -250,10 +259,13 @@ SmartWrapPlan planSmartWrap(String source) {
       }
       final String seg = source.substring(a, b);
       final bool url = seg.contains('://') || seg.startsWith('www.');
+      // ★ 悬空运算符只在"**没有**强证据"时才拦（续行 `=\lim…` 有强证据 ⇒ 照旧包）
+      final bool danglingBlocks =
+          _hasDanglingOperator(seg) && !_hasStrongMathEvidence(seg);
       if (!url &&
           _hasMathEvidence(seg) &&
           _hasMathSubstance(seg) &&
-          !_hasDanglingOperator(seg) &&
+          !danglingBlocks &&
           !_looksLikePlainEnglish(seg)) {
         runs.add(WrapRun(a, b));
       }
