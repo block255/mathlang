@@ -180,13 +180,12 @@ class _InlineMathTextState extends State<InlineMathText> {
   ) {
     if (!caretOwnedBy(pl, i, isMath: false)) {
       // ★ 绝对偏移口径（2026-10-20 修复拖选高亮错位）
-      return _runs(s.text, widget.baseOffset + s.start);
+      return _runs(s.text, s.start);
     }
     final int r = pl!.localRel.clamp(0, s.text.length);
-    // ★★ 2026-10-20（用户实测拖选时高亮漏掉一段）：`_runs` 的 srcStart 必须是**绝对偏移**
-    //   —— 它拿 widget.selStart/selEnd（缓冲区绝对偏移）相减；这里原来传的是段内相对的
-    //   `s.start`，所以只要单元不在缓冲区开头，选区高亮就整体错位（复制粘贴是对的，那走偏移本身）。
-    final int abs0 = widget.baseOffset + s.start;
+    // ★ `widget.selStart/selEnd` 是**本单元源坐标里的相对偏移**（`DocView._localSelFor` 算的），
+    //   所以这里必须传段内相对的 `s.start`（2026-10-20 曾误改成绝对偏移，导致中文不高亮）。
+    final int abs0 = s.start;
     return <InlineSpan>[
       ..._runs(s.text.substring(0, r), abs0),
       _caretBar(),

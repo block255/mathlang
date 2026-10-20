@@ -17,6 +17,7 @@
 
 import 'attachment.dart';
 import 'caret_sites.dart';
+import 'tex_fixups.dart';
 import 'scope_table.dart';
 import 'site_adjacency.dart';
 import 'slot_pad.dart';
@@ -295,7 +296,10 @@ String renderMathTex(String tex, {required int caretRel, bool showCursor = true}
     // 光标在里面时再补一根光标条（否则用户不知道自己停在哪儿）
     return (caretRel < 0 || !showCursor) ? mark : mark + kCursorTex;
   }
-  final SlotMarkResult marks = injectSlotMarks(tex, caretRel: caretRel);
+  // ★ 2026-10-20：先做**显示修正**（`\limsup`/`\liminf` 补 `\limits`），偏移同步映射
+  final FixedTex fixed = withOperandLimits(tex);
+  final int rel = caretRel < 0 ? caretRel : fixed.mapOffset(caretRel);
+  final SlotMarkResult marks = injectSlotMarks(fixed.tex, caretRel: rel);
   // 光标不在这段里 → 只画空槽，不画光标（`marks.rel` 此时为负，不能喂给 injectCursor）
   if (caretRel < 0 || !showCursor) return marks.tex;
   return injectCursor(marks.tex, marks.rel).tex;

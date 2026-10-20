@@ -45,6 +45,7 @@ import '../render/injection_map.dart';
 import '../render/leaf_boxes.dart';
 import '../render/leaf_pairing.dart';
 import '../render/math_caret.dart';
+import '../render/tex_fixups.dart';
 import '../render/projection.dart';
 import '../render/slot_marks.dart';
 import '../render/structure_geometry.dart';
@@ -813,7 +814,11 @@ class DocViewState extends State<DocView> {
 
   /// 渲染某个数学段时用的 tex（**注入与渲染必须走同一个函数**，否则点击定位会错位）
   String _renderTexFor(String tex, int? caretRel) {
-    final SlotMarkResult m = injectSlotMarks(tex, caretRel: caretRel ?? -1);
+    // ★ 2026-10-20：行间块也走同一条**显示修正**（`\limsup`/`\liminf` 补 `\limits`），
+    //   并把光标偏移同步映射过去（插入 `\limits` 会改长度）。
+    final FixedTex fixed = withOperandLimits(tex);
+    final int rel = caretRel == null ? -1 : fixed.mapOffset(caretRel);
+    final SlotMarkResult m = injectSlotMarks(fixed.tex, caretRel: rel);
     return caretRel == null ? m.tex : injectCursor(m.tex, m.rel).tex;
   }
 
