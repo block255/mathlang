@@ -1222,25 +1222,31 @@ class EditorPageState extends State<EditorPage> {
         child: Row(
           children: <Widget>[
             const SizedBox(width: 6),
+            // ★★ 2026-10-20（用户拍板重排）：**文件级操作排左边并挨在一起**
+            //   `[☰ 文件] [导入] [保存] [导出]` —— 它们是同一类动作（对"这份文档"下手）。
             _fileMenu(),
             const SizedBox(width: 4),
-            // ★★ 2026-10-19（U6，用户："标题行没有显眼入口"）：顶栏「块类型」下拉。
-            //   口径：**只有正文与三级标题**（平权：不引入列表/引用/代码块那套层级思维）。
-            _blockTypeMenu(),
-            const SizedBox(width: 8),
-            _titleWidget(),
-            const SizedBox(width: 4),
-            _saveDot(),
-            if (_restored) ...<Widget>[
-              const SizedBox(width: 8),
-              _restoredBadge(),
-            ],
-            const SizedBox(width: 12),
             _textButton('导入', const Key('import-button'),
                 tip: '导入 .md / .txt（Ctrl+Shift+O）', onTap: importDocument),
             _textButton('保存', const Key('save-button'),
                 tip: '保存（Ctrl+S）', onTap: () => saveDocument()),
             _exportMenu(),
+            const SizedBox(width: 10),
+            // 顺序（用户 2026-10-20 定）：文件级动作 → 已恢复卡片 → 文档名 → 块类型 → 分页
+            if (_restored) ...<Widget>[
+              _restoredBadge(),
+              const SizedBox(width: 10),
+            ],
+            _titleWidget(),
+            const SizedBox(width: 4),
+            _saveDot(),
+            const SizedBox(width: 10),
+            // 块类型下拉（正文 / 标题 1-3；平权口径，不含列表/引用/代码块）
+            _blockTypeMenu(),
+            const SizedBox(width: 2),
+            // 手动分页（★ 2026-10-20：用户发现"手动分页只有 Ctrl+Enter，界面里没入口"）
+            _pageBreakButton(),
+            const SizedBox(width: 4),
             const Spacer(),
             _toggleButton(
               key: const Key('open-quick-bar'),
@@ -1347,6 +1353,63 @@ class EditorPageState extends State<EditorPage> {
             Text(_blockLabel(cur), style: const TextStyle(fontSize: 12)),
             const Icon(Icons.arrow_drop_down, size: 16),
           ],
+        ),
+      ),
+    );
+  }
+
+  // ---------------- 手动分页（2026-10-20）----------------
+
+  /// 光标所在行**是不是分页符**（`<!-- pagebreak -->`）
+  bool _caretOnPageBreak() {
+    final String doc = _buf.buf;
+    final int c = _buf.caret.clamp(0, doc.length);
+    final int start = c <= 0 ? 0 : doc.lastIndexOf('\n', c - 1) + 1;
+    int end = doc.indexOf('\n', c);
+    if (end < 0) end = doc.length;
+    return BlockMarkers.isPageBreak(doc.substring(start, end));
+  }
+
+  /// ★★ 手动分页按钮：**一键插入 / 一键取消**（同一颗按钮的两种语义）
+  ///
+  /// 为什么要有它：手动分页原来**只有 `Ctrl+Enter`**，界面里没有任何入口 ——
+  /// 普通用户根本发现不了（和"标题行"是同一类毛病）。
+  /// 语义做成**切换**：光标所在行不是分页符 ⇒ 插入；已经是 ⇒ **删掉这一行**（含它自己那一行）。
+  Widget _pageBreakButton() {
+    final bool onBreak = _caretOnPageBreak();
+    return Tooltip(
+      message: onBreak
+          ? '取消分页（删掉光标所在的这行分页符）'
+          : '在光标后插入分页（Ctrl+Enter）',
+      child: InkWell(
+        key: const Key('page-break-button'),
+        onTap: () {
+          if (_caretOnPageBreak()) {
+            // 兜底：**整行删掉**（不留下空行），光标落在原位置
+            _editKey.currentState?.setLineMarker('');
+            _editKey.currentState?.removePageBreakAtCaret();
+          } else {
+            _blockOp(BlockOp.pagebreak);
+          }
+          _editKey.currentState?.focusInput();
+          setState(() {});
+        },
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          child: Row(
+            children: <Widget>[
+              Icon(onBreak ? Icons.horizontal_split : Icons.vertical_split_outlined,
+                  size: 15,
+                  color: onBreak ? const Color(0xFFC53030) : const Color(0xFF4A5568)),
+              const SizedBox(width: 4),
+              Text(onBreak ? '取消分页' : '分页',
+                  style: TextStyle(
+                      fontSize: 12,
+                      color: onBreak
+                          ? const Color(0xFFC53030)
+                          : const Color(0xFF2D3748))),
+            ],
+          ),
         ),
       ),
     );

@@ -542,6 +542,19 @@ class EditViewState extends State<EditView> {
     });
   }
 
+  /// ★★ 2026-10-20：**取消光标所在行的分页符**（整行删掉，一步撤销）
+  void removePageBreakAtCaret() {
+    _breakUndoGroup();
+    final BlockOpResult? r = planRemovePageBreak(_buf.buf, _buf.caret);
+    if (r == null || r.isNoop) return;
+    final String out = applyBlockOpTo(_buf.buf, r);
+    final int caret = r.caret.clamp(0, out.length);
+    _mutate(() {
+      _buf.replace(0, _buf.length, out);
+      _buf.setCaret(caret);
+    });
+  }
+
   /// ★★ S4-d③：把**每一页**抓成 PNG（图片集 / 图片式 PDF 的唯一入口）。
   ///
   /// 语义完全对齐原则 4「编辑时的分页预览 = 导出的 PDF 页 = 图片集的一张图」：

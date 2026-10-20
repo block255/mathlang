@@ -241,7 +241,33 @@ BlockOpResult? _planPageBreak(String doc, int caret) {
     from: at,
     to: at,
     insert: payload,
-    caret: (at + payload.length).clamp(0, doc.length + payload.length),
+    // ★ 2026-10-20：光标停在**分页符那一行的行尾**（不是下一行）——
+    //   这样顶栏按钮立刻变成「取消分页」，用户一眼就知道再点一下能撤销。
+    caret: (at + payload.length - 1).clamp(0, doc.length + payload.length),
+    op: BlockOp.pagebreak,
+  );
+}
+
+/// ★★ 2026-10-20（用户："能手动分页，是不是也需要能手动取消分页"）：
+/// **删掉光标所在那一行的分页符**（连同它自己那一行的换行一起删，免得留下空行）。
+///
+/// 返回 `null` = 光标不在分页符那一行（调用方什么都不做）。
+BlockOpResult? planRemovePageBreak(String doc, int caret) {
+  final int c = caret.clamp(0, doc.length);
+  final LineIndex lines = LineIndex.of(doc);
+  final int line = lines.lineOf(c);
+  final String text = lines.text(line);
+  if (!BlockMarkers.isPageBreak(text)) return null;
+  final int start = lines.starts[line];
+  final int end = start + text.length; // 不含换行
+  // 后面还有内容 ⇒ 删 `[start, end+1)`（含换行）；已经是最后一行 ⇒ 连前面的换行一起删
+  final int from = end < doc.length ? start : (start > 0 ? start - 1 : 0);
+  final int to = end < doc.length ? end + 1 : end;
+  return BlockOpResult(
+    from: from,
+    to: to,
+    insert: '',
+    caret: from,
     op: BlockOp.pagebreak,
   );
 }
