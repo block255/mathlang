@@ -97,6 +97,10 @@ $readme = @"
 
 二、以后打开
   直接双击「数语引擎.exe」，或者右键它 →「发送到」→「桌面快捷方式」。
+  ★ 绿色版**可能仍会被 Windows 拦一次**（"已保护你的电脑"）——
+    因为 SmartScreen 只认公共 CA 签名的发布者，自签证书过不了它。
+    遇到就点「更多信息」→「仍要运行」；这是绿色版的固有代价。
+    想彻底没有这道弹窗 ⇒ 用「安装版」（装成应用后启动不走这道检查）。
 
 三、出问题
   若仍被 Windows 拦：双击「证书-数语引擎.cer」→ 安装证书 → 当前用户 →
@@ -107,7 +111,7 @@ $readme = @"
 [System.IO.File]::WriteAllText((Join-Path $stage '安装说明.txt'), ($readme -replace "`r?`n", "`r`n"), [System.Text.Encoding]::UTF8)
 
 Write-Host "   [4/4] 打 zip" -ForegroundColor DarkGray
-$zip = Join-Path $root ("dist\mathlang-v$Version-win64.zip")
+$zip = Join-Path $root ("dist\mathlang-v$Version-win64-portable.zip")  # ★ U7：GitHub 用 ASCII 名
 if (Test-Path $zip) { Remove-Item $zip -Force }
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 [System.IO.Compression.ZipFile]::CreateFromDirectory((Join-Path $root 'dist\_pack'), $zip, [System.IO.Compression.CompressionLevel]::Optimal, $false)

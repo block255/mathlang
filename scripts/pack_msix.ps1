@@ -165,65 +165,113 @@ if ($Install) {
 #   MSIX 没有"安装后执行一次"的机制（微软不给），而"普通用户根本不会去找软件装在哪"
 #   ⇒ 用一个 .cmd 代劳：信任证书（需要就自提权）→ 装 msix → 启动应用
 #   （首次启动应用自己会在桌面建快捷方式）。
-$bundle = Join-Path $root 'dist\安装包'
-if (Test-Path $bundle) { Remove-Item $bundle -Recurse -Force }
-New-Item -ItemType Directory -Path $bundle -Force | Out-Null
-Copy-Item $msix (Join-Path $bundle '数语引擎.msix') -Force
-Copy-Item (Join-Path $signing '数语引擎-自签证书.cer') (Join-Path $bundle '证书-数语引擎.cer') -Force
+# ★★ 2026-10-19（U7，用户拍板）：
+#   · GitHub 发布的**包名用 ASCII**（`mathlang-v…-setup.zip`），解压出来的文件夹叫「数语引擎」；
+#   · 安装/卸载脚本名要**一眼看懂**：`双击我安装数语引擎.cmd` / `双击我卸载数语引擎.cmd`。
+$stage = Join-Path $root 'dist\_setup\数语引擎'
+if (Test-Path (Join-Path $root 'dist\_setup')) { Remove-Item (Join-Path $root 'dist\_setup') -Recurse -Force }
+New-Item -ItemType Directory -Path $stage -Force | Out-Null
 
+Copy-Item $msix (Join-Path $stage '数语引擎.msix') -Force
+Copy-Item (Join-Path $signing '数语引擎-自签证书.cer') (Join-Path $stage '证书-数语引擎.cer') -Force
+
+$thumbStr = $cert.Thumbprint
 $installCmd = @"
 @echo off
 setlocal
 set "HERE=%~dp0"
-set "THUMB=$($cert.Thumbprint)"
-echo 数语引擎 —— 安装（先信任证书，再装应用，最后自动打开）
+set "THUMB=$thumbStr"
+echo ============================================
+echo    数语引擎  $Version   （Windows 64 位）
+echo ============================================
+echo.
+echo 第一次安装需要信任一次本软件的自签证书，系统会弹管理员授权，请点 [是]。
 echo.
 certutil -user -store TrustedPeople %THUMB% >nul 2>&1
 if errorlevel 1 (
-  echo   需要一次管理员授权来信任本软件的自签证书，请在弹窗里点 [是]。
   powershell -NoProfile -Command "Start-Process certutil -Verb RunAs -Wait -ArgumentList '-addstore','-f','TrustedPeople','\"%HERE%证书-数语引擎.cer\"'"
 )
-echo   正在安装…
+echo 正在安装…
 powershell -NoProfile -Command "Add-AppxPackage -Path '%HERE%数语引擎.msix' -ForceApplicationShutdown"
 if errorlevel 1 (
   echo.
-  echo   [失败] 安装没成功。请把上面这句话截图发给我。
+  echo   [失败] 安装没成功。请把这句话连同上面的报错一起截图。
   pause
   exit /b 1
 )
-echo   装好了，正在打开…
+echo 装好了，正在打开…
 powershell -NoProfile -Command "`$p=(Get-AppxPackage MathLang.Editor).PackageFamilyName; Start-Process ('shell:AppsFolder\'+`$p+'!App')"
 echo.
-echo 完成。以后从桌面「数语引擎」图标打开即可。
+echo 完成。以后从桌面或开始菜单的「数语引擎」打开即可。
 pause
 "@
-[System.IO.File]::WriteAllText((Join-Path $bundle '安装数语引擎.cmd'), ($installCmd -replace "`r?`n", "`r`n"), [System.Text.Encoding]::GetEncoding(936))
+[System.IO.File]::WriteAllText((Join-Path $stage '双击我安装数语引擎.cmd'), ($installCmd -replace "`r?`n", "`r`n"), [System.Text.Encoding]::GetEncoding(936))
 
-$installReadme = @"
-数语引擎 $Version · Windows 安装说明
+$uninstallCmd = @"
+@echo off
+setlocal
+echo ============================================
+echo    卸载 数语引擎  $Version
+echo ============================================
+echo.
+powershell -NoProfile -Command "Get-Process -Name '数语引擎' -ErrorAction SilentlyContinue | Stop-Process -Force"
+powershell -NoProfile -Command "Get-AppxPackage MathLang.Editor | Remove-AppxPackage"
+if errorlevel 1 (
+  echo   [失败] 没卸掉（可能应用还开着，或它本来就没装）。
+  pause
+  exit /b 1
+)
+echo   已卸载。桌面/开始菜单的图标会消失。
+echo.
+set /p PURGE=要顺带删掉设置与暂存（%APPDATA%\mathlang）吗？保留可重装接着用 [y/N]: 
+if /i "%PURGE%"=="y" (
+  rmdir /s /q "%APPDATA%\mathlang"
+  echo   已删除。
+)
+echo.
+echo 完成。你保存的 .md 文档不受影响。
+pause
+"@
+[System.IO.File]::WriteAllText((Join-Path $stage '双击我卸载数语引擎.cmd'), ($uninstallCmd -replace "`r?`n", "`r`n"), [System.Text.Encoding]::GetEncoding(936))
 
-一、安装
-  双击「安装数语引擎.cmd」，按提示走：
-    ① 第一次会弹管理员授权（信任本软件的自签证书，点"是"）
-    ② 自动安装并**自动打开**；桌面上会出现「数语引擎」图标
+$readme = @"
+数语引擎 $Version · Windows 64 位
+
+一、安装（只有一步）
+  双击「双击我安装数语引擎.cmd」。
+  · 会弹一次管理员授权（信任本软件的自签证书）→ 点「是」
+  · 然后自动安装、自动打开，桌面上会出现「数语引擎」图标
   以后从桌面图标打开即可。
 
 二、卸载
+  双击「双击我卸载数语引擎.cmd」，按提示走即可（会问要不要顺带清掉设置与暂存）。
+
+三、你的数据在哪
+  设置与「本地暂存」在 %APPDATA%\mathlang\（卸载**不会**自动删，除非常你说 y）。
+  你保存的 .md 文档在任何情况下都不受影响。
+
+四、为什么需要"信任证书"
+  本版用**自签证书**签名，Windows 的 SmartScreen 还不认识它，所以第一次要手动信任一次。
+  将来换成公共 CA 签名（开源项目可免费申请）后，这一步就不需要了。
+
+五、手工卸载（万一脚本坏了）
   设置 → 应用 → 已安装的应用 → 搜「数语引擎」→ 卸载
   或 PowerShell：Get-AppxPackage MathLang.Editor | Remove-AppxPackage
-
-三、数据在哪
-  设置与本地暂存在 %APPDATA%\mathlang\（卸载**不会**删它，要彻底清就手动删这个目录）。
-  你保存的 .md 文件不受影响。
-
-四、为什么还需要"信任证书"
-  这个版本用自签证书签名（免费的替代方案）。将来换成公共 CA 签名后，这一步就不需要了。
 "@
-[System.IO.File]::WriteAllText((Join-Path $bundle '安装说明.txt'), ($installReadme -replace "`r?`n", "`r`n"), (New-Object System.Text.UTF8Encoding($false)))
+[System.IO.File]::WriteAllText((Join-Path $stage '安装说明.txt'), ($readme -replace "`r?`n", "`r`n"), (New-Object System.Text.UTF8Encoding($false)))
+
+# 打成 zip（GitHub 发布用 ASCII 名；解压得到「数语引擎」文件夹）
+$setupZip = Join-Path $root ("dist\mathlang-v$Version-win64-setup.zip")
+if (Test-Path $setupZip) { Remove-Item $setupZip -Force }
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+[System.IO.Compression.ZipFile]::CreateFromDirectory((Join-Path $root 'dist\_setup'), $setupZip, [System.IO.Compression.CompressionLevel]::Optimal, $false)
+Remove-Item (Join-Path $root 'dist\_setup') -Recurse -Force
 
 if (-not $KeepStage) { Remove-Item $stageRoot -Recurse -Force }
 $mb = [math]::Round((Get-Item $msix).Length / 1MB, 1)
+$zipMb = [math]::Round((Get-Item $setupZip).Length / 1MB, 1)
 Write-Host ''
-Write-Host "√ MSIX: $msix  (${mb} MB)" -ForegroundColor Green
+Write-Host "√ MSIX:   $msix  (${mb} MB)" -ForegroundColor Green
+Write-Host "√ 安装包: $setupZip  (${zipMb} MB)" -ForegroundColor Green
 Write-Host "   Identity=$identity  Version=$appxVersion  Publisher=$publisher" -ForegroundColor DarkGray
-Write-Host "   安装：双击它（先信任证书），或再跑一次 -Install" -ForegroundColor DarkGray
+Write-Host "   解压后：数语引擎\双击我安装数语引擎.cmd（一键装完并自动打开）" -ForegroundColor DarkGray
