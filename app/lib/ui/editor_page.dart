@@ -581,6 +581,9 @@ class EditorPageState extends State<EditorPage> {
     setState(() {
       _docFile = const DocumentFile();
       _title = DocumentFile.kUntitled;
+      // ★★ 2026-10-20（T-A 实测 F12）：新建的文档不是"恢复来的" ⇒ 徽标要收掉。
+      //   改前它一直挂着（用户看到「已恢复上次编辑」会以为这份新文档是从暂存恢复的）。
+      _restored = false;
     });
     _editKey.currentState?.focusInput();
     _persistNow(); // 新建 ⇒ 立刻覆盖暂存（别让下次启动恢复上一份）
@@ -607,6 +610,7 @@ class EditorPageState extends State<EditorPage> {
     setState(() {
       _docFile = df;
       _title = df.title;
+      _restored = false; // ★ F12：打开的文件不是"恢复来的"
     });
     _editKey.currentState?.focusInput();
     _persistNow(); // 打开 ⇒ 立刻覆盖暂存

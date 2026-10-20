@@ -90,8 +90,16 @@ NormalizeResult normalizeTex(String tex, int caretRel) {
     //      它的"空格子"是**模板本身的骨架**（用户从面板刚插进来时必然全空），
     //      按"全空结构"删掉就等于：**一失焦（提交点）就把刚插入的对齐推导吞成空壳**。
     //      实测（探针）：`normalizeTex(r'\begin{aligned}&=\\&=\end{aligned}')` 修复前返回 `""`。
+    //   ★★★ 2026-10-20（T-A 实测 F8，用户拍板"乙"）：**光标还落在里面的空结构也不回收**。
+    //      实测现场：空文档点面板「分式」⇒ `$\frac{}{}$`（11 字符，光标在第一个空槽里）⇒
+    //      点一下搜索框（编辑器失焦 = 提交点）⇒ 只剩 `$$`（2 字符）——用户看到的是
+    //      "**我刚插进去的模板凭空没了**"。
+    //      口径：**只保住"光标所在的那一个"空结构**；别处的空壳照样回收（免得空壳越堆越多）。
+    //      ★ 判据用**闭区间**（`u.start <= caret <= u.end`）：光标贴在结构末尾（按过 `→` 出槽）
+    //        也算"还在它身上"，否则一按右箭头再点开别处还是会被吞掉。
     for (final StructureUnit u in structureUnits(t)) {
       if (!u.allEmpty) continue;
+      if (caret >= u.start && caret <= u.end) continue;
       final String slice = tex.substring(
         u.start.clamp(0, tex.length),
         u.end.clamp(0, tex.length),

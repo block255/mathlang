@@ -7,9 +7,12 @@ import 'package:mathlang/render/normalize.dart';
 
 void main() {
   group('① 空结构回收：全空的结构单元整段删', () {
-    test(r'\frac{}{} → 删光', () {
-      final NormalizeResult r = normalizeTex(r'\frac{}{}', 0);
-      expect(r.tex, '');
+    // ★★ 2026-10-20（T-A F8，用户拍板"乙"）：口径变了 —— **光标还落在里面的空结构不回收**
+    //   （刚插的模板在失焦那一刻不许被吞掉，见 `normalize_keep_caret_structure_test.dart`）。
+    //   所以这一组原来的用例一律把光标挪到**结构之外**，继续钉"真正的空壳照旧回收"。
+    test(r'\frac{}{} → 光标在外面 ⇒ 删光', () {
+      final NormalizeResult r = normalizeTex(r'\frac{}{}+y', 11);
+      expect(r.tex, r'+y');
       expect(r.changed, isTrue);
     });
 
@@ -18,8 +21,8 @@ void main() {
       expect(r.tex, r'x++y');
     });
 
-    test(r'\sqrt{} → 删光', () {
-      expect(normalizeTex(r'\sqrt{}', 0).tex, '');
+    test(r'\sqrt{} → 光标在外面 ⇒ 删光', () {
+      expect(normalizeTex(r'\sqrt{}+1', 9).tex, r'+1');
     });
 
     test(r'\frac{a}{} → **有内容就不动**（只回收全空的）', () {
@@ -29,8 +32,9 @@ void main() {
     });
 
     test('嵌套：**两轮**回收（先删里面的根号，外层随之变空再删）', () {
-      final NormalizeResult r = normalizeTex(r'\frac{\sqrt{}}{}', 0);
-      expect(r.tex, '');
+      // 光标放在整段**之前**（不在任何空结构里；★ 贴着结构末尾算"还在它身上"，所以不能放末尾）
+      final NormalizeResult r = normalizeTex(r'x+\frac{\sqrt{}}{}', 1);
+      expect(r.tex, r'x+');
       expect(r.changes, 2,
           reason: '第一轮：分子里的 \\sqrt{} 全空 → 删；第二轮：\\frac{}{} 这才变全空 → 删');
     });
@@ -68,11 +72,13 @@ void main() {
   });
 
   group('★ 不得让光标乱跳', () {
-    test('删除空结构后，光标落在删除点（不在文中乱飞）', () {
+    test('删除空结构后，光标跟着**左移**（落在删除点，不在文中乱飞）', () {
+      // ★ 2026-10-20（F8 之后）：光标在**结构之后**才可能触发回收
+      //   （在结构里面的话空结构会被保住，见 `normalize_keep_caret_structure_test.dart`）
       const String src = r'ab\frac{}{}cd';
-      final NormalizeResult r = normalizeTex(src, 4); // 光标在 \frac 里面
+      final NormalizeResult r = normalizeTex(src, src.length); // 光标在末尾
       expect(r.tex, 'abcd');
-      expect(r.caret, 2, reason: '落在被删结构的起点上');
+      expect(r.caret, 4, reason: '删掉 9 个字符 ⇒ 光标左移 9（落回 `abcd` 末尾）');
     });
 
     test('删除位置**之前**的光标不受影响', () {

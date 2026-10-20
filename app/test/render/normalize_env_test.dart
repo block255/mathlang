@@ -27,11 +27,14 @@ void main() {
   });
 
   group('真正的空结构照旧回收（别改坏）', () {
-    test(r'\frac{}{} ⇒ 删空', () {
-      expect(normalizeTex(r'\frac{}{}', 0).tex, '');
+    // ★★ 2026-10-20（T-A F8，用户拍板"乙"）：**光标还落在里面的空结构不回收**
+    //   （刚插入的模板不许在失焦那一刻被吞掉）。所以这里把光标放到结构**之外**，
+    //   继续守"真正的空壳照旧回收"这一半口径。
+    test(r'\frac{}{} ⇒ 光标在外面 ⇒ 删空', () {
+      expect(normalizeTex(r'\frac{}{}x', 10).tex, r'x');
     });
-    test(r'a+\sqrt{} ⇒ 只剩 a+', () {
-      expect(normalizeTex(r'a+\sqrt{}', 4).tex, r'a+');
+    test(r'a+\sqrt{} ⇒ 光标在外面 ⇒ 只剩 a+', () {
+      expect(normalizeTex(r'a+\sqrt{}b', 10).tex, r'a+b');
     });
   });
 }

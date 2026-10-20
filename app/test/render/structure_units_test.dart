@@ -80,8 +80,10 @@ void main() {
 
   group('★ 消费者（normalize）的可见收益：两个空分式都要回收，`+` 留着', () {
     test(r'`\frac{}{}+\frac{}{}` ⇒ `+`', () {
-      final NormalizeResult r = normalizeTex(r'\frac{}{}+\frac{}{}', 0);
-      expect(r.tex, '+', reason: '改前：整个式子（含 `+`）被当成一个实例一起删掉');
+      // ★ 2026-10-20（T-A F8）：光标**落在哪个空结构里，哪个就不回收**（刚插的模板不许丢）
+      //   ⇒ 这里把光标放到两个分式**之外**，继续守"两个都回收、`+` 留着"。
+      final NormalizeResult r = normalizeTex(r'x+\frac{}{}+\frac{}{}', 1);
+      expect(r.tex, r'x++', reason: '改前：整个式子（含 `+`）被当成一个实例一起删掉');
       expect(r.changed, isTrue);
     });
 
