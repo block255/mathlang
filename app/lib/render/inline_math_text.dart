@@ -54,6 +54,7 @@ class InlineMathText extends StatefulWidget {
     this.caretColor,
     this.selStart,
     this.selEnd,
+    this.showEditingAids = true,
   });
 
   /// **选区**（⑤ 高亮）：`source` 内的区间 `[selStart, selEnd)`；`null` = 这段没被选中。
@@ -61,6 +62,12 @@ class InlineMathText extends StatefulWidget {
   /// ★ 用 `source` 的下标（不是绝对偏移）—— 调用方已经减过 `baseOffset`。
   final int? selStart;
   final int? selEnd;
+
+  /// ★★ 2026-10-20（T-C 实测 F16）：**要不要画编辑辅助**（空槽虚线框 / 光标竖条 / 选区底块）。
+  ///
+  /// 导出 PDF / 图片集时传 `false` —— 那些框是**编辑态的可视化**，
+  /// 实测它会**被画进导出的纸面里**（一个空的行间公式 ⇒ 纸面上出现一个虚线小方框）。
+  final bool showEditingAids;
 
   /// L0 里的这一段（一行或一段；`$...$` 由它自己投影）
   final String source;
@@ -319,6 +326,8 @@ class _InlineMathTextState extends State<InlineMathText> {
         width: widget.mathFontSize * 1.2,
         height: textCaretHeight(_textFontSize),
         showCaret: caretHere,
+        // ★ F16：导出抓图时不画这个虚线小框
+        showEditingAids: widget.showEditingAids,
       );
       return WidgetSpan(
         alignment: baseline
@@ -397,6 +406,8 @@ class _InlineMathTextState extends State<InlineMathText> {
         selTo: sel?.to,
         showCaret: caretHere,
         caretEdge: edge,
+        // ★ F16：导出抓图时不画任何编辑辅助
+        showEditingAids: widget.showEditingAids,
         // ★ 文本层字号（"公式前后那两格"按它画，与文字后面的光标地位等同）
         textFontSize: _textFontSize,
         mathKey: key,

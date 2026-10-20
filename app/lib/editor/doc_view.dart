@@ -1076,13 +1076,20 @@ class DocViewState extends State<DocView> {
     // 光标这一帧画不画（闪烁相位 / 失焦）也必须进键：否则单元从池里拿回旧 widget，
     // 相位变了也不重画 ⇒ 看起来就是光标一直静态不闪、点完有时不出现。
     final String caretKey = widget.caretVisible ? '#b1' : '#b0';
-    if (rel == null) return '${u.contentKey}$selKey$caretKey';
+    // ★★★ 2026-10-20（T-C 实测 F16 的真正根因）：**"这一帧画不画编辑辅助"也必须进键**。
+    //   `capturePages` 是"先藏再抓"：藏的只是**状态**，而单元 widget 是从 `_renderPool` 里取的
+    //   —— 键里没有这个状态，就会把**上一帧（带光标 / 带空槽虚线框）的 widget** 拿回来
+    //   ⇒ 抓到的图里照样有光标与虚线框（实测：F16 改完第一版导出的 PDF 里两者都在）。
+    //   ★ 用 `_hideCaret`（= 失焦 **或** 导出中）：
+    //     它决定"光标/选区画不画"，是同一帧的渲染输入；不进键就永远是池里的旧样子。
+    final String aidsKey = _hideCaret ? '#a1' : '#a0';
+    if (rel == null) return '${u.contentKey}$selKey$caretKey$aidsKey';
     // ★ 组合态也要进键：拼音变化会改变"含光标那个单元"的 widget 内容，
     //   不进键就会从池里拿回上一帧的旧拼音（叠字/不刷新）。
     final String comp = _composingFor(u, rel).isEmpty
         ? ''
         : '#k${_composingFor(u, rel).hashCode}';
-    return '${u.contentKey}#c$rel$comp$selKey$caretKey';
+    return '${u.contentKey}#c$rel$comp$selKey$caretKey$aidsKey';
   }
 
   /// 这个单元要不要接组合串（**只给含光标的那一个单元，且行间公式块不接**）。
@@ -1287,6 +1294,9 @@ class DocViewState extends State<DocView> {
           selEnd: selTo,
           composingText: composing,
           mathFontSize: size,
+          // ★★ 2026-10-20（T-C 实测 F16）：导出抓图时**不画任何编辑辅助**
+          //   （空槽虚线框 / 当前槽淡蓝底 / 光标竖条 / 选区底块）——它们不是文档内容。
+          showEditingAids: !_hideForCapture,
           onMathTap: onMathTap,
           onMathRightClick: onMathRight,
           textStyle: TextStyle(
@@ -1389,6 +1399,8 @@ class DocViewState extends State<DocView> {
               width: display * 1.2,
               height: display * 1.1,
               showCaret: caretAbs != null,
+              // ★ F16：导出抓图时不画这个虚线小框（它是编辑态的标记）
+              showEditingAids: !_hideForCapture,
             ),
           );
         }
@@ -1427,6 +1439,8 @@ class DocViewState extends State<DocView> {
             mathKey: mathKey,
             fontSize: display,
             mathStyle: MathStyle.display,
+            // ★★ F16：导出抓图时不画编辑辅助（行间公式的空槽虚线框最常被抓进 PDF）
+            showEditingAids: !_hideForCapture,
             onErrorFallback: (e) => Tooltip(
               message: e.messageWithType,
               child: const Text(

@@ -33,7 +33,18 @@ class EmptyMathMark extends StatelessWidget {
     this.caretWidth = 1.5,
     this.color = const Color(0xFFB0BEC5),
     this.caretColor = const Color(kCaretColorValue),
+    this.showEditingAids = true,
   });
+
+  /// ★★ 2026-10-20（T-C 实测 F16）：**要不要画这个虚线小框**。
+  ///
+  /// 它是"空公式的可见标记"（§6.1.1：空壳必须可见、可点、可删）—— 那是**编辑态**的需要；
+  /// 导出 PDF / 图片集时它是**纸面上的噪点**（实测：一个空的行间公式 ⇒ 导出的纸上
+  /// 出现一个莫名其妙的虚线方框）。`DocView` 抓图时传 `false`。
+  ///
+  /// ★ 尺寸照旧（它是有真实宽高的内联盒，参与排版）—— 只是**不画**
+  ///   ⇒ 导出不会因为"藏了它"而改变版面（版面中性）。
+  final bool showEditingAids;
 
   /// 宽度（空公式按"一个正文汉字宽"画；见调用方）
   final double width;
@@ -54,12 +65,15 @@ class EmptyMathMark extends StatelessWidget {
       width: width,
       height: height,
       child: CustomPaint(
-        painter: _EmptyMathPainter(
-          color: color,
-          showCaret: showCaret,
-          caretWidth: caretWidth,
-          caretColor: caretColor,
-        ),
+        // ★ F16：导出抓图时不画笔（尺寸照旧 ⇒ 版面中性）
+        painter: showEditingAids
+            ? _EmptyMathPainter(
+                color: color,
+                showCaret: showCaret,
+                caretWidth: caretWidth,
+                caretColor: caretColor,
+              )
+            : null,
       ),
     );
   }

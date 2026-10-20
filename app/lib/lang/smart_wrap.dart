@@ -120,6 +120,38 @@ bool _hasMathEvidence(String s) {
   return false;
 }
 
+/// ★★ 2026-10-20（T-C 实测 F13）：**"有证据"还不够，还得有"实体"**。
+///
+/// 实测现场（导入 `homework20261014-answer.md`）：md 里两处被**错包**成公式
+///   · 行首引用标记 `> 素材：…` ⇒ `>` 被包成 `$>$`（引用块被破坏，页面上出现数学盒子里的 `>`）
+///   · 行内代码 `` `test_data\homework20261014\` `` ⇒ 路径里的 `\` 被当成命令 ⇒ 包成 `$…$`
+///     ⇒ KaTeX 报 `\h` 不认识 ⇒ 页面上红字 `[公式不完整]`
+///
+/// 判据（只收紧、不放松）：一段要被判成数学，除了 [ _hasMathEvidence ] 之外，
+/// 还必须**含至少一个字母 / 数字**（`\命令` 也算：命令名本身就是字母）。
+/// 这样"只有运算符"的段（`>`、`<`、`+`）永远不会被包 —— 它们不构成数学段。
+bool _hasMathSubstance(String s) {
+  for (var i = 0; i < s.length; i++) {
+    final int c = s.codeUnitAt(i);
+    if (c >= 0x30 && c <= 0x39) return true; // 0-9
+    if ((c >= 0x41 && c <= 0x5A) || (c >= 0x61 && c <= 0x7A)) return true; // A-Z a-z
+  }
+  return false;
+}
+
+/// ★★ 2026-10-20（T-C F13 续）：段**首/尾挂着运算符**的不包。
+///
+/// 实测：`a 大于 b >` 里切出来的 `b >` 有字母也有 `>` ⇒ 按旧判据会被包成 `$b >$`。
+/// 但那是个**悬空的**比较符（中文里"大于"后面跟个 `>` 是语气），不是数学。
+/// 判据：首尾若还是 `= < > + - * /`，说明这个"数学段"没写完整 ⇒ 保守不包。
+bool _hasDanglingOperator(String s) {
+  const String ops = '=<>+-*/';
+  if (s.isEmpty) return false;
+  if (ops.contains(s[0])) return true;
+  if (ops.contains(s[s.length - 1])) return true;
+  return false;
+}
+
 /// 纯英文（含空格的单词序列，如 "Cauchy Criterion"）⇒ **不是**数学
 bool _looksLikePlainEnglish(String s) {
   final String t = s.trim();
@@ -149,6 +181,21 @@ SmartWrapPlan planSmartWrap(String source) {
       final int end = source.indexOf('```', i + 3);
       final int to = end < 0 ? source.length : end + 3;
       locked.add((from: i, to: to));
+      i = to;
+      continue;
+    }
+    // ★★ 2026-10-20（T-C 实测 F13）：**行内代码** `` `…` `` 同样不碰。
+    //   实测：`test_data\homework20261014\` 这段路径里的 `\` 被当成 LaTeX 命令
+    //   ⇒ 包成 `$…$` ⇒ KaTeX 报 `\h` 不认识 ⇒ 页面上红字 `[公式不完整]`。
+    //   行内代码里写的是**字面量**（路径 / 命令名 / 文件名），绝不该变成公式。
+    if (source.startsWith('`', i)) {
+      final int nl = source.indexOf('\n', i + 1);
+      final int end = source.indexOf('`', i + 1);
+      final bool sameLine = end >= 0 && (nl < 0 || end < nl);
+      final int to = sameLine ? end + 1 : i + 1; // 同行的下一个反引号才算一对
+      if (sameLine) {
+        locked.add((from: i, to: to));
+      }
       i = to;
       continue;
     }
@@ -189,15 +236,25 @@ SmartWrapPlan planSmartWrap(String source) {
     if (b > a) {
       final int lineStart =
           a == 0 ? 0 : source.lastIndexOf('\n', a - 1) + 1;
-      // ★ 行首的列表标记（`1. ` / `- ` / `· `）不参与包裹：整段跳过标记再判
+      // ★ 行首的列表标记（`1. ` / `- ` / `· `）与**引用标记（`>`）**不参与包裹：
+      //   整段跳过标记再判。★ 2026-10-20（T-C F13）：引用标记原先没跳 ⇒ `>` 被包成 `$>$`。
       if (a == lineStart) {
-        final Match? mk = RegExp(r'^\s*(\d+[.)]|[-*·])\s+')
+        final Match? mk = RegExp(r'^\s*(\d+[.)]|[-*·]|>+)\s*')
             .firstMatch(source.substring(a, b));
         if (mk != null && a + mk.end < b) a += mk.end;
+        // 跳掉标记之后如果什么都不剩（整行就是 `>`）⇒ 这一行没有数学
+        if (a >= b) {
+          p = q;
+          continue;
+        }
       }
       final String seg = source.substring(a, b);
       final bool url = seg.contains('://') || seg.startsWith('www.');
-      if (!url && _hasMathEvidence(seg) && !_looksLikePlainEnglish(seg)) {
+      if (!url &&
+          _hasMathEvidence(seg) &&
+          _hasMathSubstance(seg) &&
+          !_hasDanglingOperator(seg) &&
+          !_looksLikePlainEnglish(seg)) {
         runs.add(WrapRun(a, b));
       }
     }

@@ -62,7 +62,20 @@ class MathWithCaret extends StatefulWidget {
     this.onErrorFallback = Math.defaultOnErrorFallback,
     this.selFrom,
     this.selTo,
+    this.showEditingAids = true,
   });
+
+  /// ★★ 2026-10-20（T-C 实测 F16）：**要不要画"编辑辅助"**（空槽虚线框 / 当前槽淡蓝底 /
+  /// 边界刻度 / 光标竖条）。
+  ///
+  /// 为什么要有这个开关：导出 PDF / 图片集抓的是**屏幕上那一层**，而空槽占位框是
+  /// **编辑态的可视化**、不是文档内容 —— 实测导出的 PDF 里，那个空的行间公式
+  /// 把一个**虚线小方框**画进了纸面（用户在 PDF 里看到它）。
+  /// `DocView.capturePages` 抓图时传 `false`。
+  ///
+  /// ★ 与 [showCaret] 的区别：[showCaret] 是"光标在不在这一段"（不在时别的段的空槽框
+  /// **仍然要画**）；这里是"整份导出、一个辅助都不画"。
+  final bool showEditingAids;
 
   /// **选区**（⑤ 高亮）：tex 相对区间 `[selFrom, selTo)`；`null` = 这段没被选中
   final int? selFrom;
@@ -212,14 +225,17 @@ class _MathWithCaretState extends State<MathWithCaret> {
     }
 
     // ★ 空槽垫子：**当前槽**靠"锚点落在哪个垫子盒里"认出来（实测：空槽里锚点正好在垫子右缘）
-    final List<SlotPad> pads = <SlotPad>[...scanSlotPads(root, caretAt: at)];
+    //   ★★ F16：导出抓图时一律不量（否则虚线框会被画进图里）
+    final List<SlotPad> pads = widget.showEditingAids
+        ? <SlotPad>[...scanSlotPads(root, caretAt: at)]
+        : <SlotPad>[];
     // ★ 环境空格子的"格框"（算出来后，竖条要跟它**完全重合**，见下面的覆盖）
     Rect? envBox;
     // ★★★ 2026-10-19（用户实测三条："框高度不一样"、"点下面空行时框和光标跑到上面把 d 盖住"、
     //   "点公式后面时里面也冒出一个框"）：
     //   框 = **光标所在那一格的"格框"**（x/宽取格子矩形，y/高取行带），
     //   而且**只有光标锚点真的落在这一格里**才画 ⇒ 不会跑到别的行/别的列，也不会在公式外面乱入。
-    if (at != null && hasEnv(widget.tex)) {
+    if (widget.showEditingAids && at != null && hasEnv(widget.tex)) {
       final bool display = widget.mathStyle == MathStyle.display;
       // ★★ 2026-10-19（L19）：**一次建网格**，命中与画框走同一份几何
       //   （以前这里各建一次 ⇒ 每帧两遍叶盒扫描 + 两遍配对；也保证两者不会各判一套）。
@@ -274,12 +290,17 @@ class _MathWithCaretState extends State<MathWithCaret> {
 
   @override
   Widget build(BuildContext context) {
-    final bool caretVisible = widget.showCaret && _bar != null;
+    // ★★ 2026-10-20（F16）：导出抓图时**一个编辑辅助都不画**
+    //   （竖条 / 空槽虚线框 / 当前槽淡蓝底 / 边界刻度 / 选区底块）——
+    //   它们是"编辑态的可视化"，不是文档内容。
+    final bool aids = widget.showEditingAids;
+    final bool caretVisible = aids && widget.showCaret && _bar != null;
     // ★ 只要"有竖条 / 有垫子 / 有刻度"就要挂 painter（垫子与光标在不在无关）
-    final bool any = caretVisible ||
-      _pads.isNotEmpty ||
-      _tick != null ||
-      _bands.isNotEmpty; // ★ ⑤ 有选区底块也要挂 painter
+    final bool any = aids &&
+        (caretVisible ||
+            _pads.isNotEmpty ||
+            _tick != null ||
+            _bands.isNotEmpty); // ★ ⑤ 有选区底块也要挂 painter
     return CustomPaint(
       foregroundPainter: any
           ? MathCaretPainter(
