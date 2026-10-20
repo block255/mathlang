@@ -556,6 +556,20 @@ class EditViewState extends State<EditView> {
     });
   }
 
+  /// 测试用：累计导出次数（转发给 DocView，证明"导出走过隐藏这一步"）
+  @visibleForTesting
+  int get captureHideCountForTest {
+    final State<StatefulWidget>? st = _docKey.currentState;
+    return st is DocViewState ? st.captureHideCountForTest : 0;
+  }
+
+  /// 测试用：导出期间是否处于"隐藏光标"状态（转发给 DocView）
+  @visibleForTesting
+  bool get hidingForCaptureForTest {
+    final State<StatefulWidget>? st = _docKey.currentState;
+    return st is DocViewState && st.hidingForCaptureForTest;
+  }
+
   /// ★★ S4-d③：把**每一页**抓成 PNG（图片集 / 图片式 PDF 的唯一入口）。
   ///
   /// 语义完全对齐原则 4「编辑时的分页预览 = 导出的 PDF 页 = 图片集的一张图」：

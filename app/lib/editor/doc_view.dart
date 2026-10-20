@@ -519,25 +519,57 @@ class DocViewState extends State<DocView> {
   ///   `toImageSync` 取的是**上一次画好的那一层**，正是"所见即所得"要的东西。
   Future<List<Uint8List>> capturePages({double pixelRatio = 2.0}) async {
     final int n = pageCount;
+    final bool prevHide = _hideForCapture;
+    // ★★ 2026-10-20（用户实测：导出的 PDF 里 `M_x` 前面多了一根光标条）：
+    //   `capturePages` 抓的是**屏幕上那一层**，所以必须先把光标与选区藏起来、
+    //   等一帧真的画完（没有光标的那一帧），再 `toImageSync`；抓完在 `finally` 里恢复。
+    _hideForCapture = true;
+    captureHideCountForTest++;
+    setState(() {});
+    // ★ 等一帧画完（好让"没有光标"的那一帧上屏）。
+    //   但**不能死等**：`tester.runAsync` 等环境里不会有帧 ⇒ 用 32ms 兜底（约两帧），
+    //   真机上 `endOfFrame` 会先到，几乎不损失什么。
+    await Future.any(<Future<void>>[
+      WidgetsBinding.instance.endOfFrame,
+      Future<void>.delayed(const Duration(milliseconds: 32)),
+    ]);
     final List<Uint8List> out = <Uint8List>[];
-    for (var p = 0; p < n; p++) {
-      final RenderRepaintBoundary? ro = _boundaryOf(p);
-      // 还没画过的页跳过（真机上点导出时页面早就画好了；跳过比永远等下去强）
-      if (ro == null || ro.debugNeedsPaint) continue;
-      final ui.Image img = ro.toImageSync(pixelRatio: pixelRatio);
-      try {
-        final ByteData? bd =
-            await img.toByteData(format: ui.ImageByteFormat.png);
-        if (bd != null) out.add(bd.buffer.asUint8List());
-      } finally {
-        img.dispose();
+    try {
+      for (var p = 0; p < n; p++) {
+        final RenderRepaintBoundary? ro = _boundaryOf(p);
+        // 还没画过的页跳过（真机上点导出时页面早就画好了；跳过比永远等下去强）
+        if (ro == null || ro.debugNeedsPaint) continue;
+        final ui.Image img = ro.toImageSync(pixelRatio: pixelRatio);
+        try {
+          final ByteData? bd =
+              await img.toByteData(format: ui.ImageByteFormat.png);
+          if (bd != null) out.add(bd.buffer.asUint8List());
+        } finally {
+          img.dispose();
+        }
       }
+    } finally {
+      _hideForCapture = prevHide;
+      if (mounted) setState(() {});
     }
     return out;
   }
-
   /// 本帧的光标（绝对偏移）—— S3-2
   int? _caret;
+
+  /// ★★ 2026-10-20（用户实测"导出的 PDF 里带着光标"）：导出期间临时隐藏光标与选区。
+  ///   `capturePages` 抓的是"屏幕上那一层"，所以必须先藏光标、等一帧画完再抓，抓完立刻恢复。
+  // ignore: prefer_final_fields
+  bool _hideForCapture = false;
+
+  /// 光标/选区是否要藏（失焦 **或** 正在导出）
+  bool get _hideCaret => widget.hideCaretAndSelection || _hideForCapture;
+
+  /// 测试用：导出期间是否处于"隐藏光标"状态
+  bool get hidingForCaptureForTest => _hideForCapture;
+
+  /// 测试用：累计"进入导出隐藏态"的次数（证明导出确实走过隐藏这一步）
+  int captureHideCountForTest = 0;
 
   /// 行间公式块的 Math 渲染盒（仅渲染树用；键按**单元 id** 稳定，不会跨位置迁移）
   final Map<String, GlobalKey> _mathBlockKeys = <String, GlobalKey>{};
@@ -1007,7 +1039,7 @@ class DocViewState extends State<DocView> {
   int? _caretAbsFor(_Unit u, int? rel) {
     if (rel == null) return null;
     if (_selEnd > _selStart) return null; // 有选区 ⇒ 不画光标（也占位）
-    if (widget.hideCaretAndSelection) return null; // 失焦
+    if (_hideCaret) return null; // 失焦 / 导出中
     if (!widget.caretVisible) return null; // 闪烁"灭"的相位
     return u.renderBase + rel;
   }
@@ -1019,11 +1051,11 @@ class DocViewState extends State<DocView> {
   ///   失焦仍然返回 null（不画光标时不注垫子，否则页面上会留下看不见的占位）。
   int? _slotCaretAbsFor(_Unit u, int? rel) {
     if (rel == null) return null;
-    if (widget.hideCaretAndSelection) return null;
+    if (_hideCaret) return null;
     return u.renderBase + rel;
   }
   ({int from, int to})? _localSelFor(_Unit u) {
-    if (widget.hideCaretAndSelection || _selEnd <= _selStart) return null;
+    if (_hideCaret || _selEnd <= _selStart) return null;
     final int rawA = _selStart - u.renderBase;
     final int rawB = _selEnd - u.renderBase;
     final int a = rawA.clamp(0, u.renderLength);
@@ -1691,7 +1723,7 @@ class DocViewState extends State<DocView> {
             lineOffsets: run,
             gapBefore: gapBefore,
             lineHeight: _blankLineHeight,
-            caretHere: !widget.hideCaretAndSelection &&
+            caretHere: !_hideCaret &&
                 widget.caretVisible &&
                 idx != null,
             // 空行的行盒从 gapBefore 起算 ⇒ 光标落在"它真正会落脚"的那一行上
