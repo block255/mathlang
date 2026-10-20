@@ -19,7 +19,13 @@ class FlowItem {
     this.leadingGap = 0,
     this.breakBefore = false,
     this.label,
+    this.keepWithNext = false,
   });
+
+  /// ★★ 2026-10-20（N5）：**不要落单在页底** —— 标题必须和后面的正文同页。
+  /// 判据由上层给（标题 = true）；分页器只在"这一页刚好放不下下一个 item"时用它：
+  /// 若本页最后几项是 keepWithNext，就把它们一起挪到下一页（避免"标题孤零零在页底"）。
+  final bool keepWithNext;
 
   /// 稳定标识（回到 FlowUnit 用），例如 `blk3/u1`
   final String id;
@@ -97,7 +103,20 @@ PageLayout paginate({
     // 页首不留段前距
     final double gap = cur.isEmpty ? 0.0 : it.leadingGap;
     if (cur.isNotEmpty && y + gap + it.height > bodyHeight) {
+      // ★★ 2026-10-20（N5）：**标题不许落单在页底**。
+      //   把本页末尾连续的 keepWithNext（标题）一起挪到下一页，跟它的正文同页。
+      //   兜底：① 挪不动（整页都是标题 / 只剩这一项）就照常 flush，不会死循环；
+      //        ② 挪走后原页若变空，`flush` 不会产出空页（cur.isEmpty 直接 return）。
+      final List<PageSlot> carried = <PageSlot>[];
+      while (cur.length > 1 && cur.last.item.keepWithNext) {
+        carried.insert(0, cur.removeLast());
+        y = cur.isEmpty ? 0 : cur.last.y + cur.last.item.height;
+      }
       flush();
+      for (final PageSlot s in carried) {
+        cur.add(PageSlot(s.item, y));
+        y += s.item.height; // 页首不留段前距
+      }
     }
     final double g = cur.isEmpty ? 0.0 : it.leadingGap;
     if (it.height > bodyHeight) overflow.add(it);

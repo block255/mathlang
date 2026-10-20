@@ -9,7 +9,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mathlang/core/block.dart';
 import 'package:mathlang/core/doc_buffer.dart';
-import 'package:mathlang/editor/edit_view.dart';
 import 'package:mathlang/lang/block_ops.dart';
 import 'package:mathlang/ui/editor_page.dart';
 

@@ -195,18 +195,64 @@ class _InlineMathTextState extends State<InlineMathText> {
     if (txt.isEmpty) return const <InlineSpan>[];
     final int? a = widget.selStart;
     final int? b = widget.selEnd;
-    if (a == null || b == null || b <= a) {
-      return <InlineSpan>[TextSpan(text: txt)];
-    }
+    if (a == null || b == null || b <= a) return _boldify(txt, null);
     final int from = (a - srcStart).clamp(0, txt.length);
     final int to = (b - srcStart).clamp(0, txt.length);
-    if (to <= from) return <InlineSpan>[TextSpan(text: txt)];
+    if (to <= from) return _boldify(txt, null);
     final TextStyle sel = TextStyle(backgroundColor: const Color(kSelectionColorValue));
     return <InlineSpan>[
-      if (from > 0) TextSpan(text: txt.substring(0, from)),
-      TextSpan(text: txt.substring(from, to), style: sel),
-      if (to < txt.length) TextSpan(text: txt.substring(to)),
+      if (from > 0) ..._boldify(txt.substring(0, from), null),
+      ..._boldify(txt.substring(from, to), sel),
+      if (to < txt.length) ..._boldify(txt.substring(to), null),
     ];
+  }
+
+  /// ★★ 2026-10-20（N4，用户拍板"可以支持"）：**行内粗体 `**…**`**。
+  ///
+  /// 口径（三条要记住）：
+  ///   ① 存储就是**原样**（L0 里仍是 `**文字**`）—— 与"唯一真相在 L0"一致，导出 md 也还是它；
+  ///   ② 两个星号**不消失、只是缩到看不见**（`fontSize: 0.01` + 透明色）——
+  ///      **偏移一个字都不许变**：光标、选区、点击反查全靠"渲染串长度 == 源码长度"；
+  ///   ③ 只认**成对**的 `**`：落单的星号原样显示（宁可显示，也不要吃掉用户的字）。
+  /// 局限（诚实）：粗体只作用在**同一个文字段**内 —— 跨行内公式的 `**` 不会生效。
+  static const TextStyle _boldMarker = TextStyle(
+    fontSize: 0.01,
+    color: Color(0x00000000),
+    height: 1,
+  );
+
+  List<InlineSpan> _boldify(String txt, TextStyle? extra) {
+    if (!txt.contains('**')) {
+      return <InlineSpan>[TextSpan(text: txt, style: extra)];
+    }
+    final List<InlineSpan> out = <InlineSpan>[];
+    var i = 0;
+    var plainStart = 0;
+    while (i < txt.length - 1) {
+      if (txt[i] == '*' && txt[i + 1] == '*') {
+        final int close = txt.indexOf('**', i + 2);
+        if (close > i + 2) {
+          if (i > plainStart) {
+            out.add(TextSpan(text: txt.substring(plainStart, i), style: extra));
+          }
+          out.add(const TextSpan(text: '**', style: _boldMarker));
+          out.add(TextSpan(
+            text: txt.substring(i + 2, close),
+            style: (extra ?? const TextStyle())
+                .merge(const TextStyle(fontWeight: FontWeight.bold)),
+          ));
+          out.add(const TextSpan(text: '**', style: _boldMarker));
+          i = close + 2;
+          plainStart = i;
+          continue;
+        }
+      }
+      i++;
+    }
+    if (plainStart < txt.length) {
+      out.add(TextSpan(text: txt.substring(plainStart), style: extra));
+    }
+    return out;
   }
 
   /// 把本 widget 的 `source` 选区换算成**这个公式段**的 tex 相对区间。

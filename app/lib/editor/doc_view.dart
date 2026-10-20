@@ -1200,6 +1200,9 @@ class DocViewState extends State<DocView> {
       fontSize: body,
       height: _s.lineHeight,
       color: Colors.black87,
+      // ★★ 2026-10-20（N3）：正文带**系统字体回退链** ——
+      //   `⟺` 这类符号中文主字体没有字形，不回退就是豆腐块。
+      fontFamilyFallback: kCjkFallback,
     );
     final _Rendered r = _renderParts(u.type, u.source);
     final String text = r.text;
@@ -1586,6 +1589,10 @@ class DocViewState extends State<DocView> {
     });
   }
 
+  /// 标题类（三级都算）——用于分页的"不许落单在页底"
+  static bool _isHeadingType(BlockType t) =>
+      t == BlockType.heading1 || t == BlockType.heading2 || t == BlockType.heading3;
+
   List<FlowItem> _itemsFrom(List<double> hs) => <FlowItem>[
         for (var i = 0; i < _units.length; i++)
           FlowItem(
@@ -1601,6 +1608,8 @@ class DocViewState extends State<DocView> {
                         lineHeight: _blankLineHeight)
                 : 0,
             breakBefore: _units[i].breakBefore,
+            // ★★ 2026-10-20（N5）：标题不许孤零零留在页底
+            keepWithNext: _isHeadingType(_units[i].type),
             label: _units[i].label,
           ),
       ];
