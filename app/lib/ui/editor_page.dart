@@ -75,6 +75,7 @@ const Map<String, String> kShortcutSymbolIds = <String, String>{
 /// 两边不重叠 ⇒ 不会有同一个键被处理两次（那是"按一下删两个字符"这类 bug 的来源）。
 const Set<String> kShellActions = <String>{
   'newdoc', 'open', 'save', 'saveAs', 'settings', 'panelToggle', 'quickSlot',
+  'panelFocus', 'quickBarFocus', // ★ U2：键盘流入口（F6 / F7）
   'h1', 'h2', 'h3', 'ol', 'ul', 'quote', 'codeblock', 'pagebreak', //
   'mathDisplay', 'frac', 'sqrt', 'sup', 'sub', 'integral', 'sourceView',
   'summ', 'limit', 'aligned', 'cases', 'pmatrix', 'binom',
@@ -138,6 +139,165 @@ class EditorPageState extends State<EditorPage> {
 
   /// 快捷栏**赋值模式**的目标格（`null` = 不在赋值模式）
   int? _assignSlot;
+
+  // ---------------- ★★ U2（2026-10-21）：面板 / 快捷栏的**键盘流** ----------------
+  //
+  // 用户拍板：`Ctrl+/` **保持纯开关、不抢焦点**（"熟练的人可能不需要搜索框，
+  // 保持光标在编辑页，点选符号其实更快捷"）⇒ 另给 `F6` / `F7` 两个**显式**入口：
+  // 按了才把焦点交给面板/快捷栏，`Esc` 立刻还给编辑器。
+  //
+  // 焦点在面板里时：方向键移动高亮格、`Enter`/空格插入、`1–8` 跳格、
+  // `Tab` 去搜索框、`Esc` 回编辑器；快捷栏里：方向键/1–8 选格、`Enter` 赋值、
+  // `Delete` 清空、`Esc` 退出。**局部键不进快捷键表**（它们是焦点上下文里的通用键），
+  // 但会以只读形式列在设置 → 快捷键页的「焦点内」一节。
+  _KbdArea _kbdArea = _KbdArea.none;
+
+  /// 面板网格里当前高亮的序号（0 起；对应**筛出来的顺序**）
+  int _kbdPanelIndex = 0;
+
+  /// 快捷栏当前高亮的格号
+  int _kbdQuickIndex = 0;
+
+  /// 面板当前筛出来的 id 顺序（面板通过 `onVisible` 回吐；键盘流只在这几个里移动）
+  List<String> _panelIds = const <String>[];
+
+  /// 测试钩子：当前键盘焦点在哪
+  @visibleForTesting
+  String get debugKbdArea => _kbdArea.name;
+
+  @visibleForTesting
+  int get debugKbdIndex => _kbdArea == _KbdArea.quick ? _kbdQuickIndex : _kbdPanelIndex;
+
+  /// 测试钩子：快捷栏第 i 格存的是哪个符号（`null` = 空）
+  @visibleForTesting
+  String? debugFavoriteAt(int i) => _s.favoriteAt(i);
+
+  /// 测试钩子：当前筛出来的面板条目数
+  @visibleForTesting
+  int get debugPanelCount => _panelIds.length;
+
+  List<String> get _kbdIds => _panelIds;
+
+  /// ★ F6：把焦点交给符号面板（没开就开）
+  void enterPanelFocus() {
+    final bool opened = !_panelOpen;
+    setState(() {
+      if (!_panelOpen) _panelOpen = true;
+      _kbdArea = _KbdArea.panel;
+      _kbdPanelIndex = 0;
+    });
+    if (opened) _persistNow();
+    _shellFocus.requestFocus();
+  }
+
+  /// ★ F7：把焦点交给快捷栏
+  void enterQuickBarFocus() {
+    setState(() {
+      if (!_quickOpen) _quickOpen = true;
+      _kbdArea = _KbdArea.quick;
+      _kbdQuickIndex = 0;
+    });
+    _shellFocus.requestFocus();
+  }
+
+  /// `Esc` / 点编辑区 / 关面板 ⇒ 把键盘焦点还给编辑器
+  void leaveKbdArea() {
+    if (_kbdArea == _KbdArea.none) return;
+    setState(() => _kbdArea = _KbdArea.none);
+    _editKey.currentState?.focusInput();
+  }
+
+  /// 面板/快捷栏的**局部键**；返回 `null` = 这一下不归我管（继续往下走）
+  KeyEventResult? _handleKbdAreaKey(LogicalKeyboardKey k) {
+    if (_kbdArea == _KbdArea.none) return null;
+    if (k == LogicalKeyboardKey.escape) {
+      leaveKbdArea();
+      return KeyEventResult.handled;
+    }
+    final int total = _kbdArea == _KbdArea.panel
+        ? _kbdIds.length
+        : (_s.quickBarSlots > 0 ? _s.quickBarSlots : 0);
+    if (total <= 0) return null;
+    int? cur = _kbdArea == _KbdArea.panel ? _kbdPanelIndex : _kbdQuickIndex;
+
+    void move(int delta) {
+      cur = (cur! + delta) % total;
+      if (cur! < 0) cur = cur! + total;
+      setState(() {
+        if (_kbdArea == _KbdArea.panel) {
+          _kbdPanelIndex = cur!;
+        } else {
+          _kbdQuickIndex = cur!;
+        }
+      });
+    }
+
+    if (k == LogicalKeyboardKey.arrowLeft) {
+      move(-1);
+      return KeyEventResult.handled;
+    }
+    if (k == LogicalKeyboardKey.arrowRight) {
+      move(1);
+      return KeyEventResult.handled;
+    }
+    if (k == LogicalKeyboardKey.arrowUp || k == LogicalKeyboardKey.arrowDown) {
+      final int cols = _kbdArea == _KbdArea.panel
+          ? (_s.gridColumns > 0 ? _s.gridColumns : 8)
+          : total; // 快捷栏是一行
+      move(k == LogicalKeyboardKey.arrowUp ? -cols : cols);
+      return KeyEventResult.handled;
+    }
+    // 1–8：直接跳第 N 格
+    final int? n = _digitOf(k);
+    if (n != null && n <= total) {
+      setState(() {
+        if (_kbdArea == _KbdArea.panel) {
+          _kbdPanelIndex = n - 1;
+        } else {
+          _kbdQuickIndex = n - 1;
+        }
+      });
+      return KeyEventResult.handled;
+    }
+    if (k == LogicalKeyboardKey.enter ||
+        k == LogicalKeyboardKey.numpadEnter ||
+        k == LogicalKeyboardKey.space) {
+      if (_kbdArea == _KbdArea.panel) {
+        final String id = _kbdIds[cur!];
+        final SymbolItem? item = _lib?.byId(id);
+        if (item != null) insertSymbol(item); // 空格与回车同义（甲）
+        return KeyEventResult.handled;
+      }
+      // 快捷栏：进入赋值模式（等价点空格），并顺手把面板打开 —— 下一步必然是挑符号
+      reassignSlot(cur!);
+      return KeyEventResult.handled;
+    }
+    if (_kbdArea == _KbdArea.quick &&
+        (k == LogicalKeyboardKey.delete || k == LogicalKeyboardKey.backspace)) {
+      clearFavorite(cur!);
+      return KeyEventResult.handled;
+    }
+    if (k == LogicalKeyboardKey.tab && _kbdArea == _KbdArea.panel) {
+      // 面板内 Tab：把焦点交给搜索框（打字即筛选），`Esc` 仍能回编辑器
+      _searchFocus.requestFocus();
+      return KeyEventResult.handled;
+    }
+    return null;
+  }
+
+  /// `LogicalKeyboardKey` → 数字（1–9；不是数字键就 `null`）
+  int? _digitOf(LogicalKeyboardKey k) {
+    if (k == LogicalKeyboardKey.digit1 || k == LogicalKeyboardKey.numpad1) return 1;
+    if (k == LogicalKeyboardKey.digit2 || k == LogicalKeyboardKey.numpad2) return 2;
+    if (k == LogicalKeyboardKey.digit3 || k == LogicalKeyboardKey.numpad3) return 3;
+    if (k == LogicalKeyboardKey.digit4 || k == LogicalKeyboardKey.numpad4) return 4;
+    if (k == LogicalKeyboardKey.digit5 || k == LogicalKeyboardKey.numpad5) return 5;
+    if (k == LogicalKeyboardKey.digit6 || k == LogicalKeyboardKey.numpad6) return 6;
+    if (k == LogicalKeyboardKey.digit7 || k == LogicalKeyboardKey.numpad7) return 7;
+    if (k == LogicalKeyboardKey.digit8 || k == LogicalKeyboardKey.numpad8) return 8;
+    if (k == LogicalKeyboardKey.digit9 || k == LogicalKeyboardKey.numpad9) return 9;
+    return null;
+  }
 
   /// 当前文档的身份与保存状态
   DocumentFile _docFile = const DocumentFile();
@@ -943,6 +1103,11 @@ class EditorPageState extends State<EditorPage> {
     final LogicalKeyboardKey k = e.logicalKey;
     final HardwareKeyboard kb = HardwareKeyboard.instance;
 
+    // ★★ U2（2026-10-21）：键盘焦点在面板 / 快捷栏里时，**局部键优先**（方向键/Enter/
+    //   空格/1–8/Delete/Tab/Esc）。这些键不查快捷键表 —— 它们是焦点上下文里的通用键。
+    final KeyEventResult? local = _handleKbdAreaKey(k);
+    if (local != null) return local;
+
     if (k == LogicalKeyboardKey.escape) {
       if (_assignSlot != null) {
         cancelAssign();
@@ -1060,6 +1225,13 @@ class EditorPageState extends State<EditorPage> {
         return true;
       case 'panelToggle':
         togglePanel();
+        return true;
+      // ★★ U2：两个**显式**键盘流入口（`Ctrl+/` 按用户要求保持纯开关，不抢焦点）
+      case 'panelFocus':
+        enterPanelFocus();
+        return true;
+      case 'quickBarFocus':
+        enterQuickBarFocus();
         return true;
       case 'h1':
         return _blockOp(BlockOp.h1);
@@ -1808,6 +1980,7 @@ class EditorPageState extends State<EditorPage> {
             library: _lib!,
             settings: _s,
             assignSlot: _assignSlot,
+            highlightSlot: _kbdArea == _KbdArea.quick ? _kbdQuickIndex : null,
             placement: _s.quickBarPlacement,
             onTapSlot: tapQuickSlot,
             onClearSlot: clearFavorite,
@@ -1819,6 +1992,15 @@ class EditorPageState extends State<EditorPage> {
             key: const Key('symbol-panel'),
             library: _lib!,
             columns: _s.gridColumns,
+            highlightIndex: _kbdArea == _KbdArea.panel ? _kbdPanelIndex : null,
+            onVisible: (List<String> ids) {
+              if (_disposed) return;
+              if (identical(ids, _panelIds)) return;
+              setState(() {
+                _panelIds = ids;
+                if (_kbdPanelIndex >= ids.length) _kbdPanelIndex = 0;
+              });
+            },
             cellSize: _s.cellSize,
             showLabels: _s.showCellLabels,
             showEmptySuggestions: _s.showEmptySuggestions,
@@ -1916,3 +2098,6 @@ class EditorPageState extends State<EditorPage> {
     );
   }
 }
+
+/// ★★ U2（2026-10-21）：键盘焦点在哪个区域
+enum _KbdArea { none, panel, quick }

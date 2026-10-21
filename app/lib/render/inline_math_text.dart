@@ -370,13 +370,23 @@ class _InlineMathTextState extends State<InlineMathText> {
     //   ⇒ 交给 `MathWithCaret` 按文本层标准画（与"文字后面的光标"地位等同）。
     final CaretEdge edge = caretHere ? (pl?.edge ?? CaretEdge.none) : CaretEdge.none;
 
+    // ★★ U3（2026-10-21）：光标所在的**槽层深**（0 = 主行）—— 由位点表给，不靠几何猜。
+    //   只在本段确实画/占光标时才算（只算这一段，成本可忽略）。
+    int caretDepth = 0;
+    if (caretHere || slotHere) {
+      final int? rel = caretHere ? pl?.localRel : slotPl?.localRel;
+      if (rel != null) {
+        caretDepth = buildCaretSites(s.tex).snap(rel).path.length;
+      }
+    }
+
     return WidgetSpan(
       alignment: baseline
           ? PlaceholderAlignment.baseline
           : PlaceholderAlignment.middle,
       baseline: baseline ? TextBaseline.alphabetic : null,
       child: onTap == null && widget.onMathRightClick == null
-          ? _mathWidget(key, tex, caretHere: caretHere, edge: edge, sel: sel)
+          ? _mathWidget(key, tex, caretHere: caretHere, edge: edge, sel: sel, caretDepth: caretDepth)
           : GestureDetector(
               // ★ 右键：行内公式也要能"改尺寸"（只有多行环境会被接住）。
               //   `opaque` 是为了**公式内部的空白**也归它（与行间那块同一口径）。
@@ -393,7 +403,7 @@ class _InlineMathTextState extends State<InlineMathText> {
                 child: MouseRegion(
                   cursor: SystemMouseCursors.text,
                   child:
-                      _mathWidget(key, tex, caretHere: caretHere, edge: edge, sel: sel),
+                      _mathWidget(key, tex, caretHere: caretHere, edge: edge, sel: sel, caretDepth: caretDepth),
                 ),
               ),
             ),
@@ -409,6 +419,7 @@ class _InlineMathTextState extends State<InlineMathText> {
   Widget _mathWidget(GlobalKey key, String tex,
           {bool caretHere = false,
           CaretEdge edge = CaretEdge.none,
+          int caretDepth = 0,
           ({int from, int to})? sel}) =>
       MathWithCaret(
         tex: tex,
@@ -416,6 +427,7 @@ class _InlineMathTextState extends State<InlineMathText> {
         selTo: sel?.to,
         showCaret: caretHere,
         caretEdge: edge,
+        caretDepth: caretDepth, // ★ U3：0 = 主行 ⇒ 竖条按文本层标准画高
         // ★ F16：导出抓图时不画任何编辑辅助
         showEditingAids: widget.showEditingAids,
         // ★ 文本层字号（"公式前后那两格"按它画，与文字后面的光标地位等同）

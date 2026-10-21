@@ -79,6 +79,7 @@ class ShortcutSettingsViewState extends State<ShortcutSettingsView> {
         _header(),
         if (bad.isNotEmpty) _conflictBanner(bad),
         for (final String g in kShortcutGroupOrder) ..._group(g, shown, bad),
+        _kbdFlowSection(),
         if (shown.isEmpty)
           const Padding(
             padding: EdgeInsets.symmetric(vertical: 16),
@@ -87,6 +88,67 @@ class ShortcutSettingsViewState extends State<ShortcutSettingsView> {
                 textAlign: TextAlign.center,
                 style: TextStyle(fontSize: 11, color: Color(0xFF718096))),
           ),
+      ],
+    );
+  }
+
+  /// ★★ U2（2026-10-21 用户要求：「在设置的快捷键界面标明这些」）：
+  /// **焦点内**的局部键（面板 / 快捷栏）—— 只读展示，**不可改键**。
+  ///
+  /// 为什么不进可改键表：它们是"焦点在这个区域里"的通用键（方向键、回车、空格、Esc…），
+  /// 不是全局动作；把方向键做成可改键会让"面板里怎么移动"依赖另一套配置，反而难解释。
+  Widget _kbdFlowSection() {
+    const List<(String, String)> rows = <(String, String)>[
+      ('F6', '进入符号面板（焦点到网格；Esc 回编辑器）'),
+      ('方向键', '在符号格子里移动（← → 逐个，↑ ↓ 换行）'),
+      ('Enter / 空格', '插入当前格（焦点留在面板，可连插）'),
+      ('1–8', '直接跳到第 N 格'),
+      ('Tab', '焦点移到搜索框（打字即筛选）'),
+      ('F7', '进入快捷栏（焦点到格子）'),
+      ('方向键 / 1–8', '选格'),
+      ('Enter', '进入赋值模式（等价于点一下空格）'),
+      ('Delete / Backspace', '清空该格'),
+      ('Esc', '退出键盘焦点，回到编辑器'),
+    ];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        // 搜索时这一节也跟着过滤（用户是在找"某个键"）
+        if (_query.text.trim().isEmpty ||
+            rows.any((r) => r.$1.contains(_query.text.trim()) ||
+                r.$2.contains(_query.text.trim()))) ...<Widget>[
+          const SettingSection(title: '焦点内（面板 / 快捷栏）'),
+          for (final (String key, String desc) in rows)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 3, horizontal: 2),
+              child: Row(
+                children: <Widget>[
+                  SizedBox(
+                    width: 118,
+                    child: Text(key,
+                        key: Key('kbd-flow-key-${desc.hashCode}'),
+                        style: const TextStyle(
+                            fontSize: 11,
+                            fontFamily: 'monospace',
+                            color: Color(0xFF2D3748))),
+                  ),
+                  Expanded(
+                    child: Text(desc,
+                        style: const TextStyle(
+                            fontSize: 11, color: Color(0xFF4A5568))),
+                  ),
+                  const Text('焦点内',
+                      style: TextStyle(fontSize: 9, color: Color(0xFFA0AEC0))),
+                ],
+              ),
+            ),
+          const Padding(
+            padding: EdgeInsets.fromLTRB(2, 2, 2, 10),
+            child: Text('（这些键只在焦点位于面板/快捷栏时生效，不可改键）',
+                key: Key('kbd-flow-note'),
+                style: TextStyle(fontSize: 10, color: Color(0xFF718096))),
+          ),
+        ],
       ],
     );
   }

@@ -53,9 +53,9 @@ Future<void> _capture(WidgetTester tester, String actionId, int index,
 
 void main() {
   group('① 这张表说实话', () {
-    testWidgets('顶部报 已接入 46 / 共 46（U1 之后一条未接入都不剩）', (WidgetTester tester) async {
+    testWidgets('顶部报 已接入 48 / 共 48（U1 之后一条未接入都不剩）', (WidgetTester tester) async {
       await _pump(tester);
-      expect(find.text('已接入 46 / 共 46'), findsOneWidget);
+      expect(find.text('已接入 48 / 共 48'), findsOneWidget);
     });
 
     testWidgets('源码视图也已是「已接入」（U1 接成只读浮层）；页面里不再有未接入徽标',

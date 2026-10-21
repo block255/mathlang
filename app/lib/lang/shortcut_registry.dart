@@ -228,6 +228,12 @@ const List<ShortcutAction> kShortcutActions = <ShortcutAction>[
 
   // ---------------- 面板 ----------------
   ShortcutAction(id: 'panelToggle', name: '开 / 关符号面板', group: '面板', combo: 'Ctrl+/', status: ShortcutStatus.wired),
+  // ★★ U2（2026-10-21 用户拍板）：**键盘流入口**。
+  //   面板/快捷栏原来只能鼠标点；而 Ctrl+/ 按用户的要求**保持纯开关、不抢焦点**
+  //   （"熟练的人可能不需要搜索框，保持光标在编辑页，点选符号其实更快捷"）
+  //   ⇒ 另给两个**显式**入口：按了才把焦点交给面板 / 快捷栏，Esc 立刻还给编辑器。
+  ShortcutAction(id: 'panelFocus', name: '进入符号面板（键盘流）', group: '面板', combo: 'F6', status: ShortcutStatus.wired),
+  ShortcutAction(id: 'quickBarFocus', name: '进入快捷栏（键盘流）', group: '面板', combo: 'F7', status: ShortcutStatus.wired),
   ShortcutAction(id: 'quickSlot', name: '插入快捷栏第 1..8 格', group: '面板', combo: 'Alt+1', status: ShortcutStatus.wired, note: 'Alt+1..8 连用；Web 上被 Chrome 抢（见 §3.1）'),
   ShortcutAction(id: 'settings', name: '打开设置页', group: '面板', combo: 'Ctrl+,', status: ShortcutStatus.wired),
 

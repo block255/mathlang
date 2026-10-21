@@ -1,7 +1,7 @@
 // 数语引擎 · 快捷键登记表（`lang/shortcut_registry.dart`）守卫
 //
 // ★ 这一批的核心诉求：**设置页不许撒谎**。
-//   ⇒ 断言里既守"表本身"（45 条 / 46 条已接入 / id 唯一 / 键可解析），
+//   ⇒ 断言里既守"表本身"（48 条 / 48 条已接入 / id 唯一 / 键可解析），
 //     也守"边界"（每动作 ≤2 条、默认项删不得、浏览器独占键拒收、冲突可检出）。
 
 import 'package:flutter_test/flutter_test.dart';
@@ -9,11 +9,11 @@ import 'package:mathlang/lang/shortcut_registry.dart';
 
 void main() {
   group('① 表本身', () {
-    test('46 条动作，**全部已接入**（源码视图在 U1 接成只读浮层）', () {
-      expect(kShortcutActions.length, 46);
-      expect(ShortcutSettings.total, 46);
+    test('48 条动作，**全部已接入**（源码视图在 U1 接成只读浮层）', () {
+      expect(kShortcutActions.length, 48);
+      expect(ShortcutSettings.total, 48);
       // ★ 2026-10-18 S4-c：整套 Ctrl+Alt+* / Ctrl+↑↓ / Ctrl+1..3 接线完成
-      expect(ShortcutSettings.wiredCount, 46);
+      expect(ShortcutSettings.wiredCount, 48);
       final List<ShortcutAction> planned = <ShortcutAction>[
         for (final ShortcutAction a in kShortcutActions)
           if (!a.wired) a,

@@ -214,9 +214,9 @@ void main() {
       await tester.pumpAndSettle();
     });
 
-    test('登记表口径：46 条**全部已接入**（U1 把源码视图接成只读浮层）', () {
-      expect(kShortcutActions.length, 46);
-      expect(ShortcutSettings.wiredCount, 46);
+    test('登记表口径：48 条**全部已接入**（U1 把源码视图接成只读浮层）', () {
+      expect(kShortcutActions.length, 48);
+      expect(ShortcutSettings.wiredCount, 48);
       final List<String> planned = <String>[
         for (final ShortcutAction a in kShortcutActions)
           if (!a.wired) a.id,

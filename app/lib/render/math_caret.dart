@@ -63,6 +63,7 @@ class MathWithCaret extends StatefulWidget {
     this.selFrom,
     this.selTo,
     this.showEditingAids = true,
+    this.caretDepth = -1,
   });
 
   /// ★★ 2026-10-20（T-C 实测 F16）：**要不要画"编辑辅助"**（空槽虚线框 / 当前槽淡蓝底 /
@@ -76,6 +77,17 @@ class MathWithCaret extends StatefulWidget {
   /// ★ 与 [showCaret] 的区别：[showCaret] 是"光标在不在这一段"（不在时别的段的空槽框
   /// **仍然要画**）；这里是"整份导出、一个辅助都不画"。
   final bool showEditingAids;
+
+  /// ★★ U3（2026-10-21）：光标所在的**槽层深**（`0` = 主行；`1+` = 分子/分母/上下限/脚标…）。
+  ///
+  /// `-1` = **不知道**（默认）⇒ 一律按旧口径（当地行盒）画。为什么要这个默认：
+  /// 裸用 `MathWithCaret` 的地方（探针/实验页/旧守卫）没有位点表，给 0 会把
+  /// 分母里的光标也当成"主行"而拉高 —— 与"适应"冲突。
+  ///
+  /// 来源：位点表的 `CaretSite.path.length`（由 `InlineMathText` 算好传下来）——
+  /// **不是**靠"行盒多高"去猜层（那样又是一份判据）。
+  /// 用途只有一个：主行（行内公式）的竖条按**文本层标准**画高，子层仍按当地行盒。
+  final int caretDepth;
 
   /// **选区**（⑤ 高亮）：tex 相对区间 `[selFrom, selTo)`；`null` = 这段没被选中
   final int? selFrom;
@@ -108,6 +120,9 @@ class MathWithCaret extends StatefulWidget {
 }
 
 class _MathWithCaretState extends State<MathWithCaret> {
+  /// ★ 测试钩子（U3 守卫读它）：**这一帧真正算出来的竖条矩形**（本组件坐标系）
+  @visibleForTesting
+  Rect? get debugCaretBar => _bar;
   /// 竖条的矩形（相对本盒；帧末量出来；`null` = 还没量到 / 光标不在这段里）
   Rect? _bar;
 
@@ -186,14 +201,35 @@ class _MathWithCaretState extends State<MathWithCaret> {
       //     按文本层标准画（字号 × 1.25、贴基线），**不去公式内部找最近的行**
       //     （否则"分式后面"会被分母抢走 —— 用户实测）。
       if (widget.caretEdge == CaretEdge.none) {
-        bar = caretBarRect(
-          at: at,
-          // ★ 把**锚点**一起给它：选行以"锚点所在的那一行"为准（见 findLocalRowBox）
-          localRowBox: _clampRowHeight(
-              findLocalRowBox(root, at, anchor: anchor), widget.fontSize),
-          width: widget.caretWidth,
-          fontSize: widget.fontSize,
-        );
+        final Rect? rowBox = _clampRowHeight(
+            findLocalRowBox(root, at, anchor: anchor), widget.fontSize);
+        // ★★ U3（2026-10-21 用户实测 + 探针）：「同一视觉行上，光标不该因为旁边是文字还是
+        //   数学符号而变高变矮」—— 这是**平权**在光标上的直接要求。
+        //   实测（正文 16px，行内公式）：文字侧竖条 h 20.0（= 字号×1.25），
+        //   而 `$a+b$` 主行的竖条 h 13.4（= 当地行盒 16.0 × 0.84）⇒ **矮了 1/3**，
+        //   光标一进一出就"跳"。而竖直中心实测只差 0.2px（几乎重合）——
+        //   ⇒ 只把**高度**换成文本层标准，**中心不动**。
+        //   ★ 只对 `mathStyle.text`（行内）的**主行**（`caretDepth == 0`）生效；
+        //     子层（分子/分母/上下限/脚标）与行间块一律保持原样 —— 那是"适应"。
+        final bool mainRowInline = widget.mathStyle == MathStyle.text &&
+            widget.caretDepth == 0 &&
+            rowBox != null &&
+            rowBox.height > 1;
+        if (mainRowInline) {
+          final double h =
+              textCaretHeight(widget.textFontSize ?? widget.fontSize);
+          final double cy = rowBox.center.dy;
+          bar = Rect.fromLTRB(
+              at.dx, cy - h / 2, at.dx + widget.caretWidth, cy + h / 2);
+        } else {
+          bar = caretBarRect(
+            at: at,
+            // ★ 把**锚点**一起给它：选行以"锚点所在的那一行"为准（见 findLocalRowBox）
+            localRowBox: rowBox,
+            width: widget.caretWidth,
+            fontSize: widget.fontSize,
+          );
+        }
       } else {
         // ★★ 2026-10-18：**行间块**的"公式之前 / 之后"那两格，光标要贴在**块的边界**上
         //   （之后 ⇒ 块底、之前 ⇒ 块顶），不能用块内锚点的 y ——

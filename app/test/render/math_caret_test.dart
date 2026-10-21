@@ -25,7 +25,8 @@ import 'package:mathlang/render/slot_marks.dart';
 
 const double kFontSize = 16;
 
-Future<void> _pump(WidgetTester tester, String tex, {required bool caret}) async {
+Future<void> _pump(WidgetTester tester, String tex,
+    {required bool caret, int caretDepth = -1}) async {
   await tester.pumpWidget(MaterialApp(
     home: Scaffold(
       body: Center(
@@ -34,6 +35,7 @@ Future<void> _pump(WidgetTester tester, String tex, {required bool caret}) async
           showCaret: caret,
           mathKey: GlobalKey(),
           fontSize: kFontSize,
+          caretDepth: caretDepth,
         ),
       ),
     ),
@@ -312,15 +314,24 @@ void main() {
           reason: '脚本行的字号是主行的 0.7 倍 ⇒ 竖条也必须跟着矮（主行 $main，脚本 $script）');
     });
 
-    testWidgets('★ 主行的竖条高度 ≈ 字形盒高度（不是固定 20 px）',
+    // ★★ 2026-10-21（U3，用户拍板"平权"）：**主行的口径改了** ——
+    //   行内公式的主行竖条不再按"当地字形盒 × 0.84"，而是按**文本层标准**
+    //   （`字号 × 1.25`），与旁边的文字**同高同中心**。
+    //   旧断言（"≈ 字形盒高度，不是固定 20 px"）证明的正是**改动前**的口径，
+    //   现在改为显式传 `caretDepth: 0` 并钉住新口径；
+    //   子层（分子/分母/上标）不带 depth ⇒ 仍是旧口径（见上面两条）。
+    testWidgets('★ 主行（depth=0）的竖条 = 文本层标准（与文字同高，约 20px）',
         (WidgetTester tester) async {
-      await _pump(tester, renderMathTex(r'x+1', caretRel: 1), caret: true);
+      await _pump(tester, renderMathTex(r'x+1', caretRel: 1), caret: true,
+          caretDepth: 0);
       final Rect bar = barOf(tester);
       final Rect glyph = glyphsOf(tester).first;
-      expect(bar.height, lessThan(glyph.height),
-          reason: '竖条在字形盒里（上下各留 8% 内缩）：bar=$bar 字形=$glyph');
-      expect(bar.height, greaterThan(glyph.height * 0.7),
-          reason: '也不许缩得太小：bar=$bar 字形=$glyph');
+      expect(bar.height, lessThanOrEqualTo(glyph.height + 4),
+          reason: '文本层标准（16px 字号 ⇒ 20px）不该比字行盒还高太多：'
+              'bar=$bar 字形=$glyph');
+      expect(bar.height, greaterThan(glyph.height * 0.9),
+          reason: '★ 平权：主行竖条要接近"文字侧那根"的高度（改前是 13.4 = 字形盒×0.84）：'
+              'bar=$bar 字形=$glyph');
     });
   });
 

@@ -55,7 +55,7 @@ void main() {
           reason: '`Alt+=` 造行内空壳 = 方程域思路，与平权冲突，已撤掉');
       // ★ 行间**段**是一个块：不写内容也成立（空态由 EmptyMathMark 画出来）
       expect(ids.contains('mathDisplay'), isTrue);
-      expect(kShortcutActions.length, 46);
+      expect(kShortcutActions.length, 48);
     });
 
     test('★ 符号库每一项（行内插法）都不产生空数学段（全域）', () {

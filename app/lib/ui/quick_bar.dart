@@ -30,6 +30,7 @@ class QuickBar extends StatelessWidget {
     required this.onClearSlot,
     required this.onAssignSlot,
     this.assignSlot,
+    this.highlightSlot,
     this.placement = QuickBarPlacement.abovePanel,
   });
 
@@ -47,6 +48,9 @@ class QuickBar extends StatelessWidget {
 
   /// 赋值模式的目标格（`null` = 不在赋值模式）
   final int? assignSlot;
+
+  /// ★★ U2（2026-10-21）：**键盘焦点环**（当前用键盘选中的格号；`null` = 没有焦点）
+  final int? highlightSlot;
   final QuickBarPlacement placement;
 
   /// 一格边长（与面板同一常量）
@@ -104,6 +108,7 @@ class QuickBar extends StatelessWidget {
     final String? id = settings.favoriteAt(i);
     final SymbolItem? item = id == null ? null : library.byId(id);
     final bool hot = assignSlot == i;
+    final bool kb = highlightSlot == i; // ★ U2：键盘焦点环
     return Tooltip(
       message: item == null
           ? '第 ${i + 1} 格（空）· 点一下再选符号'
@@ -127,8 +132,8 @@ class QuickBar extends StatelessWidget {
             border: Border.all(
               color: hot
                   ? const Color(0xFFF6AD55)
-                  : const Color(0xFFE2E8F0),
-              width: hot ? 2 : 1,
+                  : (kb ? const Color(0xFF1E88E5) : const Color(0xFFE2E8F0)),
+              width: hot || kb ? 2 : 1,
             ),
           ),
           child: Stack(

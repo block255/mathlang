@@ -16,6 +16,7 @@
 //   ③ 点某个符号 ⇒ `onInsert`（插入语义在 `lang/symbol_insert.dart`）；
 //      快捷栏**赋值模式**下改走 `onAssign`（面板保持打开、筛选不变）。
 
+import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
 import 'package:flutter_math_fork/flutter_math.dart';
 
@@ -38,6 +39,8 @@ class SymbolPanel extends StatefulWidget {
     this.assignSlot,
     this.onAssign,
     this.showEmptySuggestions = true,
+    this.highlightIndex,
+    this.onVisible,
     this.showLabels = true,
   });
 
@@ -59,6 +62,14 @@ class SymbolPanel extends StatefulWidget {
   /// 搜不到时给相近建议（绝不静默空手而归）
   final bool showEmptySuggestions;
 
+  /// ★★ U2（2026-10-21）：**键盘焦点环** —— 当前选中的格子序号（`null` = 没有焦点）。
+  /// 由 `EditorPage` 管（它才知道焦点在不在面板里），面板只负责画出来。
+  final int? highlightIndex;
+
+  /// 当前**筛出来的 id 顺序**（每次变化通知一次）—— 键盘流要在"看得见的那几个"里移动，
+  /// 所以外层需要这份顺序；用回调而不是 GlobalKey：面板的 key 已被很多测试当锚点用。
+  final void Function(List<String> ids)? onVisible;
+
   /// 格子里显不显示中文名（关掉 ⇒ 格子更大、不再被截字）
   final bool showLabels;
 
@@ -68,6 +79,9 @@ class SymbolPanel extends StatefulWidget {
 
 class SymbolPanelState extends State<SymbolPanel> {
   final TextEditingController _query = TextEditingController();
+
+  /// 上次通知出去的 id 顺序（只在真的变了才回调，避免每帧 setState）
+  List<String>? _notifiedIds;
 
   /// 一级筛选（`null` = 全部）
   String? _group;
@@ -118,6 +132,15 @@ class SymbolPanelState extends State<SymbolPanel> {
   @override
   Widget build(BuildContext context) {
     final List<SymbolItem> shown = visibleItems();
+    // ★★ U2：把"当前筛出来的顺序"通知给外层（键盘流要在**看得见的那几个**里移动）。
+    //   只在真的变了才回调，且放到帧末（build 里不能 setState）。
+    final List<String> ids = <String>[for (final SymbolItem s in shown) s.id];
+    if (_notifiedIds == null || !listEquals(ids, _notifiedIds)) {
+      _notifiedIds = ids;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) widget.onVisible?.call(ids);
+      });
+    }
     return SizedBox(
       width: LayoutMetrics.panelWidth(widget.columns, cell: widget.cellSize),
       child: Material(
@@ -263,7 +286,8 @@ class SymbolPanelState extends State<SymbolPanel> {
         mainAxisExtent: widget.cellSize + 8,
       ),
       itemCount: shown.length,
-      itemBuilder: (BuildContext c, int i) => cell(shown[i]),
+      itemBuilder: (BuildContext c, int i) =>
+          cell(shown[i], highlight: widget.highlightIndex == i),
     );
   }
 
@@ -368,7 +392,7 @@ class SymbolPanelState extends State<SymbolPanel> {
   }
 
   /// 一格（也供快捷栏复用风格）
-  Widget cell(SymbolItem item) {
+  Widget cell(SymbolItem item, {bool highlight = false}) {
     return Tooltip(
       message: '${item.label}  ${item.tex}',
       waitDuration: const Duration(milliseconds: 400),
@@ -381,9 +405,15 @@ class SymbolPanelState extends State<SymbolPanel> {
             onInsert: () => _tap(item)),
         child: Container(
           decoration: BoxDecoration(
-            color: Colors.white,
+            // ★ U2 键盘焦点环：2px 蓝边 + 淡蓝底（与编辑器光标的蓝同色）
+            color: highlight ? const Color(0xFFEBF5FF) : Colors.white,
             borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: const Color(0xFFE2E8F0)),
+            border: Border.all(
+              color: highlight
+                  ? const Color(0xFF1E88E5)
+                  : const Color(0xFFE2E8F0),
+              width: highlight ? 2 : 1,
+            ),
           ),
           padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
           child: Column(
