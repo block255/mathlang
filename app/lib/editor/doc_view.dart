@@ -407,6 +407,24 @@ class DocViewStats {
       ' · 测量池 $measurePool · 渲染池 $renderPool';
 }
 
+/// 一次落点上报**来自哪一层**（2026-10-21 · L10）。
+///
+/// 行内公式上**确实有两条**上报路径：① 单元宿主的 `Listener`（文本层，落点只到"公式那一格"）
+/// ② 行内公式自己的指针监听（精确到原子）。两条都保留才有精度，
+/// 但调用方必须把**同一次物理按下**只算一次 —— 否则连击计数会把它数成两击
+/// （实测：单击变"选中一个原子"、双击变空选、从公式里起手拖不动）。
+/// ★ 三者**有优先级**（数值大的覆盖数值小的，同一次按下内）：
+///   `band`（页边"公式之前/之后"的物理边界，用户拍板的判据）＞ `math`（字形命中）＞ `text`（粗落点）。
+///   实测用例：行首公式左缘内侧 2px 既在公式盒里（math 会给"字形位置"）又在左缘带里
+///   （band 给"公式之前"）—— 按用户拍板必须是**公式之前**。
+enum TapSource {
+  text,
+  math,
+  band;
+
+  int get priority => index;
+}
+
 class DocView extends StatefulWidget {
   const DocView({
     super.key,
@@ -435,7 +453,12 @@ class DocView extends StatefulWidget {
   ///   为什么必须给：连击（双击选词 / 三击选整块）要看"两次按下的位置是不是同一个"，
   ///   而父层的 `Listener.onPointerDown` 在**子层之后**才跑 ⇒ 从那里读位置会**滞后一按**
   ///   （实测：双击永远被算成单击、三击被算成双击）。
-  final void Function(int offset, Offset global)? onTapOffset;
+  ///
+  /// ★★ 2026-10-21（L10）：**第三个参数是这条上报来自哪一层**。
+  ///   行内公式一次物理按下会**上报两次** —— 文本层（粗：只认得"公式这一格"）与
+  ///   公式层（精确到原子）。调用方按 `TapSource` 取**更精确**的那一个，
+  ///   并且**只算一次按下**（否则第二次上报会被连击逻辑当成"第二击"）。
+  final void Function(int offset, Offset global, TapSource source)? onTapOffset;
 
   /// 行间块上**右键**时回调（参数 = 该块的源偏移）；多行环境才会被接住（PC-5）
   final void Function(int offset)? onEnvResizeRequest;
@@ -695,10 +718,10 @@ class DocViewState extends State<DocView> {
 
   /// 渲染树里某个单元被点中 → 算出 L0 绝对偏移
   void _handleUnitHit(_Unit u, BuildContext ctx, Offset global) {
-    final void Function(int, Offset)? cb = widget.onTapOffset;
+    final void Function(int, Offset, TapSource)? cb = widget.onTapOffset;
     if (cb == null) return;
     final int? off = _offsetAt(u, ctx.findRenderObject(), global);
-    if (off != null) cb(off, global);
+    if (off != null) cb(off, global, TapSource.text);
   }
 
   /// ★★ 2026-10-19（L18；用户选 **方案 B**）：**公式左缘外侧那 4 px**（行首时落在页边距里）。
@@ -713,7 +736,7 @@ class DocViewState extends State<DocView> {
   /// 把落点换成**该行行首**（在左缘内侧 0.5 px 处求一次 `_offsetAt`）
   /// ⇒ 行首若是公式，换出来就是"公式之前"；若是文字，就是那一行第一个字之前。
   void _onPagePointerDown(PointerDownEvent e) {
-    final void Function(int, Offset)? cb = widget.onTapOffset;
+    final void Function(int, Offset, TapSource)? cb = widget.onTapOffset;
     if (cb == null) return;
     for (final _Unit u in _units) {
       if (u.type == BlockType.math) continue; // 行间块是整块认领的，不走这条
@@ -730,7 +753,7 @@ class DocViewState extends State<DocView> {
       if (e.position.dx < tl.dx - kInlineLeftBandPx) continue;
       final int? off =
           _offsetAt(u, box, Offset(tl.dx + 0.5, e.position.dy));
-      if (off != null) cb(off, e.position);
+      if (off != null) cb(off, e.position, TapSource.band);
       return;
     }
   }
@@ -956,13 +979,13 @@ class DocViewState extends State<DocView> {
   /// **渲染用的 tex**、以及渲染盒 key）
   void _onMathTap(_Unit u, ProjectionSegment seg, String renderTex, Offset global,
       GlobalKey key) {
-    final void Function(int, Offset)? cb = widget.onTapOffset;
+    final void Function(int, Offset, TapSource)? cb = widget.onTapOffset;
     if (cb == null) return;
     // ★★ §6.1.1（2026-10-18）：**空公式没有字形盒** ⇒ 走不了命中表。
     //   但它是**看得见的对象**（`EmptyMathMark` 那个虚线小框），点它必须"落进公式里"
     //   —— 空公式唯一的内容位点就是它的 contentStart。
     if (seg.tex.trim().isEmpty) {
-      cb(u.renderBase + seg.start, global);
+      cb(u.renderBase + seg.start, global, TapSource.math);
       return;
     }
     final RenderObject? ro = key.currentContext?.findRenderObject();
@@ -978,7 +1001,8 @@ class DocViewState extends State<DocView> {
     if (texRel == null) return;
     // ★ 位点吸附：落点必须是合法位点（设计稿 §2.4 的 P3）
     final int rel = buildCaretSites(seg.tex).snap(texRel).offset;
-    cb(u.renderBase + seg.start + rel, global);
+
+    cb(u.renderBase + seg.start + rel, global, TapSource.math);
   }
 
   /// 找出**内容段落**（而不是列表标记那种小段落）。
@@ -1745,7 +1769,7 @@ class DocViewState extends State<DocView> {
             caretHeight: textCaretHeight(_s.bodyFontSize),
             caretWidth: 1.5,
             caretColor: const Color(kCaretColorValue),
-            onTap: (int at, Offset global) => widget.onTapOffset?.call(at, global),
+            onTap: (int at, Offset global) => widget.onTapOffset?.call(at, global, TapSource.text),
             onBox: (String id, RenderBox box) => _blankBoxes[id] = box,
           ));
         } else {
@@ -1828,7 +1852,7 @@ class DocViewState extends State<DocView> {
         caretWidth: 1.5,
         caretColor: const Color(kCaretColorValue),
         topAligned: true,
-        onTap: (int at, Offset global) => widget.onTapOffset?.call(at, global),
+        onTap: (int at, Offset global) => widget.onTapOffset?.call(at, global, TapSource.text),
         onBox: (String id, RenderBox box) => _blankBoxes[id] = box,
       ));
     }

@@ -336,8 +336,14 @@ class _InlineMathTextState extends State<InlineMathText> {
         baseline: baseline ? TextBaseline.alphabetic : null,
         child: onTap == null
             ? mark
-            : GestureDetector(
-                onTapDown: (d) => onTap(s, s.tex, d.globalPosition, key),
+            : Listener(
+                // ★★ 2026-10-21（L10）：改用**原始 pointer down**，不用 `GestureDetector.onTapDown`。
+                //   理由（实测）：`onTapDown` 要等**手势竞技场结算**（滚动器也在场）——
+                //   有时要到**抬手**才回调 ⇒ 落点上报会落在"本次按下结束之后"，
+                //   被上层当成**新的一按**（连击计数翻倍、选区乱掉）。
+                //   `Listener` 不参加竞技场 ⇒ 一定在按下那一帧、且在祖先之前回调。
+                onPointerDown: (PointerDownEvent e) =>
+                    onTap(s, s.tex, e.position, key),
                 child: MouseRegion(
                   cursor: SystemMouseCursors.text,
                   child: mark,
@@ -375,16 +381,20 @@ class _InlineMathTextState extends State<InlineMathText> {
               // ★ 右键：行内公式也要能"改尺寸"（只有多行环境会被接住）。
               //   `opaque` 是为了**公式内部的空白**也归它（与行间那块同一口径）。
               behavior: HitTestBehavior.opaque,
-              onTapDown: onTap == null
-                  ? null
-                  : (TapDownDetails d) => onTap(s, tex, d.globalPosition, key),
               onSecondaryTapDown: widget.onMathRightClick == null
                   ? null
                   : (TapDownDetails _) => widget
                       .onMathRightClick!(widget.baseOffset + s.start),
-              child: MouseRegion(
-                cursor: SystemMouseCursors.text,
-                child: _mathWidget(key, tex, caretHere: caretHere, edge: edge, sel: sel),
+              // ★★ L10（2026-10-21）：左键走**原始 pointer down**（理由见上面空公式分支的注释）
+              child: Listener(
+                onPointerDown: onTap == null
+                    ? null
+                    : (PointerDownEvent e) => onTap(s, tex, e.position, key),
+                child: MouseRegion(
+                  cursor: SystemMouseCursors.text,
+                  child:
+                      _mathWidget(key, tex, caretHere: caretHere, edge: edge, sel: sel),
+                ),
               ),
             ),
     );

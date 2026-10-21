@@ -22,7 +22,7 @@ Future<DocBuffer> _pumpDocView(
   WidgetTester tester,
   String doc, {
   int caret = 0,
-  void Function(int offset, Offset global)? onTapOffset,
+  void Function(int offset, Offset global, TapSource source)? onTapOffset,
 }) async {
   final DocBuffer buf = DocBuffer(doc)..setCaret(caret);
   await tester.pumpWidget(MaterialApp(
@@ -95,7 +95,7 @@ void main() {
       int? got;
       // `甲\n\n\n\n乙`：空行有两行（偏移 2 与 3）
       await _pumpDocView(tester, '甲\n\n\n\n乙',
-          caret: 0, onTapOffset: (int o, Offset _) => got = o);
+          caret: 0, onTapOffset: (int o, Offset _, TapSource _) => got = o);
       final Rect slot = tester.getRect(_slots.first);
       // ★ 空行的行盒**从段距之后**起算（`gapBefore ≈ 11.2`，行高 ≈ 20）
       //   ⇒ 第二行落在 ~31..51 这段里
@@ -107,7 +107,7 @@ void main() {
     testWidgets('★ 点上半部分 ⇒ 第一行（偏移 2）', (WidgetTester tester) async {
       int? got;
       await _pumpDocView(tester, '甲\n\n\n\n乙',
-          caret: 0, onTapOffset: (int o, Offset _) => got = o);
+          caret: 0, onTapOffset: (int o, Offset _, TapSource _) => got = o);
       final Rect slot = tester.getRect(_slots.first);
       await tester.tapAt(Offset(slot.left + 40, slot.top + 4));
       await tester.pumpAndSettle();

@@ -76,19 +76,22 @@ void main() {
       }
     });
 
-    testWidgets('★★ 左缘**内侧** 0 / +2 px ⇒ 也是公式之前（改前：落进公式内部 offset 7）',
-        (WidgetTester tester) async {
-      final DocBuffer buf = await _pump(tester, kHead);
-      final Rect r = _mathRect(tester);
-      final double y = r.center.dy;
-      for (final double dx in <double>[0, 2]) {
-        final int caret = await _tapFromEnd(tester, buf, Offset(r.left + dx, y));
+    // ★ 2026-10-21（L10）：原来 0 / +2 两个落点写在**同一个测试**里连点两次 ——
+    //   而两点只差 2 px、真实时间只差几毫秒 ⇒ 产品会（正确地）判成**双击**并选中整个节点，
+    //   于是第二个断言读到的是选区末尾。连点不是本组要验的东西 ⇒ 拆成两次独立按下。
+    for (final double dx in <double>[0, 2]) {
+      testWidgets('★★ 左缘**内侧** ${dx}px ⇒ 也是公式之前（改前：落进公式内部 offset 7）',
+          (WidgetTester tester) async {
+        final DocBuffer buf = await _pump(tester, kHead);
+        final Rect r = _mathRect(tester);
+        final int caret =
+            await _tapFromEnd(tester, buf, Offset(r.left + dx, r.center.dy));
         // seg.start = 0；`$` 之后的内容起点是 1 —— 两者是同一根像素（§3.3），都算"公式之前"
         expect(caret, lessThanOrEqualTo(1),
             reason: '点公式最左 ${dx}px ⇒ 必须落在**公式之前 / 段首**（≤1），实际 $caret'
                 '（改前：被认成点了公式里的字形 ⇒ 7）');
-      }
-    });
+      });
+    }
 
     testWidgets('★ 带子只有 4 px：−6 px 之外**不**生效（不许把页边距变成大按钮）',
         (WidgetTester tester) async {

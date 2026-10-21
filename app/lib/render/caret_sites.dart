@@ -145,6 +145,27 @@ class TexRegion {
       ' items=${items.length}';
 }
 
+/// 一个**可选中的渲染节点**（2026-10-21，用户拍板"双击单位 = 乙"）。
+///
+/// 定义（一句话）：**一个字形 + 它挂的上下标 / 一个结构 + 它的全部参数**。
+/// 用户的原话：「平权下 `a` 单独不是对象，`a^2` 才是一个渲染对象」——
+/// 所以 `a^2` / `x_n` / `\frac{a}{b}` / `\sum_{i=1}^{n}` 各算**一个**节点，
+/// 而 `\frac` 的参数内部**不再产生**子节点（参数归主人）。
+///
+/// 与 [TexRegion] 的分工：区域是"层"（导航用），节点是"看得见的一个整体"（选择用）。
+class MathNode {
+  const MathNode(this.start, this.end);
+
+  /// tex 里的区间 `[start, end)`
+  final int start;
+  final int end;
+
+  int get length => end - start;
+
+  @override
+  String toString() => 'MathNode[$start,$end)';
+}
+
 /// 位点表。
 class CaretSiteTable {
   CaretSiteTable._(
@@ -154,6 +175,7 @@ class CaretSiteTable {
     this.degraded,
     this.degradeReason,
     this.regions,
+    this.nodes,
   );
 
   final String tex;
@@ -167,6 +189,11 @@ class CaretSiteTable {
   /// ★ **内容区域表**：每个区域带着它**同层的兄弟项**（§4.0 通则的判据来源）。
   /// 降级位点表里为空（降级时删除退化为字节级，不用层级）。
   final List<TexRegion> regions;
+
+  /// ★ **可选中的渲染节点表**（双击的单位，2026-10-21）：按 start 升序、互不重叠。
+  /// 只有"根区域 / 裸花括号组"这一层产出节点 —— 结构参数内部**不再**产出（参数归主人）。
+  /// 降级位点表里为空（调用方退回"可见原子"）。
+  final List<MathNode> nodes;
 
   /// 是否退化为「纯字符级位点表」（配对失败时；见设计稿 §2.3）
   final bool degraded;
@@ -552,6 +579,7 @@ CaretSiteTable _buildDegraded(String tex, String reason) {
     true,
     reason,
     const <TexRegion>[],
+    const <MathNode>[],
   );
 }
 
@@ -688,6 +716,8 @@ class _Parser {
     _emit(root, raw);
     final List<TexRegion> regions = <TexRegion>[];
     _collectRegions(root, regions);
+    final List<MathNode> nodes = <MathNode>[];
+    _collectNodes(root, nodes);
     final List<SlotSpan> slots = _withFullPaths(<SlotSpan>[
       for (final _Region r in _slots) SlotSpan(r.path, r.start, r.end),
     ]);
@@ -708,7 +738,44 @@ class _Parser {
       false,
       null,
       List<TexRegion>.unmodifiable(regions),
+      List<MathNode>.unmodifiable(nodes),
     );
+  }
+
+  /// 收集「可选中的渲染节点」—— **双击的单位**（2026-10-21，用户拍板 乙）。
+  ///
+  /// 规则（与 [MathNode] 的注释同源）：
+  ///   · 一个原子 + **紧跟它的** `^`/`_` 脚本（可连写）⇒ 一个节点（`a^2`、`\sum_{i=1}^{n}`）；
+  ///   · 一个结构项（自带参数）⇒ **它自己**就是节点，**不再深入它的参数**（参数归主人）
+  ///     ⇒ `\frac{a}{b}` 双击里面任何地方都选中**整个分式**；
+  ///   · 裸花括号组是**透明的** ⇒ 组里的内容照常按上面两条产出节点。
+  void _collectNodes(_Region r, List<MathNode> out) {
+    if (r.isSlot) return; // 槽内的一切归它的主人（结构），不单独成为节点
+    var k = 0;
+    while (k < r.items.length) {
+      final _Item it = r.items[k];
+      if (_isScriptItem(it)) {
+        // 没有基座的孤立脚本（打字中间态）⇒ 自己算一个节点
+        out.add(MathNode(it.start, it.end));
+        k++;
+        continue;
+      }
+      var end = it.end;
+      var j = k + 1;
+      while (j < r.items.length &&
+          _isScriptItem(r.items[j]) &&
+          r.items[j].start == end) {
+        end = r.items[j].end;
+        j++;
+      }
+      out.add(MathNode(it.start, end));
+      k = j;
+    }
+    for (final _Item it in r.items) {
+      for (final _Region s in it.slots) {
+        _collectNodes(s, out);
+      }
+    }
   }
 
   /// 导出「内容区域 → 同层内容项」的层级表（§4.0 通则的唯一判据）。
@@ -854,7 +921,21 @@ class _Parser {
           _degradeReason = '多余的 `}`（偏移 ${t.start}）';
           _i++;
         case _K.cmd:
-          out.add(_parseCmd(t));
+          final _Item ci = _parseCmd(t);
+          // ★★ L24（2026-10-21，用户实测"拖动时偶发红字 [公式不完整]"）：
+          //   `\limits` / `\nolimits` **必须紧跟算符**。若把它当成独立内容项，
+          //   "算符与它之间"就成了一个**位点** ⇒ 光标注入变成
+          //   `\liminf\textcolor{…}{\rule{0pt}{0pt}}\limits_{…}` ⇒ KaTeX 解析失败
+          //   （只有落在那 2–3px 才中，所以表现为"偶发"）。
+          //   做法与本函数上面 `\text{…}` 那条同源：**并进前一个内容项**，不给裂缝。
+          //   并进去之后，光标只能落在整个 `\liminf\limits` 之后 —— 那里紧跟 `_{…}`，
+          //   由 `neutralPoint` 规则 ① 挪进脚标内容开头，注入**安全**。
+          if ((ci.cmd == 'limits' || ci.cmd == 'nolimits') && out.isNotEmpty) {
+            final _Item prev = out.removeLast();
+            out.add(_Item(prev.start, ci.end, prev.slots, prev.cmd));
+          } else {
+            out.add(ci);
+          }
         case _K.sup:
         case _K.sub:
           out.add(_parseScript(t));

@@ -1,9 +1,12 @@
-// 选区的**语义单位**：双击选什么、三击选什么（2026-10-17 用户拍板）
+// 选区的**语义单位**：双击选什么、三击选什么（2026-10-17 用户拍板，2026-10-21 修订）
 //
-// · 双击 = **同层对象**：文本里 = 连续字母数字；数学段里 = **一个可见原子**
-//   （`\frac{a}{b}` 双击选中整个分式、`\sum_{i=1}^{n}` 双击选中整个 ∑ 节点 —— 与"位点/对象"体系一致）
+// · 双击 = **同层对象**：文本里 = 连续字母数字；数学段里 = **一个渲染节点**
+//   （★ 2026-10-21 用户拍板「乙」：一个字形 + 它挂的上下标 / 一个结构 + 它的全部参数
+//   ⇒ `a^2`、`x_n`、`\frac{a}{b}`、`\sum_{i=1}^{n}` 各算一个对象；`a` 单独**不是**对象。
+//   节点表 = `caret_sites.CaretSiteTable.nodes`，与"位点/结构"共用一份判据）
 // · 三击 = **整个单元**：行间公式块 = 整块；其余 = 整行
 
+import 'caret_sites.dart';
 import 'math_nav.dart';
 import 'visible_atoms.dart';
 
@@ -12,9 +15,33 @@ import 'visible_atoms.dart';
   final int o = offset.clamp(0, source.length);
   final MathRegion? m = mathRegionAt(source, o);
   if (m != null) {
-    // ★ 数学段里：选**一个可见原子**（它是有墨迹的那个对象）
+    // ★★ 数学段里：选**一个渲染节点**（2026-10-21 用户拍板「乙」）
+    //   定义 = 一个字形 + 它挂的上下标 / 一个结构 + 它的全部参数
+    //   ⇒ `a^2`、`x_n`、`\frac{a}{b}`、`\sum_{i=1}^{n}` 各算**一个**对象；
+    //   `a` 单独**不是**对象（平权：它没有意义）。
+    //   节点表来自位点表（`CaretSiteTable.nodes`），与"位点/结构"共用一份判据。
     final int rel = (o - m.contentStart).clamp(0, m.tex.length);
-    // 找**覆盖该偏移**的可见原子；落在边界上时取"后一个"（与右键/双击的直觉一致）
+    final List<MathNode> nodes = buildCaretSites(m.tex).nodes;
+    MathNode? node;
+    for (final MathNode n in nodes) {
+      if (rel >= n.start && rel < n.end) {
+        node = n;
+        break;
+      }
+    }
+    if (node == null) {
+      // 光标贴着某个节点的末尾（点击右缘很常见）⇒ 也算选它
+      for (final MathNode n in nodes) {
+        if (rel == n.end) {
+          node = n;
+          break;
+        }
+      }
+    }
+    if (node != null && node.length > 0) {
+      return (start: m.contentStart + node.start, end: m.contentStart + node.end);
+    }
+    // 兜底（位点表降级 / 空段）：退回"一个可见原子"的旧口径
     VisibleAtom? hit;
     for (final VisibleAtom a in lexVisibleAtoms(m.tex)) {
       if (rel >= a.start && rel < a.end) {
