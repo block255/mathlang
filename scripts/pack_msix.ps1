@@ -250,9 +250,13 @@ $readme = @"
   设置与「本地暂存」在 %APPDATA%\mathlang\（卸载**不会**自动删，除非常你说 y）。
   你保存的 .md 文档在任何情况下都不受影响。
 
-四、为什么需要"信任证书"
-  本版用**自签证书**签名，Windows 的 SmartScreen 还不认识它，所以第一次要手动信任一次。
-  将来换成公共 CA 签名（开源项目可免费申请）后，这一步就不需要了。
+四、为什么需要"信任证书"（只此一次）
+  本版用**自签证书**签名。MSIX 的安装由系统校验**证书是否受信**，
+  所以第一次要点一次管理员授权把证书放进「受信任人」。
+  ★ 完成这一步之后：双击 .msix / 从开始菜单打开，**都不会再弹 SmartScreen**
+    （本机 2026-10-19 与 2026-10-21 各实测过一次，装到 WindowsApps 里正常）。
+  ★ 代价只有一个：这一步要 UAC。换成公共 CA 签名（开源项目可免费申请 SignPath）后，
+    连 UAC 都不需要 —— 那一步是**未来的增强**，不是当前的阻塞。
 
 五、手工卸载（万一脚本坏了）
   设置 → 应用 → 已安装的应用 → 搜「数语引擎」→ 卸载
@@ -266,6 +270,21 @@ if (Test-Path $setupZip) { Remove-Item $setupZip -Force }
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 [System.IO.Compression.ZipFile]::CreateFromDirectory((Join-Path $root 'dist\_setup'), $setupZip, [System.IO.Compression.CompressionLevel]::Optimal, $false)
 Remove-Item (Join-Path $root 'dist\_setup') -Recurse -Force
+
+# ★★ P3'（2026-10-21）：`dist\安装包\` 原来是我**手工**建的一次性目录，脚本从不产出
+#   ⇒ 里面的 msix 会一直是旧包（分发出去的就是旧代码）。现在由脚本每次重建它。
+$bundle = Join-Path $root 'dist\安装包'
+if (Test-Path $bundle) { Remove-Item $bundle -Recurse -Force }
+New-Item -ItemType Directory -Path $bundle -Force | Out-Null
+Copy-Item $msix (Join-Path $bundle '数语引擎.msix') -Force
+Copy-Item (Join-Path $signing '数语引擎-自签证书.cer') (Join-Path $bundle '证书-数语引擎.cer') -Force
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+$tmpBundle = Join-Path $root 'dist\_bundle'
+if (Test-Path $tmpBundle) { Remove-Item $tmpBundle -Recurse -Force }
+[System.IO.Compression.ZipFile]::ExtractToDirectory($setupZip, $tmpBundle)
+Copy-Item (Join-Path $tmpBundle '数语引擎\双击我安装数语引擎.cmd') (Join-Path $bundle '安装数语引擎.cmd') -Force
+Copy-Item (Join-Path $tmpBundle '数语引擎\安装说明.txt') (Join-Path $bundle '安装说明.txt') -Force
+Remove-Item $tmpBundle -Recurse -Force
 
 if (-not $KeepStage) { Remove-Item $stageRoot -Recurse -Force }
 $mb = [math]::Round((Get-Item $msix).Length / 1MB, 1)
