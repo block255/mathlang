@@ -135,6 +135,8 @@ Map<String, dynamic> appSettingsToJson(AppSettings s) => <String, dynamic>{
       'autoWordTriggers': s.autoWordTriggers,
       'autoShorthand': s.autoShorthand,
   'desktopShortcut': s.desktopShortcut,
+      // ★ F19：上次用过的目录（打开/保存/导出图片集的初始地点）
+      'lastDir': s.lastDir,
     };
 
 AppSettings appSettingsFromJson(Map<String, dynamic> m) {
@@ -176,6 +178,7 @@ AppSettings appSettingsFromJson(Map<String, dynamic> m) {
     autoWordTriggers: pick('autoWordTriggers', d.autoWordTriggers),
     autoShorthand: pick('autoShorthand', d.autoShorthand),
     desktopShortcut: pick('desktopShortcut', d.desktopShortcut),
+    lastDir: pick('lastDir', d.lastDir),
   );
 }
 

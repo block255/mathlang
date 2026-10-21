@@ -64,6 +64,7 @@ class AppSettings {
     this.autoWordTriggers = true,
     this.autoShorthand = true,
     this.desktopShortcut = true, // ★ U6：启动时确保桌面有快捷方式
+    this.lastDir = '', // ★ F19：上次用过的目录（打开/保存/导出图片集的初始地点）
   });
 
   /// ★ 页面在**可用空间**里的归一化位置：`0` 贴左 · `0.5` 居中 · `1` 贴右
@@ -120,6 +121,11 @@ class AppSettings {
   /// 用户在设置里删掉后会置 false，免得每次启动又冒出来。
   final bool desktopShortcut;
 
+  /// ★★ F19（2026-10-21，用户实测）：**上次用过的目录** —— 打开 / 保存 / 导出图片集的
+  /// 原生对话框都从它开始。空串 = 没有记忆 ⇒ 用「文档」目录兜底（不是 exe 所在目录）。
+  /// 与 `io/dir_memory.dart` 配合：那边管内存与对话框，这边管落盘。
+  final String lastDir;
+
   /// 手机默认值：状态栏隐藏、面板覆盖
   static const AppSettings forPhone = AppSettings(
     panelMode: PanelMode.overlay,
@@ -165,6 +171,7 @@ class AppSettings {
     bool? autoWordTriggers,
     bool? autoShorthand,
     bool? desktopShortcut,
+    String? lastDir,
   }) =>
       AppSettings(
         pageXDock: pageXDock ?? this.pageXDock,
@@ -183,6 +190,7 @@ class AppSettings {
           autoWordTriggers: autoWordTriggers ?? this.autoWordTriggers,
         autoShorthand: autoShorthand ?? this.autoShorthand,
         desktopShortcut: desktopShortcut ?? this.desktopShortcut,
+        lastDir: lastDir ?? this.lastDir,
       );
 
   /// 实际生效的面板形态（把 [autoPanelMode] 与窗口宽算进来）

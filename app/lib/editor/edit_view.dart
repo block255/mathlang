@@ -426,6 +426,21 @@ class EditViewState extends State<EditView> {
     ];
   }
 
+  /// ★★ F18（2026-10-21，用户实测）：**导入**也算"最近一次自动包裹"。
+  ///
+  /// 为什么需要这个公开入口：导入走的是 `_buf.loadDocument(...)`（整篇替换），
+  /// **不经过粘贴链** `_commitText` ⇒ 从来不会调到 [_stampWrapped] ⇒
+  /// `EditViewStats.autoWrapped` 永远是 0 ⇒ 状态栏那条「自动包裹 N 处 · 查看清单 ›」
+  /// **永远不出现** ⇒ 「查看清单 → 跳转并高亮」没有任何入口（T-A 只见过空态）。
+  ///
+  /// 调用时机：`loadDocument` 之后（`docEpoch` 变化会清零一次，所以必须**之后**盖）。
+  void noteExternalWrap(int n, {List<MathSpan> spans = const <MathSpan>[]}) {
+    if (n <= 0) return;
+    _autoWrapped = n;
+    _autoWrappedSpans = spans;
+    if (mounted) _emitStats();
+  }
+
   /// ★★ S4-b：**面板插入**（符号 / 结构模板）—— 一次区间替换 = **一步撤销**。
   ///
   /// 三选一的语义（并入数学段 / 自动建壳 / 替换选区）在 `lang/symbol_insert.dart` 里，

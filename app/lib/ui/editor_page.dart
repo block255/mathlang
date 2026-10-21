@@ -35,6 +35,7 @@ import '../lang/shortcut_registry.dart';
 import '../lang/smart_wrap.dart';
 import '../lang/symbol_library.dart';
 import '../lang/word_triggers.dart';
+import '../io/dir_memory.dart';
 import '../io/file_gateway.dart';
 import '../io/file_gateway_platform.dart';
 import '../io/desktop_shortcut.dart';
@@ -212,6 +213,18 @@ class EditorPageState extends State<EditorPage> {
     _buf.addListener(_onBufferEdited);
     _restoreSession();
     _ensureDesktopShortcutOnFirstFrame();
+    // ★★ F19（2026-10-21）：文件对话框的"上次目录"记忆 ——
+    //   先把已有的记忆喂给 DirMemory（恢复会话拿到设置后会再 load 一次），
+    //   再挂上"变了就写进设置"的回调。
+    DirMemory.load(_s.lastDir);
+    DirMemory.onChanged = _rememberDir;
+  }
+
+  /// 文件对话框用过某个目录 ⇒ 记进设置并落盘（下次打开/保存/导出从这儿开始）
+  void _rememberDir(String dir) {
+    if (_disposed || dir.isEmpty || dir == _s.lastDir) return;
+    setState(() => _s = _s.copyWith(lastDir: dir));
+    _persistNow();
   }
 
   /// ★★ 2026-10-19（U6）：**第一次启动就把桌面图标摆好**。
@@ -277,7 +290,10 @@ class EditorPageState extends State<EditorPage> {
       setState(() {
         _docFile = df;
         _title = df.title;
-        if (d!.app != null) _s = d.app!;
+        if (d!.app != null) {
+          _s = d.app!;
+          DirMemory.load(_s.lastDir); // ★ F19：恢复出来的设置才是真值
+        }
         if (d.doc != null) _doc = d.doc!;
         if (d.shortcuts != null) _shortcuts = d.shortcuts!;
         if (d.triggers != null) _triggers = d.triggers!;
@@ -686,6 +702,21 @@ class EditorPageState extends State<EditorPage> {
       _docFile = df; // path 故意留空：这是一份**新文档**
       _title = df.title;
     });
+    // ★★ F18（2026-10-21，用户实测"导入后状态栏没有自动包裹那条，查看清单没入口"）：
+    //   把"补了几处 + 补在哪"补给编辑层 —— 它决定状态栏那条与诊断清单的内容。
+    //   拖到 `loadDocument` **之后**：`docEpoch` 变化会把旧的记账清零。
+    //   区间怎么认：导入是**整篇替换**，`plan` 里的偏移属于"包裹前的原文"，不能直接用；
+    //   改按**内容匹配**——扫描新文本里的数学段，取"内容就是某条包裹产物"的那些。
+    if (wrapped > 0) {
+      final Set<String> wrappedTex = <String>{
+        for (final WrapRun r in plan.runs) raw.substring(r.start, r.end).trim(),
+      };
+      final List<MathSpan> spans = <MathSpan>[
+        for (final MathSpan s in scanMathSpans(text))
+          if (wrappedTex.contains(s.tex.trim())) s,
+      ];
+      _editKey.currentState?.noteExternalWrap(wrapped, spans: spans);
+    }
     _editKey.currentState?.focusInput();
     // ★★ 2026-10-19（U2）：文案**只说真事** ——
     //   `loadDocument` 会**清撤销栈**（导入 = 新文档，不参与撤销），所以这里**不许**承诺 Ctrl+Z；

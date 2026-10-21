@@ -13,10 +13,20 @@ import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
 
 import '../core/document_file.dart';
+import 'dir_memory.dart';
 import 'file_gateway.dart';
 import 'text_codec.dart';
 
 FileGateway createFileGateway() => NativeFileGateway();
+
+/// 对话框的初始目录（`null` = 交回系统默认）。
+///
+/// ★ F19（2026-10-21，用户实测）：以前**一个都不传** ⇒ Windows 用进程当前目录
+/// （= exe 所在目录）当地点，用户每次都要从头找。现在统一走 [DirMemory]。
+String? _initialDir() {
+  final String d = DirMemory.initialDirectory();
+  return d.isEmpty ? null : d;
+}
 
 class NativeFileGateway implements FileGateway {
   const NativeFileGateway();
@@ -30,9 +40,11 @@ class NativeFileGateway implements FileGateway {
       allowedExtensions: extensions,
       withData: true,
       dialogTitle: '打开文档',
+      initialDirectory: _initialDir(), // ★ F19
     );
     if (r == null || r.files.isEmpty) return null; // 取消
     final PlatformFile f = r.files.single;
+    if (f.path != null) DirMemory.rememberFile(f.path!); // ★ F19：记住这次用的目录
     List<int>? bytes = f.bytes;
     // 极端情况：桌面某些实现不给 bytes ⇒ 退回按路径读
     if (bytes == null && f.path != null) {
@@ -67,9 +79,11 @@ class NativeFileGateway implements FileGateway {
       fileName: suggestedName,
       type: FileType.custom,
       allowedExtensions: <String>[extension],
+      initialDirectory: _initialDir(), // ★ F19
       bytes: bytes,
     );
     if (out == null || out.isEmpty) return const SaveOutcome.cancelled();
+    DirMemory.rememberFile(out); // ★ F19
     return SaveOutcome(path: out);
   }
 
@@ -90,9 +104,11 @@ class NativeFileGateway implements FileGateway {
       fileName: suggestedName,
       type: FileType.custom,
       allowedExtensions: <String>[extension],
+      initialDirectory: _initialDir(), // ★ F19
       bytes: data,
     );
     if (out == null || out.isEmpty) return const SaveOutcome.cancelled();
+    DirMemory.rememberFile(out); // ★ F19
     return SaveOutcome(path: out);
   }
 
@@ -104,9 +120,13 @@ class NativeFileGateway implements FileGateway {
   }) async {
     var dir = directory;
     if (dir == null || dir.isEmpty) {
-      dir = await FilePicker.platform.getDirectoryPath(dialogTitle: dialogTitle);
+      dir = await FilePicker.platform.getDirectoryPath(
+        dialogTitle: dialogTitle,
+        initialDirectory: _initialDir(), // ★ F19
+      );
     }
     if (dir == null || dir.isEmpty) return null; // 取消
+    DirMemory.rememberDirectory(dir); // ★ F19
     final List<String> written = <String>[];
     for (final ExportFile f in files) {
       final String p = '$dir${Platform.pathSeparator}${f.name}';
