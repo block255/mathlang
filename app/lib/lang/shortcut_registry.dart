@@ -168,7 +168,8 @@ const List<String> kBrowserOwnedKeys = <String>[
   'Ctrl+Tab', // 切标签
 ];
 
-/// 默认登记表（39 条；顺序 = 设置页里的显示顺序）
+/// 默认登记表（**46 条，全部 `wired`**；顺序 = 设置页里的显示顺序）
+/// ★ 2026-10-21 对账：注释原写"39 条"，实际 46（45 → 46 是 `sourceView` 转只读浮层那批补进来的）。
 const List<ShortcutAction> kShortcutActions = <ShortcutAction>[
   // ---------------- 结构类 ----------------
   ShortcutAction(id: 'newblock', name: '新块', group: '结构类', combo: 'Enter', status: ShortcutStatus.wired),
