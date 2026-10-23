@@ -361,7 +361,12 @@ class BlockMarkers {
         _ => BlockType.heading3,
       };
 
-  static bool isDivider(String s) => _dividerRe.hasMatch(s);
+  /// 分隔线：整行 3 个以上的 `-` / `*` / `_`（行首最多 3 空格）。
+  ///
+  /// ★ 2026-10-23（批 2）：用 [String.trimRight] —— 老实现直接拿原行匹配，
+  ///   碰上 **CRLF** 文件（行尾多一个 `\r`）就**静默失效**（实测用户那份抄写稿 3 个 `---` 全漏）。
+  ///   进门已经会归一成 LF（`text_normalize.normalizeNewlines`），这里是**第二道兜底**。
+  static bool isDivider(String s) => _dividerRe.hasMatch(s.trimRight());
 
   static bool isPageBreak(String s) => s.trim() == kPageBreakMarker;
 

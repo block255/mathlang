@@ -17,13 +17,25 @@ enum EnvStyle {
 
   /// `\begin{vmatrix}…\end{vmatrix}`（竖线行列式）
   det,
+
+  /// `\begin{cases}…\end{cases}`（分段函数）—— ★ 2026-10-23（批 2 · E1）：只有**段数**一个自由度
+  cases,
+
+  /// `\begin{aligned}…\end{aligned}`（对齐推导）—— 同上，只有**行数**
+  aligned,
 }
+
+/// 这类环境**只有一个自由度**（行/段数），列数是固定的（`cases` / `aligned` 都是两列）
+bool envRowsOnly(EnvStyle s) =>
+    s == EnvStyle.cases || s == EnvStyle.aligned || s == EnvStyle.det;
 
 /// 从 tex 里认出这是哪种环境；不是多行环境 ⇒ null。
 EnvStyle? envStyleOf(String tex) {
   if (tex.contains(r'\begin{bmatrix}')) return EnvStyle.bracket;
   if (tex.contains(r'\begin{pmatrix}')) return EnvStyle.paren;
   if (tex.contains(r'\begin{vmatrix}')) return EnvStyle.det;
+  if (tex.contains(r'\begin{cases}')) return EnvStyle.cases;
+  if (tex.contains(r'\begin{aligned}')) return EnvStyle.aligned;
   return null;
 }
 
@@ -31,6 +43,8 @@ const Map<EnvStyle, String> _kEnvNames = <EnvStyle, String>{
   EnvStyle.bracket: 'bmatrix',
   EnvStyle.paren: 'pmatrix',
   EnvStyle.det: 'vmatrix',
+  EnvStyle.cases: 'cases',
+  EnvStyle.aligned: 'aligned',
 };
 
 /// 把环境内容按 `\\`（行）与 `&`（列）切成格子。
@@ -82,6 +96,7 @@ List<List<String>> splitEnvCells(String body) {
 ///
 /// - [rows] / [cols] 会被夹到 1..12；
 /// - [EnvStyle.det] 强制方阵（`cols = rows`）；
+/// - [EnvStyle.cases] / [EnvStyle.aligned] 只有行数可改（列数沿用调用方给的当前值）；
 /// - 既有格子按**左上对齐**保留；不足的填空串；多余的丢掉（调用方负责撤销）。
 String resizeEnvironment(
   String tex, {
@@ -104,6 +119,13 @@ String resizeEnvironment(
       : '';
 
   final List<List<String>> old = splitEnvCells(body);
+  // ★★ 2026-10-23（批 2）：**环境外面还有东西时不许吃掉它们**。
+  //
+  // 实测（`cases` 嵌在公式里特别常见：`f(x)=\begin{cases}…`）：老实现从头重写整段 tex，
+  // ⇒ 右改尺寸会把 `f(x)=` 抹掉（矩阵同理：`A=\begin{bmatrix}…` 会丢掉 `A=`）。
+  final String prefix = begin >= 0 ? tex.substring(0, begin) : '';
+  final int endAt = endTok > begin ? endTok + '\\end{$name}'.length : -1;
+  final String suffix = endAt >= 0 ? tex.substring(endAt) : '';
   final StringBuffer out = StringBuffer();
   out.write(r'\begin{');
   out.write(_kEnvNames[target]);
@@ -119,5 +141,5 @@ String resizeEnvironment(
   out.write(r'\end{');
   out.write(_kEnvNames[target]);
   out.write('}');
-  return out.toString();
+  return prefix + out.toString() + suffix;
 }

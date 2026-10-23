@@ -4,6 +4,7 @@
 // 纯 Dart，不依赖 Flutter。
 
 import 'block.dart';
+import 'text_normalize.dart';
 
 /// 一次原子编辑：`[start, end)` 的原内容 [removed] 被替换为 [inserted]。
 ///
@@ -216,7 +217,13 @@ class DocBuffer {
   /// 为什么不能用 `replace(0, len, …)`：那是一次普通编辑，撤销栈里会留着旧文档，
   /// 用户按 `Ctrl+Z` 会把"旧文件的内容"撤回来（打开另一个文件后还能撤回去 = 见鬼）。
   void loadDocument(String text) {
-    _buf = text;
+    // ★★ 2026-10-23（批 2）：进门先把换行归一成 LF。
+    //
+    // 外部文件（AI 答案 / 记事本）普遍是 CRLF，而 `$$` 围栏 / `---` 分隔线 / `# ` 标题 /
+    // 列表标记 / 分页符 都按**整行**判定 —— 行尾那个 `\r` 会让判据**静默失效**
+    // （实测用户那份抄写稿 CRLF，3 个 `---` 一个都没认成分隔线）。
+    // 在缓冲区里存 LF 也顺手消掉"看不见的 `\r` 占偏移、污染字符数/光标"这条老账。
+    _buf = normalizeNewlines(text);
     _caret = 0;
     _anchor = 0;
     _undoStack.clear();

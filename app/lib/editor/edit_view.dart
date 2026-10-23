@@ -21,6 +21,7 @@ import 'package:flutter/services.dart';
 import '../core/block.dart';
 import '../core/doc_buffer.dart';
 import '../core/doc_settings.dart';
+import '../core/text_normalize.dart';
 import '../lang/auto_expand.dart';
 import '../lang/block_ops.dart';
 import '../lang/clipboard_slice.dart';
@@ -693,10 +694,13 @@ class EditViewState extends State<EditView> {
     return true;
   }
 
-  /// **右键改尺寸**（PC-5）：只对多行环境（矩阵/行列式）生效。
+  /// **右键改尺寸**（PC-5）：对多行环境（矩阵 / 行列式 / 分段函数 / 对齐推导）生效。
   ///
   /// 流程：定位数学段 ⇒ 认环境族与当前行列 ⇒ 弹面板（带当前值）⇒ `resizeEnvironment` 就地重写。
   /// 语义：既有内容左上对齐保留；缩小的内容进**一次撤销**（`_mutate` 记一步）。
+  ///
+  /// ★★ 2026-10-23（批 2 · E1）：`cases` / `aligned` 只有**行数**一个自由度 ⇒
+  ///   面板只给一栏（标签「段数」/「行数」），不带括号选择、预览不接 `× 数字`。
   Future<void> _resizeEnvAt(int offset) async {
     if (!_alive) return;
     final MathRegion? r = mathRegionAt(_buf.buf, offset);
@@ -704,6 +708,7 @@ class EditViewState extends State<EditView> {
     final EnvStyle? style = envStyleOf(r.tex);
     if (style == null) return; // 不是多行环境 ⇒ 右键不做事
     final bool det = style == EnvStyle.det;
+    final bool rowsOnly = style == EnvStyle.cases || style == EnvStyle.aligned;
     final List<List<String>> cells = splitEnvCells(_envBody(r.tex, style));
     final int rows = cells.isEmpty ? 2 : cells.length;
     final int cols = cells.isEmpty ? 2 : cells.first.length;
@@ -711,9 +716,17 @@ class EditViewState extends State<EditView> {
       context,
       style: style,
       rows: rows < 1 ? 2 : rows,
-      cols: cols < 1 ? 2 : cols,
+      cols: cols < 2 ? 2 : cols,
       determinant: det,
-      title: det ? '行列式' : '矩阵',
+      rowsOnly: rowsOnly,
+      rowsLabel: style == EnvStyle.cases ? '段数' : '行数',
+      unit: style == EnvStyle.cases ? '段' : '行',
+      title: switch (style) {
+        EnvStyle.det => '行列式',
+        EnvStyle.cases => '分段函数',
+        EnvStyle.aligned => '对齐推导',
+        _ => '矩阵',
+      },
     );
     if (choice == null || !mounted) return;
     final String next = resizeEnvironment(r.tex,
@@ -728,6 +741,8 @@ class EditViewState extends State<EditView> {
       EnvStyle.bracket => 'bmatrix',
       EnvStyle.paren => 'pmatrix',
       EnvStyle.det => 'vmatrix',
+      EnvStyle.cases => 'cases',
+      EnvStyle.aligned => 'aligned',
     };
     final String begin = '\\begin{$name}';
     final String end = '\\end{$name}';
@@ -1330,7 +1345,10 @@ class EditViewState extends State<EditView> {
   ///     （否则会在 `$…$` 里再包出一层 `$…$`）；
   ///   · 多行进**行间块** ⇒ 整块内容替换；多行进**行内公式** ⇒ 提升成新块放到本行之后。
   @visibleForTesting
-  void pasteText(String raw) {
+  void pasteText(String rawText) {
+    // ★★ 2026-10-23（批 2）：粘贴载荷先把 CRLF 归一成 LF —— 否则从记事本/AI 网页粘进来的
+    //   每行都带 `\r`，整行语法（`$$` / `---` / 标题 / 列表 / 分页符）会静默失效。
+    final String raw = normalizeNewlines(rawText);
     final int selStart = _buf.hasSelection ? _buf.selectionStart : _buf.caret;
     final int selEnd = _buf.hasSelection ? _buf.selectionEnd : _buf.caret;
     final PasteDecision d = decidePaste(

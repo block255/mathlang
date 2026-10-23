@@ -155,7 +155,7 @@ void main() {
       }
     });
 
-    test('★ 光标在**行内公式里**请求行间 ⇒ 新块落在公式外（不劈开定界符）', () {
+    test('★★ 2026-10-23：光标在**行内公式里**请求行间模板 ⇒ **并入行内**（用户拍板改口径）', () {
       const String doc = r'甲 $\alpha$ 乙';
       // 光标在 `$…$` 内部（tex 里）
       final int inside = doc.indexOf(r'\alpha');
@@ -168,11 +168,53 @@ void main() {
         template: true,
         display: true,
       );
-      expect(r.doc.contains(r'$\alpha$'), isTrue,
-          reason: '原行内公式必须完好：${r.doc}');
+      // 旧口径（2026-10-18）是"行间不与行内混 ⇒ 新建壳"；2026-10-23 用户改口径：
+      // **光标在哪就插在哪** ⇒ 并入当前数学段，不再造 `$$…$$`。
+      expect(r.mode, SymbolInsertMode.mergeIntoMath, reason: r.toString());
+      expect(r.doc.contains(r'$$'), isFalse, reason: '不许再生出一个行间壳：${r.doc}');
+      expect(r.doc.startsWith(r'甲 $'), isTrue, reason: '原行内段还在：${r.doc}');
+      expect(r.doc.endsWith(r' 乙'), isTrue, reason: '后面的文字还在：${r.doc}');
+      expect(r.doc.contains(r'\alpha'), isTrue, reason: '原有内容不许丢：${r.doc}');
+      expect(r.doc.contains(r'\begin{cases}'), isTrue,
+          reason: '模板必须并进那段公式里：${r.doc}');
+      // 并入 = 只多出模板本身的字符（不额外包一层 `$…$`）
+      expect(r.doc.length, doc.length + r'\begin{cases}&\\&\end{cases}'.length);
       expect(_balanced(r.doc), isTrue, reason: r.doc);
-      expect(r.mode, SymbolInsertMode.wrapNewInlineMath,
-          reason: '行间不与行内混 ⇒ 走"新建壳"这条路');
+    });
+
+    test('★★ E2/E3：光标在**行间块里** ⇒ 并入当前块，不新增块', () {
+      const String doc = '\$\$\nx=1\n\$\$';
+      final SymbolInsertResult r = applySymbolInsert(
+        doc: doc,
+        caret: 4, // `x=1` 这一行里
+        selStart: 4,
+        selEnd: 4,
+        tex: r'\begin{cases}&\\&\end{cases}',
+        template: true,
+        display: true,
+      );
+      expect(r.mode, SymbolInsertMode.mergeIntoMath, reason: r.toString());
+      expect(r.doc.split(r'$$').length - 1, 2,
+          reason: '一个块 = 一对围栏（改前会变成两对、新块落到后面）：${r.doc}');
+      expect(r.doc.contains(r'\begin{cases}'), isTrue, reason: r.doc);
+    });
+
+    test('★★ E3：光标在**空**行间块里 ⇒ 填进空块（不许"另起一块"）', () {
+      const String doc = '\$\$\n\n\$\$';
+      final SymbolInsertResult r = applySymbolInsert(
+        doc: doc,
+        caret: 3, // 空块的内容行行首
+        selStart: 3,
+        selEnd: 3,
+        tex: r'\begin{cases}&\\&\end{cases}',
+        template: true,
+        display: true,
+      );
+      expect(r.mode, SymbolInsertMode.mergeIntoMath, reason: r.toString());
+      expect(
+          r.doc,
+          '\$\$\n' r'\begin{cases}&\\&\end{cases}' '\n\$\$',
+          reason: '空块被填满，还是一块：${r.doc}');
     });
   });
 

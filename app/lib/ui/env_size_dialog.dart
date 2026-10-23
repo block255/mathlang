@@ -9,6 +9,10 @@
 // 语义有两处调用方：
 //   · 右键渲染页里的矩阵/行列式 ⇒ **改现有的**（带上当前行列，应用后就地重写）；
 //   · 点符号面板里的「矩阵 / 行列式」格子 ⇒ **先定义再插入**（默认 2×2 / 记住上次）。
+//
+// ★★ 2026-10-23（批 2 · E1，用户口径）：「那个参数就**段数**，然后就段数（数字），不用接 × 数字」
+//   ⇒ `cases`（分段函数）与 `aligned`（对齐推导）**只有一个自由度**：面板只给一栏
+//   （标签「段数」/「行数」），没有括号选择，预览写「3 段」而不是「3 × 2」。
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -35,6 +39,13 @@ Future<EnvSizeChoice?> showEnvSizeDialog(
   int cols = 2,
   /// 行列式：列数强制跟行数联动（输入框置灰）
   bool determinant = false,
+  /// ★★ 2026-10-23（批 2 · E1）：`cases` / `aligned` **只有一个自由度**（段数 / 行数）。
+  ///   ⇒ 面板只给一个框，标签用 [rowsLabel]，预览写「n 段」而不是「n × m」。
+  bool rowsOnly = false,
+  /// 只有一栏时的标签（`分段函数` ⇒ 「段数」，`对齐推导` ⇒ 「行数」）
+  String rowsLabel = '行数',
+  /// 预览里的量词（「段」/「行」）
+  String unit = '行',
   /// 记住上次的选择（面板格子那条路用）
   String title = '矩阵',
 }) {
@@ -46,6 +57,9 @@ Future<EnvSizeChoice?> showEnvSizeDialog(
       rows0: rows,
       cols0: cols,
       determinant: determinant,
+      rowsOnly: rowsOnly,
+      rowsLabel: rowsLabel,
+      unit: unit,
       title: title,
     ),
   );
@@ -57,6 +71,9 @@ class _EnvSizeDialog extends StatefulWidget {
     required this.rows0,
     required this.cols0,
     required this.determinant,
+    required this.rowsOnly,
+    required this.rowsLabel,
+    required this.unit,
     required this.title,
   });
 
@@ -64,6 +81,9 @@ class _EnvSizeDialog extends StatefulWidget {
   final int rows0;
   final int cols0;
   final bool determinant;
+  final bool rowsOnly;
+  final String rowsLabel;
+  final String unit;
   final String title;
 
   @override
@@ -96,7 +116,10 @@ class _EnvSizeDialogState extends State<_EnvSizeDialog> {
 
   void _apply() {
     final int? r = _parse(_rows);
-    final int c = widget.determinant ? (r ?? 0) : (_parse(_cols) ?? 0);
+    // 行列式 / 只有一栏的环境：列数不由用户选（行列式方阵、cases/aligned 固定两列）
+    final int c = widget.determinant || widget.rowsOnly
+        ? (r == null ? 0 : (widget.determinant ? r : widget.cols0))
+        : (_parse(_cols) ?? 0);
     if (r == null || c == 0) {
       setState(() => _error = '请输入 $kMin–$kMax 之间的整数');
       return;
@@ -107,7 +130,9 @@ class _EnvSizeDialogState extends State<_EnvSizeDialog> {
   @override
   Widget build(BuildContext context) {
     final int r = _parse(_rows) ?? widget.rows0;
-    final int c = widget.determinant ? r : (_parse(_cols) ?? widget.cols0);
+    final int c = (widget.determinant || widget.rowsOnly)
+        ? (widget.determinant ? r : widget.cols0)
+        : (_parse(_cols) ?? widget.cols0);
     return Shortcuts(
       shortcuts: const <ShortcutActivator, Intent>{
         SingleActivator(LogicalKeyboardKey.enter): _ApplyIntent(),
@@ -161,6 +186,33 @@ class _EnvSizeDialogState extends State<_EnvSizeDialog> {
                         ),
                       ],
                     )
+                  else if (widget.rowsOnly)
+                    // ★★ 2026-10-23（批 2 · E1）：`cases` / `aligned` 只有一个自由度。
+                    //   用户口径：「那个参数就**段数**，然后就段数（数字），不用接 × 数字」。
+                    Row(
+                      children: <Widget>[
+                        SizedBox(width: 56, child: Text(widget.rowsLabel)),
+                        SizedBox(
+                          width: 72,
+                          child: TextField(
+                            key: const Key('env-size-rows'),
+                            controller: _rows,
+                            keyboardType: TextInputType.number,
+                            inputFormatters: <TextInputFormatter>[
+                              FilteringTextInputFormatter.digitsOnly,
+                            ],
+                            onChanged: (_) => setState(() => _error = null),
+                          ),
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.only(left: 8),
+                          child: Text('$r ${widget.unit}',
+                              key: const Key('env-size-unit'),
+                              style: const TextStyle(
+                                  fontSize: 11, color: Color(0xFF718096))),
+                        ),
+                      ],
+                    )
                   else
                     Row(
                       children: <Widget>[
@@ -194,12 +246,11 @@ class _EnvSizeDialogState extends State<_EnvSizeDialog> {
                       ],
                     ),
                   const SizedBox(height: 12),
-                  Row(
-                    children: <Widget>[
-                      const SizedBox(width: 56, child: Text('括号')),
-                      if (widget.determinant)
-                        const Text('| |', style: TextStyle(fontSize: 13))
-                      else
+                  // 括号只对"矩阵"有意义（行列式固定 `| |`；cases/aligned 由环境自带）
+                  if (!widget.determinant && !widget.rowsOnly)
+                    Row(
+                      children: <Widget>[
+                        const SizedBox(width: 56, child: Text('括号')),
                         SegmentedButton<EnvStyle>(
                           key: const Key('env-size-style'),
                           segments: const <ButtonSegment<EnvStyle>>[
@@ -216,10 +267,21 @@ class _EnvSizeDialogState extends State<_EnvSizeDialog> {
                             visualDensity: VisualDensity.compact,
                           ),
                         ),
-                    ],
-                  ),
+                      ],
+                    )
+                  else if (widget.determinant)
+                    Row(
+                      children: <Widget>[
+                        const SizedBox(width: 56, child: Text('括号')),
+                        const Text('| |', style: TextStyle(fontSize: 13)),
+                      ],
+                    ),
                   const SizedBox(height: 12),
-                  Text('预览：$r × $c',
+                  // ★ 只有一栏时预览写「3 段」，**不接 `× 数字`**（用户 2026-10-23 的要求）
+                  Text(
+                      widget.rowsOnly
+                          ? '预览：$r ${widget.unit}'
+                          : '预览：$r × $c',
                       key: const Key('env-size-preview'),
                       style: const TextStyle(fontSize: 12, color: Color(0xFF4A5568))),
                   if (_error != null)

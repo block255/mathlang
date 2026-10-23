@@ -76,10 +76,16 @@ int firstSlotOffset(String tex) {
 
 /// 把 [tex] 插到光标处（或替换选区），返回新文档与新光标。
 ///
-/// [display] = 插成**行间公式段**（`$$\n<tex>\n$$`，围栏独占一行）。
-/// ★ 2026-10-18：`行间` 与 `行内` 是**两种排版意图**，混不进去 ⇒
-///   display 请求**不并入**已有的行内公式；而载荷里带 `\n` 走 `insert_guard` 规则 ①，
-///   会被**推出**行内公式（推到 `closeEnd` 之后），所以不会把 `$…$` 劈开。
+/// [display] = 插成**行间公式段**（`$$\n<tex>\n$$`，围栏独占一行）—— **只在"文字里"才建壳**。
+///
+/// ★★ 2026-10-23（批 2 · E2/E3，用户实测"分段模板插到下一个行间去了" + 拍板"并入可以"）：
+///   旧口径是「`行间` 与 `行内` 是两种排版意图，混不进去 ⇒ display 请求**不并入**任何已有数学段」。
+///   那条在"光标已在某个行间块里"时是**错的**：它会再造一个 `$$…$$` 壳，而壳自带换行 ⇒
+///   被 `insert_guard` 的围栏规则**推出当前块** ⇒ 新块落在**当前块之后**
+///   （后面若紧跟一个空行间块，看起来就是"插到下一个行间"）。
+///   现行口径（用户 2026-10-23 拍板）：**光标在数学段里（行内或行间）⇒ 并入那一段、只插 tex**；
+///   只有光标在**文字流**里时才造行间壳。
+///   ★ 行内并入 `cases` 实测可渲染（156.8×49.2 @20px，两行会让那一行变高），没有专门适配。
 SymbolInsertResult applySymbolInsert({
   required String doc,
   required int caret,
@@ -103,8 +109,9 @@ SymbolInsertResult applySymbolInsert({
     mode = SymbolInsertMode.replaceSelection;
     wrapped = display || !_touchesMath(doc, s, e);
     text = wrapped ? _shell(tex, display: display) : tex;
-  } else if (!display && _mergeRegion(doc, c) != null) {
+  } else if (_mergeRegion(doc, c) != null) {
     // ① 并入数学段（★ 落点要**挪进段内**：段边界那一格在 `mathRegionAt` 里算"段外"）
+    //    ★★ 2026-10-23：**display 也并入了**（旧口径见上面注释）
     mode = SymbolInsertMode.mergeIntoMath;
     wrapped = false;
     text = tex;
