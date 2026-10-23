@@ -23,7 +23,9 @@ import '../core/doc_buffer.dart';
 import '../core/doc_settings.dart';
 import '../lang/auto_expand.dart';
 import '../lang/block_ops.dart';
+import '../lang/clipboard_slice.dart';
 import '../lang/math_spans.dart';
+import '../lang/paste_context.dart';
 import '../lang/smart_wrap.dart';
 import '../lang/symbol_insert.dart';
 import '../lang/word_triggers.dart';
@@ -54,6 +56,7 @@ class EditViewStats {
     this.autoWrapped = 0,
     this.autoWrappedSpans = const <MathSpan>[],
     this.pages = 0,
+    this.pasteNote,
   });
 
   final int length;
@@ -76,6 +79,12 @@ class EditViewStats {
   /// ★ 排完版后**实际页数**（由 `DocView` 的 `DocViewStats.pages` 回传；状态栏「页号」用它）。
   final int pages;
 
+  /// ★★ 2026-10-23（批 1）：粘贴时"我们替你动了手脚"的一句话说明（没有就是 `null`）。
+  ///
+  /// 只在**跨语境**那几种兜底里出现：剥定界符 / 整块替换 / 多行提升成块 / 混合文本推出去。
+  /// 走状态栏（不进正文流 ⇒ 不触发重排分页），下一次编辑自动清掉。
+  final String? pasteNote;
+
   @override
   bool operator ==(Object other) =>
       other is EditViewStats &&
@@ -86,11 +95,12 @@ class EditViewStats {
       other.composingText == composingText &&
       other.autoWrapped == autoWrapped &&
       other.pages == pages &&
+      other.pasteNote == pasteNote &&
       listEquals(other.autoWrappedSpans, autoWrappedSpans);
 
   @override
-  int get hashCode => Object.hash(
-      length, caret, edits, composing, composingText, autoWrapped, pages,
+  int get hashCode => Object.hash(length, caret, edits, composing,
+      composingText, autoWrapped, pages, pasteNote,
       autoWrappedSpans.isEmpty ? 0 : Object.hashAll(autoWrappedSpans));
 
   @override
@@ -226,6 +236,12 @@ class EditViewState extends State<EditView> {
 
   /// ★ S4-b②：最近一次自动包裹补出来的数学段（诊断清单点一条就跳过去）
   List<MathSpan> _autoWrappedSpans = const <MathSpan>[];
+
+  /// ★★ 2026-10-23（批 1）：粘贴时"**我们替你动了手脚**"的说明（走状态栏）。
+  ///
+  /// 为什么必须可见（原则 5）：剥定界符 / 整块替换 / 把多行提升成块 / 把混合文本推出去 ——
+  /// 这些都不是用户显式要求的，静默做掉就成了"粘了但好像没反应"。
+  String? _pasteNote;
 
   /// ★ S4-b②：`DocView` 回传的**实际页数**（状态栏「页号」读它）
   int _pages = 0;
@@ -727,6 +743,13 @@ class EditViewState extends State<EditView> {
     // ★ 任何一次**普通**编辑都把"上次自动包裹"的记账清掉（它只描述**最近一次插入**）
     _autoWrapped = 0;
     _autoWrappedSpans = const <MathSpan>[];
+    _pasteNote = null;
+    if (mounted) _emitStats();
+  }
+
+  /// 记一条"粘贴时替你动过手脚"的说明（下一次编辑自动清掉）
+  void _note(String? s) {
+    _pasteNote = s;
     if (mounted) _emitStats();
   }
 
@@ -841,17 +864,18 @@ class EditViewState extends State<EditView> {
         return KeyEventResult.handled;
       }
       if (k == LogicalKeyboardKey.keyC) {
-        final String sel = _selectedText;
-        if (sel.isNotEmpty) {
-          Clipboard.setData(ClipboardData(text: sel));
+        final ClipboardSlice sl = _selectionSlice;
+        if (sl.text.isNotEmpty) {
+          Clipboard.setData(ClipboardData(text: sl.text));
         }
         return KeyEventResult.handled;
       }
       if (k == LogicalKeyboardKey.keyX) {
-        final String sel = _selectedText;
-        if (sel.isNotEmpty) {
-          Clipboard.setData(ClipboardData(text: sel));
-          _deleteRange(_buf.selectionStart, _buf.selectionEnd);
+        final ClipboardSlice sl = _selectionSlice;
+        if (sl.text.isNotEmpty) {
+          Clipboard.setData(ClipboardData(text: sl.text));
+          // ★ 剪切删的是**切片对应的源区间**（不是原选区）—— 否则公式里会留下半截 `$`
+          _deleteRange(sl.start, sl.end);
         }
         return KeyEventResult.handled;
       }
@@ -1085,6 +1109,7 @@ class EditViewState extends State<EditView> {
       autoWrapped: _autoWrapped,
       autoWrappedSpans: _autoWrappedSpans,
       pages: _pages,
+      pasteNote: _pasteNote,
     );
     if (_lastStats == s) return;
     _lastStats = s;
@@ -1270,10 +1295,16 @@ class EditViewState extends State<EditView> {
     _tapHandledThisPress = false;
     _tapAppliedPriority = -1;
   }
-  /// 当前选中的源码（没有选区 ⇒ 空串）
-  String get _selectedText => _buf.hasSelection
-      ? _buf.buf.substring(_buf.selectionStart, _buf.selectionEnd)
-      : '';
+  /// 当前选区的**自洽片段**（没有选区 ⇒ 空）。
+  ///
+  /// ★★ 2026-10-23（批 1 · A1/A2）：原来直接 `substring(selStart, selEnd)` ——
+  ///   复制行内公式里的一个分式，得到的是 `\frac{…}{…}$`（**缺开头 `$`、多结尾 `$`**，用户实测）。
+  ///   现在走 `clipboardSlice`：两端都在同一个公式内 ⇒ 替用户**补一对 `$…$`**；
+  ///   只有一端在公式内 ⇒ 把那一端扩到段边界。判据与「粘贴侧」共用同一套语境表
+  ///   （`notes\design\剪贴板与跨语境粘贴.md`）。
+  ClipboardSlice get _selectionSlice => _buf.hasSelection
+      ? clipboardSlice(_buf.buf, _buf.selectionStart, _buf.selectionEnd)
+      : const ClipboardSlice(start: 0, end: 0, text: '');
 
   /// 粘贴：读剪贴板 → **智能包裹** → 走**同一条**提交链（含选区替换与结构守门）
   ///
@@ -1292,11 +1323,59 @@ class EditViewState extends State<EditView> {
   /// 所以 `planInsert` 的 ③④⑤（围栏行不可落 / 整行语法补边界 / `$` 不许粘连）对**包裹后**的文本照样生效。
   ///
   /// ★ 一次语义动作 = **一次 `_mutate`** ⇒ 包裹 + 插入 + 补行边界合起来**一步撤销**。
+  ///
+  /// ★★ 2026-10-23（批 1 · 跨语境粘贴）：先问"**粘到哪**"（`paste_context.decidePaste`）：
+  ///   · 目标在**文字流**里 ⇒ 老路（智能包裹）；
+  ///   · 目标在**数学里**（行内 / 行间 / 任何结构槽）⇒ 剥掉外层定界符、只插 tex，**不再跑包裹**
+  ///     （否则会在 `$…$` 里再包出一层 `$…$`）；
+  ///   · 多行进**行间块** ⇒ 整块内容替换；多行进**行内公式** ⇒ 提升成新块放到本行之后。
   @visibleForTesting
   void pasteText(String raw) {
-    final SmartWrapPlan plan = planSmartWrap(raw);
-    final String text = plan.isEmpty ? raw : applySmartWrap(raw, plan);
-    _commitText(text, autoWrapped: plan.runs.length);
+    final int selStart = _buf.hasSelection ? _buf.selectionStart : _buf.caret;
+    final int selEnd = _buf.hasSelection ? _buf.selectionEnd : _buf.caret;
+    final PasteDecision d = decidePaste(
+      doc: _buf.buf,
+      caret: _buf.caret,
+      selStart: selStart,
+      selEnd: selEnd,
+      payload: raw,
+    );
+    switch (d.apply) {
+      case PasteApply.asIs:
+        final SmartWrapPlan plan = planSmartWrap(raw);
+        final String text = plan.isEmpty ? raw : applySmartWrap(raw, plan);
+        _commitText(text, autoWrapped: plan.runs.length);
+        return;
+      case PasteApply.mathTex:
+        // 已经是 tex（或用户就是想插文字）⇒ 直接走插入守门人，不包裹
+        _commitText(d.payload);
+        return;
+      case PasteApply.pushOut:
+        _breakUndoGroup();
+        _buf.setCaret(d.at!.clamp(0, _buf.length));
+        _commitText(d.payload);
+        _note(d.note);
+        return;
+      case PasteApply.replaceBlock:
+        _breakUndoGroup();
+        _mutate(() {
+          _buf.replace(d.replaceFrom!, d.replaceTo!, d.payload);
+          _buf.setCaret(d.at!.clamp(0, _buf.length));
+        });
+        _note(d.note);
+        return;
+      case PasteApply.promoteBlock:
+        _breakUndoGroup();
+        // 围栏必须独占一行 ⇒ 前后各补行边界；插在**本行之后**，不劈开原公式
+        final String block = '\n\n\$\$\n${d.payload}\n\$\$';
+        final int at = d.at!.clamp(0, _buf.length);
+        _mutate(() {
+          _buf.replace(at, at, block);
+          _buf.setCaret((at + block.length).clamp(0, _buf.length));
+        });
+        _note(d.note);
+        return;
+    }
   }
 
   void _pushCaretToInput() {

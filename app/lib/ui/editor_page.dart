@@ -2087,6 +2087,22 @@ class EditorPageState extends State<EditorPage> {
                       ),
                     ),
                   ),
+                // ★★ 2026-10-23（批 1）：粘贴跨语境时的"替你动过手脚"说明
+                //   （剥定界符 / 整块替换 / 多行提升成块 / 混合文本推出去）
+                if (_stats.pasteNote != null)
+                  Flexible(
+                    child: Padding(
+                      padding: const EdgeInsets.only(left: 8),
+                      child: Text(
+                        _stats.pasteNote!,
+                        key: const Key('paste-note'),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            fontSize: 11, color: Color(0xFF2B6CB0)),
+                      ),
+                    ),
+                  ),
               ],
             ),
           ),

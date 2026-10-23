@@ -13,6 +13,8 @@
 //
 // **纯 Dart**（没有 Flutter 依赖），方便单测。
 
+import 'math_spans.dart';
+
 /// 一处建议包裹：把 `source[start, end)` 包成 `$…$`（或 `$$…$$`）
 class WrapRun {
   const WrapRun(this.start, this.end, {this.display = false});
@@ -143,14 +145,9 @@ bool _hasMathSubstance(String s) {
 ///
 /// 实测：`a 大于 b >` 里切出来的 `b >` 有字母也有 `>` ⇒ 按旧判据会被包成 `$b >$`。
 /// 但那是个**悬空的**比较符（中文里"大于"后面跟个 `>` 是语气），不是数学。
-/// 判据：首尾若还是 `= < > + - * /`，说明这个"数学段"没写完整 ⇒ 保守不包。
-bool _hasDanglingOperator(String s) {
-  const String ops = '=<>+-*/';
-  if (s.isEmpty) return false;
-  if (ops.contains(s[0])) return true;
-  if (ops.contains(s[s.length - 1])) return true;
-  return false;
-}
+///
+/// ★ 2026-10-23（批 1 · G2）：本函数被 [_blockedByDangling] 取代 ——
+///   它还要区分"**整行**以 `=` 开头的续行"（`= 1`），那种必须包。留着只为记录旧口径。
 
 /// 强证据：段里有 `\命令` / 上下标 ⇒ **一定是数学**，哪怕首尾挂着运算符。
 ///
@@ -170,20 +167,123 @@ bool _looksLikePlainEnglish(String s) {
   return t.split(RegExp(r'\s+')).where((String w) => w.isNotEmpty).isNotEmpty;
 }
 
-/// **扫描整篇文本**，给出建议包裹的区间
+/// ★★ 2026-10-23（批 1 · G2）：**以运算符开头**的整行是"续行"，不是"悬空"。
 ///
-/// 会跳过：已有的 `$…$`、`$$…$$` 块、代码块（三反引号围栏）、行首列表标记、URL。
-SmartWrapPlan planSmartWrap(String source) {
-  final List<WrapRun> runs = <WrapRun>[];
-  // ① 先标记"不能碰"的区间：`$…$` / `$$…$$` / ``` 代码块
-  final List<({int from, int to})> locked = <({int from, int to})>[];
+/// 实测（DeepSeek 抄写稿）：多行推导的最后一行常常是 `= 1` / `= -1` / `= \frac{2}{3}`。
+/// 旧判据"首尾挂运算符就不包"把它们整行漏掉 ⇒ 页面上落成正文文字（用户看到的"行间被识别成行内"）。
+///
+/// 区分**两条**不同的直觉：
+/// * **尾部**挂着 `= < > + - * /` ⇒ 那就是没写完（`a 大于 b >` 里的 `b >`）⇒ 拦住（F13 那条不许退化）；
+/// * **头部**挂着运算符、而这一段**就是整行** ⇒ 那是"接着上一行写"的续行 ⇒ 放行。
+///   只有"夹在句子中间、左边还有字"的头部运算符仍然算悬空。
+bool _blockedByDangling(String seg, {required bool wholeLine}) {
+  if (seg.isEmpty) return false;
+  if (_hasStrongMathEvidence(seg)) return false;
+  const String ops = '=<>+-*/';
+  if (ops.contains(seg[seg.length - 1])) return true;
+  if (!wholeLine && ops.contains(seg[0])) return true;
+  return false;
+}
+
+/// ★★ 2026-10-23（批 1 · G1）：`\text{…}` 这类**文本模式命令**的参数组。
+///
+/// 为什么需要：作业/答案里 `\quad (\text{旁注：当 } x\to+\infty …)` 这种写法极常见。
+/// 切段器原来只认"数学字符"（中文**不算**）⇒ 段被从「旁注」处切断 ⇒
+/// `\text{` 和它的 `}` 被分到两个包裹里 ⇒ 两段都语法不完整 ⇒ 页面上 `[公式不完整]`。
+/// 实测：整份抄写稿 69 段包裹里 **20 段悬空**，全是这一类。
+///
+/// 判据：命令名后面的参数组**整段**算"段内"（组里允许中文 / 全角标点）。
+const Set<String> _kTextCommands = <String>{
+  'text', 'textrm', 'textbf', 'textit', 'textsf', 'texttt', 'textnormal', //
+  'mbox', 'hbox',
+};
+
+List<({int from, int to})> _textGroups(String source) {
+  final List<({int from, int to})> out = <({int from, int to})>[];
   var i = 0;
   while (i < source.length) {
-    if (source.startsWith(r'$$', i)) {
-      final int end = source.indexOf(r'$$', i + 2);
-      final int to = end < 0 ? source.length : end + 2;
-      locked.add((from: i, to: to));
-      i = to;
+    if (source[i] != r'\') {
+      i++;
+      continue;
+    }
+    var j = i + 1;
+    while (j < source.length && _isLetterCode(source.codeUnitAt(j))) {
+      j++;
+    }
+    final String name = source.substring(i + 1, j);
+    if (!_kTextCommands.contains(name)) {
+      i = j > i ? j : i + 1;
+      continue;
+    }
+    var k = j;
+    while (k < source.length && source[k] == ' ') {
+      k++;
+    }
+    if (k >= source.length || source[k] != '{') {
+      i = k > i ? k : i + 1;
+      continue;
+    }
+    var depth = 0;
+    var m = k;
+    while (m < source.length) {
+      final String ch = source[m];
+      if (ch == r'\') {
+        m += 2; // 跳过转义（`\{` / `\}`）
+        continue;
+      }
+      if (ch == '{') depth++;
+      if (ch == '}') {
+        depth--;
+        if (depth == 0) {
+          m++;
+          break;
+        }
+      }
+      m++;
+    }
+    out.add((from: i, to: m.clamp(0, source.length)));
+    i = m;
+  }
+  return out;
+}
+
+bool _isLetterCode(int c) =>
+    (c >= 0x41 && c <= 0x5A) || (c >= 0x61 && c <= 0x7A);
+
+/// **扫描整篇文本**，给出建议包裹的区间
+///
+/// 会跳过：已有的 `$…$`、`$$…$$` 块、代码块（三反引号围栏）、行内代码、行首列表标记、URL。
+SmartWrapPlan planSmartWrap(String source) {
+  final List<WrapRun> runs = <WrapRun>[];
+  // ① 先标记"不能碰"的区间：已有的**数学段**（由 `math_spans` 权威给出）
+  //
+  // ★★ 2026-10-23（批 1）：这里原来自己扫 `$` —— 于是"哪里有数学段"这件事**有两份判据**
+  //   （`smart_wrap` vs `math_spans`），《编辑地基与手感》§六-1/2 明令禁止。
+  //   `scanMathSpans` 还额外处理了 `\$` 转义与 `$$` 优先，比自扫更准。
+  final List<({int from, int to})> locked = <({int from, int to})>[
+    for (final MathSpan sp in scanMathSpans(source)) (from: sp.start, to: sp.end),
+  ];
+  bool inLocked(int pos) =>
+      locked.any((({int from, int to}) r) => pos >= r.from && pos < r.to);
+  // 落单的 `$`（该行 `$` 个数为奇数）⇒ 整行不碰。
+  // 定界符配不上时**不猜**（老实现是把落单的 `$` 之后全锁掉；这里收窄成"锁这一行"，
+  // 既保留了保守性，又不会让后面整篇都失去包裹机会）。
+  var lineOff = 0;
+  for (final String line in source.split('\n')) {
+    var dollars = 0;
+    for (var k = 0; k < line.length; k++) {
+      if (line.codeUnitAt(k) == 0x24 && !inLocked(lineOff + k)) dollars++;
+    }
+    if (dollars.isOdd) {
+      locked.add((from: lineOff, to: lineOff + line.length));
+    }
+    lineOff += line.length + 1;
+  }
+  // 代码围栏 / 行内代码（这两种是**字面量**，永远不许变成公式）
+  var i = 0;
+  while (i < source.length) {
+    if (inLocked(i)) {
+      i++;
       continue;
     }
     if (source.startsWith('```', i)) {
@@ -208,17 +308,14 @@ SmartWrapPlan planSmartWrap(String source) {
       i = to;
       continue;
     }
-    if (source.startsWith(r'$', i)) {
-      final int end = source.indexOf(r'$', i + 1);
-      final int to = end < 0 ? source.length : end + 1;
-      locked.add((from: i, to: to));
-      i = to;
-      continue;
-    }
     i++;
   }
-  bool inLocked(int pos) =>
-      locked.any((({int from, int to}) r) => pos >= r.from && pos < r.to);
+
+  // ①·补 ★★ 2026-10-23（G1）：`\text{…}` 的参数组**整段算段内**
+  //   （组里可以有中文和全角标点 —— 作业里的 `\text{旁注：当 }`）
+  final List<({int from, int to})> textGroups = _textGroups(source);
+  bool inTextGroup(int pos) =>
+      textGroups.any((({int from, int to}) r) => pos >= r.from && pos < r.to);
 
   // ② 按"数学字符"贪心成段，再逐段判定
   var p = 0;
@@ -230,7 +327,7 @@ SmartWrapPlan planSmartWrap(String source) {
     var q = p;
     while (q < source.length &&
         !inLocked(q) &&
-        _isMathChar(source.codeUnitAt(q))) {
+        (inTextGroup(q) || _isMathChar(source.codeUnitAt(q)))) {
       q++;
     }
     // 去掉首尾的空格/标点
@@ -259,9 +356,15 @@ SmartWrapPlan planSmartWrap(String source) {
       }
       final String seg = source.substring(a, b);
       final bool url = seg.contains('://') || seg.startsWith('www.');
-      // ★ 悬空运算符只在"**没有**强证据"时才拦（续行 `=\lim…` 有强证据 ⇒ 照旧包）
-      final bool danglingBlocks =
-          _hasDanglingOperator(seg) && !_hasStrongMathEvidence(seg);
+      // 这一段是不是"整行只有它"（缩进不算、行尾空白不算）
+      final int lineFrom = a == 0 ? 0 : source.lastIndexOf('\n', a - 1) + 1;
+      var lineTo = source.indexOf('\n', b);
+      if (lineTo < 0) lineTo = source.length;
+      final bool wholeLine = source.substring(lineFrom, a).trim().isEmpty &&
+          source.substring(b, lineTo).trim().isEmpty;
+      // ★ 悬空运算符只在"**没有**强证据"时才拦（续行 `=\lim…` 有强证据 ⇒ 照旧包）；
+      //   ★★ 2026-10-23（G2）：**整行**以运算符开头是续行（`= 1`），不拦。
+      final bool danglingBlocks = _blockedByDangling(seg, wholeLine: wholeLine);
       if (!url &&
           _hasMathEvidence(seg) &&
           _hasMathSubstance(seg) &&
