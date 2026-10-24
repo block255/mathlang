@@ -404,6 +404,26 @@ bool blockShowsCaret({
 }) =>
     caret != null && !(sharesLeftCell && caret == acceptFrom);
 
+/// ★★★ 2026-10-24（批 23）：**空行与"下一个行间块"抢同一格 ⇒ 空行让位**。
+///
+/// 用户文档（20:0x 第二组图）：`aaa` + 三个行间块，**块与块之间空一行**
+/// （`$$\n…\n$$\n\n$$\n…`）。那个空行的行首偏移**正好等于**下一块的 `acceptFrom`
+/// （行间块认领 `sliceStart - 1`，而 `sliceStart - 1` 就是这个空行自己的 `\n`）
+/// ⇒ 空行槽画一根文本光标（页面左边行首）、块画一根"块之前"边界条（块的左缘）
+/// ⇒ 屏幕上两根竖条，用户读成"两个光标"。
+///
+/// 口径（与批 21/22 的边界条同源）：**一个偏移只画一根**；两边都合法时
+/// **让块来画**（"块之前"条贴着块的左缘，正好表示"光标要进这块"）。
+/// ★ 空行**前后没有行间块**时（`nextAcceptFrom` 为 null 或与它不相等）照旧自己画 ——
+/// 否则普通空行会变成"光标消失"。
+@visibleForTesting
+bool blankLineDrawsCaret({
+  required int? caret,
+  required int blankStart,
+  required int? nextAcceptFrom,
+}) =>
+    caret == blankStart && blankStart != nextAcceptFrom;
+
 /// 供外部（状态栏 / 实验页）显示的分页统计。
 class DocViewStats {
   const DocViewStats({
@@ -1882,6 +1902,14 @@ class DocViewState extends State<DocView> {
           // ★ 段距那一截：空隙里除了"真空段落的行"之外，前面还有一段**段距**
           final double gapBefore =
               (prevUnit == null || u == null) ? 0.0 : _gapBefore(u.type);
+          // ★★ 批 23：这一行空行**是不是与下一块的 `acceptFrom` 同一格** ——
+          //   是则让给块（由它画"块之前"边界条），否则屏幕上两根竖条。
+          final bool drawsCaret = idx != null &&
+              blankLineDrawsCaret(
+                caret: _caret,
+                blankStart: run[idx],
+                nextAcceptFrom: u?.acceptFrom,
+              );
           children.add(_BlankSlot(
             id: 'blank@${run.first}',
             height: gap,
@@ -1891,9 +1919,10 @@ class DocViewState extends State<DocView> {
             lineHeight: _blankLineHeight,
             caretHere: !_hideCaret &&
                 widget.caretVisible &&
-                idx != null,
+                drawsCaret,
             // 空行的行盒从 gapBefore 起算 ⇒ 光标落在"它真正会落脚"的那一行上
-            caretDy: idx == null ? null : gapBefore + idx * _blankLineHeight,
+            caretDy:
+                drawsCaret ? gapBefore + idx * _blankLineHeight : null,
             caretHeight: textCaretHeight(_s.bodyFontSize),
             caretWidth: 1.5,
             caretColor: const Color(kCaretColorValue),
