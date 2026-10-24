@@ -77,8 +77,8 @@ void main() {
   });
 
   group('★ 既有口径不许漂', () {
-    test(r'段末仍去括号：x^{2} ⇒ x^2', () {
-      expect(normalizeTex(r'x^{2}', 1).tex, r'x^2');
+    test(r'段末也保花括号（批 11）：x^{2} ⇒ x^{2}', () {
+      expect(normalizeTex(r'x^{2}', 1).tex, r'x^{2}');
     });
 
     test(r'段中仍去括号：x^{2}+1 ⇒ x^2+1', () {

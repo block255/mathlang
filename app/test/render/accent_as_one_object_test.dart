@@ -189,13 +189,21 @@ void main() {
         expect(e.to, 3, reason: '`_2` 一起走（不能留悬空的 `_`）⇒ 剩 `x`');
       });
 
-      test(r'花括号 `x_{2}` 右端退格 ⇒ 只删内容 `2`（留合法的空组 `x_{}`，§4.1.1）', () {
+      // ★★ 2026-10-24（批 11）**这条分成了两格，理由**：用户实测「`\sum…i^{2}` 末尾退格，
+      //   不是删 i 平方，只删了指数 2」—— 花括号形式下"内容末（`}` 之前）"与"对象之后"
+      //   不是同一根像素（差 1px、层级也不同，与批 6/7 同一判据）⇒ 两者结果要分开。
+      test(r'花括号 `x_{2}` **内容末**退格 ⇒ 只删内容 `2`（留合法的空组 `x_{}`，§4.1.1）', () {
         final CaretSiteTable t = buildCaretSites(r'x_{2}');
-        for (final int rel in <int>[4, 5]) { // 内容末尾 4 / 挂件末尾 5
-          final SmartEdit e = smartBackspace(t, rel);
-          expect(e.from, 3, reason: 'rel=$rel');
-          expect(e.to, 4, reason: 'rel=$rel：**同一根像素 ⇒ 同一结果**（§3.3）');
-        }
+        final SmartEdit e = smartBackspace(t, 4); // 内容末尾（`}` 之前）
+        expect(e.from, 3);
+        expect(e.to, 4, reason: '在**指数/下标里面**删内容，§4.1.1 口径不变');
+      });
+
+      test(r'★ 花括号 `x_{2}` **对象之后**退格 ⇒ 整个 `x_{2}`（乙口径：字形 + 挂件 = 一个对象）', () {
+        final CaretSiteTable t = buildCaretSites(r'x_{2}');
+        final SmartEdit e = smartBackspace(t, 5); // 挂件末尾（`}` 之后 = 对象层）
+        expect(e.from, 0);
+        expect(e.to, 5, reason: '改前只删 `2`、留 `x_{}`；用户要的是"删掉整个 i 平方"');
       });
 
       test(r'`x_{2}` 在"内容首"（`2` 之前）按 `Delete` ⇒ 只删 `2`，留 `x_{}`', () {

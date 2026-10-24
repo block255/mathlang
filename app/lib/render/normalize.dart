@@ -81,7 +81,11 @@ class NormalizeResult {
 bool _isContainerTailScript(String tex, SlotSpan s) {
   var i = s.end;
   if (s.start > 0 && tex[s.start - 1] == '{') i++; // 跳过自己的 `}`
-  if (i >= tex.length) return false;
+  // ★★★ 2026-10-24（批 11 · 用户拍板 A）：**段末也算容器尾**。
+  //   当年为"源码简洁"保留段末去括号，代价是：**整段末尾**那个挂件的"内容之后"
+  //   与"公式末尾"并成同一个字节 ⇒ 用户"点不到公式末尾那一格"（2026-10-24 四张图）。
+  //   现在三处判据统一：**容器尾 / 组尾 / 段末**。
+  if (i >= tex.length) return true;
   if (tex[i] == '}') return true; // 关结构槽
   final String rest = tex.substring(i);
   return rest.startsWith(r'\right') ||

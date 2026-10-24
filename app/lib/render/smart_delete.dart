@@ -217,6 +217,14 @@ class _Attachment {
   _Attachment? inner;
   var innerAtEnd = false;
   for (final _Attachment a in all) {
+    // ★★★ 2026-10-24（批 11）：**脚本的"右端"只认内容末（`}` 之前那一格）**。
+    //
+    // 原来 `a.span.end`（`}` 之后）也算右端 ⇒ "对象之后"与"内容之后"给同一个删除结果
+    // （删内容 `2`、留空壳 `x^{}`）。用户实测（`\sum…i^{2}` 末尾退格）：
+    // 「不是删 i 平方，而是只删了指数 2」—— 他要的是**整个对象**一次删掉。
+    // 按 批 6/7 的口径：花括号形式下这两格**不是同一根像素**（差 1px、层级也不同）
+    // ⇒ "对象之后"应当走常规路径（删左边最近的**对象** = `i^{2}` 整块）。
+    // ★ 脚本仍然只拦右端；accent 保持"两端都拦"（`\hat` 套在基座**上面** ⇒ 两端真的同像素）。
     final bool atEnd = rel == a.cEnd || rel == a.span.end;
     final bool atStart = rel == a.cStart || rel == a.span.start;
     if (!atEnd && !atStart) continue;
@@ -368,6 +376,15 @@ SmartEdit smartBackspace(CaretSiteTable t, int rel) {
       return SmartEdit.remove(a.span.start, a.span.end, a.span.start);
     }
     if (att.atEnd) {
+      // ★★★ 2026-10-24（批 11 · 用户实测）：「`\sum…i^{2}` 末尾退格，不是删 i 平方，
+      //   只删了指数 2」—— 那一格是**对象之后**（`}` 之后），该和"基座与挂件之间"
+      //   给同一个结果：**整个对象（基座 + 挂件）一起走**（乙口径：字形 + 挂件 = 一个对象）。
+      //   ★ 而 `}` **之前**那一格（内容末）仍然是 §4.1.1 的"删内容留空壳"。
+      //   ★★ 只对**花括号形式**生效（`a.span.end != a.cEnd`）：裸参数 `x_2` 里
+      //      "内容末"与"挂件末"**真的是同一根像素** ⇒ 保持老口径「删挂件、基座留下」（用户选的甲）。
+      if (a.isScript && s.offset == a.span.end && a.span.end != a.cEnd) {
+        return smartBackspace(t, a.span.start);
+      }
       if (!a.isScript && _contentAtoms(t.tex, a) <= 1) {
         return SmartEdit.remove(a.span.start, a.span.end, a.span.start);
       }

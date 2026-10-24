@@ -41,13 +41,15 @@ void main() {
   });
 
   group('② 多余花括号：**只在去掉后仍是单原子时**去', () {
-    test(r'x^{2} → x^2 ✅', () {
+    // ★★ 2026-10-24（批 11 · 用户拍板 A）：**段末也保花括号** ——
+    //   理由：段末那个挂件的"内容之后"与"公式末尾"会并成同一个字节 ⇒ 用户点不到公式末尾那一格。
+    test(r'段末不去括号（批 11）：x^{2} ⇒ x^{2}', () {
       final NormalizeResult r = normalizeTex(r'x^{2}', 1);
-      expect(r.tex, r'x^2');
+      expect(r.tex, r'x^{2}');
     });
 
-    test(r'x_{i} → x_i ✅', () {
-      expect(normalizeTex(r'x_{i}', 1).tex, r'x_i');
+    test(r'x_{i} ⇒ **不动**（段末，批 11）', () {
+      expect(normalizeTex(r'x_{i}', 1).tex, r'x_{i}');
     });
 
     test(r'x^{2n} → **不动** ❌（两个原子）', () {
@@ -56,8 +58,8 @@ void main() {
       expect(r.changed, isFalse);
     });
 
-    test(r'x^{\alpha} → x^\alpha ✅（命令算一个原子）', () {
-      expect(normalizeTex(r'x^{\alpha}', 1).tex, r'x^\alpha');
+    test(r'x^{\alpha} ⇒ **不动**（段末，批 11）', () {
+      expect(normalizeTex(r'x^{\alpha}', 1).tex, r'x^{\alpha}');
     });
 
     test(r'x^{\frac{a}{b}} → 不动（结构不是"单原子"）', () {
@@ -88,9 +90,10 @@ void main() {
     });
 
     test('去花括号后光标跟着内容走（不能偏出内容）', () {
-      const String src = r'x^{2}';
+      // ★ 批 11 之后这一条改成**段中**的用例（段末不再去括号）
+      const String src = r'x^{2}+1';
       final NormalizeResult r = normalizeTex(src, 4); // 光标在 2 之后（`}` 之前）
-      expect(r.tex, r'x^2');
+      expect(r.tex, r'x^2+1');
       expect(r.caret, 3, reason: '原来在 2 之后 → 现在也在 2 之后');
     });
   });
