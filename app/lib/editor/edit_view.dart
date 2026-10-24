@@ -545,6 +545,12 @@ class EditViewState extends State<EditView> {
   }
 
   /// 光标前（同一段数学里）有没有可以当基座的可见原子
+  ///
+  /// ⏳ 2026-10-24（批 13）**记账**：这一条应当改成"**同一个容器里**"——
+  /// 现在它看整段 tex，于是 `x^{|2}`（光标在脚本内容开头）会误判成"有基座"，
+  /// 插进去得到 `x^{^{}2}`（没有基座的 `^{}`）⇒ 公式不完整。
+  /// 但光改这里不够：`planInsert` 的 `neutralPoint` 会把落点**从基座后面挪进脚本内部**，
+  /// 所以判据必须在**挪完之后**再问一次 —— 那是"插入落点"那一批的活，见台账 §14.7 批 13。
   bool _hasBaseAtom() {
     final MathRegion? r = mathRegionAt(_buf.buf, _buf.caret);
     if (r == null) return false;

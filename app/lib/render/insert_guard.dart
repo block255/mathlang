@@ -45,6 +45,7 @@
 import '../core/block.dart';
 import 'caret_sites.dart';
 import 'math_nav.dart';
+import 'smart_delete.dart' show StructureUnit, structureUnits;
 
 /// ★★ 规则 ④ 的产物：**载荷边界要补的换行**（见 [planInsert] 的说明）。
 ///
@@ -180,7 +181,7 @@ InsertPlan _planCore(String source, int o, String text) {
 
   if (!text.contains('\n')) {
     // ★★ 规则 ②：非换行插入也要过"结构中性"这一关（2026-10-17）
-    final InsertPlan? neutral = _neutralInsert(source, o);
+    final InsertPlan? neutral = _neutralInsert(source, o, text);
     if (neutral != null) return neutral;
     return InsertPlan.keep(o);
   }
@@ -361,11 +362,45 @@ int _afterLine(String src, int o) {
 }
 
 /// 插入点落在语法粘合处时，按 [neutralPoint] 给出的**中性落点**做计划；不需要调整返回 null。
-InsertPlan? _neutralInsert(String source, int o) {
+InsertPlan? _neutralInsert(String source, int o, String text) {
   final MathRegion? r = mathRegionAt(source, o);
   if (r == null) return null;
   final int rel = o - r.contentStart;
   if (rel < 0 || rel > r.tex.length) return null;
+
+  // ★★★ 2026-10-24（批 13）：**`\sqrt[…]` 的可选参数里不许插结构/脚本**。
+  //
+  // 用户实测（`\left|{x+1+\sqrt[4]{x}}\right|`）：在根号里按 `Shift+6` 打指数 ⇒
+  // 「变成**公式不完整**」。实测：插入点若落在 `[4]` 里，会得到 `\sqrt[^{}4]{x}`
+  // —— 可选参数是"尺寸/次数"，里面出现没有基座的 `^{}` 直接解析失败。
+  // 口径：**里面的位点保留**（点 `4` 改成 `3` 必须能原地改），
+  //   只有**结构类载荷**（`^` `_` `\`）才"出槽" —— 挪到 `]` 之后。
+  if (text.contains('^') || text.contains('_') || text.contains(r'\')) {
+    final CaretSiteTable st = buildCaretSites(r.tex);
+    for (final SlotSpan s in st.slots) {
+      if (s.path.isEmpty) continue;
+      final SlotStep last = s.path.last;
+      if (last.command != 'sqrt' || last.argIndex != -1) continue; // 只认可选参数
+      // 防线要连 `[` `]` 一起包住：`\sqrt` 与 `[` 之间、`]` 之后都不许落结构
+      if (rel < s.start - 1 || rel > s.end + 1) continue;
+      // `]` 之后仍然是**根号的里面**（还没给它内容）⇒ 也不许（`\sqrt[4]^{}` 非法）
+      // 正确落点 = **整个根号之后**（`\sqrt[4]{x}^{}`，合法：给整个根号加指数）
+      int target = s.end + 1;
+      for (final StructureUnit u in structureUnits(st)) {
+        if (rel >= u.start && rel < u.end) {
+          target = u.end;
+          break;
+        }
+      }
+      return InsertPlan(
+        r.contentStart + target,
+        moved: true,
+        why: r'插入点落在 `\sqrt[…]` 的次数里 ⇒ 结构类插入挪到**整个根号之后**'
+            '（次数里放 `^{}` 会解析失败）',
+      );
+    }
+  }
+
   final NeutralPoint np = neutralPoint(r.tex, rel);
   if (np.wrap == null && np.at == rel) return null;
   final ({int start, int end})? wrap = np.wrap == null
