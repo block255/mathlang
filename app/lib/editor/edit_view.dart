@@ -1058,8 +1058,15 @@ class EditViewState extends State<EditView> {
   /// 删一个区间（内部走「删空数学段 ⇒ 连定界符」那条判据）—— 选区删除 / 剪切共用。
   void _deleteRange(int from, int to) {
     _breakUndoGroup(); // 选区删除/剪切独占一步
-    final SmartEdit ed =
-        reclaimEmptiedMath(_buf.buf, SmartEdit.remove(from, to, from));
+    // ★★★ 2026-10-24（用户实测"拖选删掉已有分段 ⇒ 显示公式不完整"）：
+    //   选区跨进数学段却只删了一半 ⇒ `\begin{cases}` 留一半、`\end{cases}` 被删掉
+    //   ⇒ 引擎解析失败 ⇒ 页面上红字 `[公式不完整]`。
+    //   ⇒ 删之前先把区间**扩到自洽边界**（与复制/剪切同一套规则 `clipboardSlice`）：
+    //     · 端点落在某个 `$…$` / `$$…$$` **内部** ⇒ 扩到那一段的边界；
+    //     · 整段都在公式内部 ⇒ 不动（照旧删内容）。
+    final ClipboardSlice sl = clipboardSlice(_buf.buf, from, to);
+    final SmartEdit ed = reclaimEmptiedMath(
+        _buf.buf, SmartEdit.remove(sl.start, sl.end, sl.start));
     _mutate(() => _buf.replace(ed.from!, ed.to!, ''));
     if (_buf.caret != ed.caret) _buf.setCaret(ed.caret);
   }
