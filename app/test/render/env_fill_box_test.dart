@@ -99,5 +99,10 @@ void main() {
         .firstWhere((LeafBox b) => (b.text ?? '').trim() == '=');
     expect(pads.first.rect.left, greaterThanOrEqualTo(eq.rect.right),
         reason: '框的左缘必须退到 `=` 右缘之后（改前：框 x=20..35.6，`=` 也是 20..35.6 ⇒ 盖上了）');
+    // ★★ 再续（用户第二张图）：框还得**有宽度** —— `&=` 的右格只有那个 `=`，
+    //   `=` 右边本来 0 宽 ⇒ 框退到 `=` 右缘后就成了"一根竖条"。
+    //   现在给填区一个最小宽度 = 1em（与空格子的 1em 预留同宽）⇒ 左右两个框一样宽。
+    expect(pads.first.rect.width, greaterThanOrEqualTo(19.0),
+        reason: '改前 ≈0 宽（用户："直接快变成了一个竖条"）');
   });
 }

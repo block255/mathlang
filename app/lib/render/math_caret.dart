@@ -349,10 +349,14 @@ class _MathWithCaretState extends State<MathWithCaret> {
             // ★★★ 2026-10-24（批 19 · F1-c 续，用户四张图）：**框只圈"填区"，不许盖在等号身上**。
             //   用户原话：「你这个右部框直接画在了等号身上」。右格的填区在 `=` **右边**，
             //   所以框的左缘要退到 `=` 的右缘之后（`+1` 是留一点缝，别贴着）。
-            final Rect fillArea = alignedEq == null
-                ? box
-                : Rect.fromLTRB(
-                    alignedEq.rect.right + 1.0, box.top, box.right, box.bottom);
+            // ★★ 再续（同一轮第二张图）：「右边的框一点宽度都没有，直接快变成了一个竖条」——
+            //   `&=` 的右格**只有那个 `=`**，`=` 右边本来 0 宽（空格子才被注入 1em 预留垫）
+            //   ⇒ 框退到 `=` 右缘后就没宽度了。这里给填区一个**最小宽度 = 1em**
+            //   （与空格子的 1em 预留同宽），只影响**画框**、不改排版（框是纯绘制的）。
+            final double minW = widget.fontSize;
+            final double left = alignedEq == null ? box.left : alignedEq.rect.right + 1.0;
+            final double right = math.max(box.right, left + minW);
+            final Rect fillArea = Rect.fromLTRB(left, box.top, right, box.bottom);
             envBox = fillArea;
             pads.add(SlotPad(fillArea, current: true));
           }

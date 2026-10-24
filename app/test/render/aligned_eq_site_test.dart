@@ -9,6 +9,7 @@
 //   点击仍能落（位点保留），与"粘合位点"同一口径。
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:mathlang/render/env_cells.dart';
 import 'package:mathlang/render/math_nav.dart';
 
 const String kTex = r'\begin{aligned}&=\\&=\end{aligned}';
@@ -69,5 +70,15 @@ void main() {
     }
     expect(seq.contains(1), isTrue, reason: r'`=` 之前仍要停（`a|=`）：$seq');
     expect(seq.contains(2), isTrue, reason: r'`=` 之后仍要停（`a=|b`）：$seq');
+  });
+
+  test(r'★★ 点右格 ⇒ 落点要在 `=` **之后**（否则点一下再打字就把 `=` 推走）', () {
+    // 用户实测：点"对齐推导右格"落在 `=` 之前，打 `x` 得到 `&x=` ⇒ 内容进第 2 列 ⇒ 等号不齐
+    final int? start = envCellOffset(kTex, const EnvCellHit(0, 1, atEnd: false));
+    expect(start, 17, reason: r'格(0,1) 的内容是 `=` ⇒ 内容首应为 17（`=` 之后），实际 $start');
+    final int? end = envCellOffset(kTex, const EnvCellHit(0, 1, atEnd: true));
+    expect(end, 17, reason: '该格 `=` 之后没有内容 ⇒ 末尾也是 17，实际 $end');
+    // 左格（真的空）不受影响：内容首仍是 `&` 的位置 15
+    expect(envCellOffset(kTex, const EnvCellHit(0, 0, atEnd: false)), 15);
   });
 }

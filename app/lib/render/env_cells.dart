@@ -628,6 +628,17 @@ int? envCellOffset(String sourceTex, EnvCellHit hit) {
   while (b > a && (sourceTex[b - 1] == ' ' || sourceTex[b - 1] == '\t')) {
     b--;
   }
+  // ★★★ 2026-10-24（批 19 续，用户四张图）：**`&=` 的那个 `=` 是列分隔记号，不是该格的第一个可填字符**。
+  //   用户实测：点"对齐推导的右格"⇒ 落点停在 `=` **之前** ⇒ 一打字 `x` 就插在 `=` 前头
+  //   ⇒ 那一行变成 `&x=`（内容进第 2 列、`=` 被推到 x 后面）⇒ 各行 `=` 对不齐。
+  //   ⇒ 该格的"内容首"挪到 `=` **之后**（窄口径：只认**紧跟在 `&` 后面**的那个 `=`）。
+  //   `atEnd` 不受影响（末尾本来就是 `=` 之后）。
+  if (a < best.end &&
+      sourceTex[a] == '=' &&
+      best.start > 0 &&
+      sourceTex[best.start - 1] == '&') {
+    a += 1;
+  }
   return hit.atEnd ? b : a;
 }
 
