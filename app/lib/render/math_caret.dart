@@ -134,6 +134,10 @@ class _MathWithCaretState extends State<MathWithCaret> {
   /// ★ 测试钩子（U3 守卫读它）：**这一帧真正算出来的竖条矩形**（本组件坐标系）
   @visibleForTesting
   Rect? get debugCaretBar => _bar;
+
+  /// ★ 测试钩子（批 19）：这一帧算出来的**空槽/格框垫子**（含"当前格"的格框）
+  @visibleForTesting
+  List<SlotPad> get debugPads => _pads;
   /// 竖条的矩形（相对本盒；帧末量出来；`null` = 还没量到 / 光标不在这段里）
   Rect? _bar;
 
@@ -316,11 +320,23 @@ class _MathWithCaretState extends State<MathWithCaret> {
         final Rect? box = envCellBoxIn(grid, cell.row, cell.col);
         if (box != null && box.inflate(3).contains(at)) {
           final List<LeafBox> boxes = scanLeafBoxes(root).eligible;
-          final bool hasGlyph = boxes.any((LeafBox b) =>
-              b.kind == LeafBoxKind.glyph &&
-              (b.text ?? '').trim().isNotEmpty &&
-              box.inflate(1).contains(b.rect.center));
-          if (!hasGlyph) {
+          // ★★★ 2026-10-24（批 19 · F1-c）：**模板自带的对齐记号不算"用户填的内容"**。
+          //
+          // 用户实测（`aligned` 模板 `&=\\&=`，四个填点）：光标进"第 1 行左格"**有框**，
+          //   进"第 1 行右格"**没有框** —— 因为右格的内容就是那个 `=`（`&=` 的 `=` 属于第 2 列），
+          //   而旧判据是"格里有字形 ⇒ 不画框" ⇒ 右格永远不画 ⇒ 左右不对称。
+          // 判据（**窄口径**，用户 2026-10-24 定）：**紧贴格左缘的那个 `=`** 是对齐记号、
+          //   不算内容；其余任何字形（数字 / 字母 / 别的 `=`）都算
+          //   ⇒ 一旦格里填了真东西就不再画框（不做"光标在不在都画"）。
+          final bool hasContent = boxes.any((LeafBox b) {
+            if (b.kind != LeafBoxKind.glyph) return false;
+            if (!box.inflate(1).contains(b.rect.center)) return false;
+            final String t = (b.text ?? '').trim();
+            if (t.isEmpty) return false;
+            if (t == '=' && (b.rect.left - box.left).abs() <= 1.5) return false;
+            return true;
+          });
+          if (!hasContent) {
             envBox = box;
             pads.add(SlotPad(box, current: true));
           }

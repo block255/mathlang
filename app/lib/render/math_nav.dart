@@ -194,6 +194,12 @@ int nextCaretOffset(String source, int offset) {
       continue;
     }
     final int off = t.sites[next].offset;
+    // ★★★ 2026-10-24（批 19 · F1-a）：`&=` 的那个 `=` **之前**不是填点 ⇒ 一步跨过。
+    //   （判据与理由见 [_isAlignedEqSite]）
+    if (_isAlignedEqSite(r.tex, off)) {
+      next++;
+      continue;
+    }
     // ★ 注：`}` 之后那一格与内容末尾**同一根像素**（括号不可见）—— 但**不统一跳**：
     //   2026-10-15 用户扫出来的"金表"（`\sum_{i=1}^{n}a_i`）明确要求 14 那一格**要停**，
     //   统一跳会把它抹掉。D2 只对下面这两族用"同一根像素"规则。
@@ -323,6 +329,12 @@ const Set<String> _kFontOnlyCommands = <String>{
 ///
 /// 为什么不能直接比 `path`：`\text{当}` 的内容槽是 `text#0`，而"`\text` 之前"是主行 ——
 /// 结构上不同槽，**视觉上是同一层、同一根基线**（实测两站竖条完全相同）。
+///
+/// ★★★ 2026-10-24（批 19 · F1-a 连带）：**环境格子的 `row`/`col` 必须比**
+///   （与 [_samePath] 同一套）。原来只比 `command`+`argIndex` ⇒ `aligned` 第 1 行右格
+///   `aligned(0,1)` 与第 2 行左格 `aligned(1,0)` 被当成"同一层"，而两格之间只隔着 `\\`
+///   （隐形）⇒ `→` 把**第 2 行左格整格跳掉**（实测序列 `[0,15,17,21,34]`，19 没了）
+///   ⇒ 那一格只能靠点，方向键进不去。补上 row/col 之后序列变 `[0,15,17,19,21,34]` ✓。
 bool _sameVisualLayer(List<SlotStep> a, List<SlotStep> b) {
   final List<SlotStep> x = a
       .where((SlotStep s) => !_kFontOnlyCommands.contains(s.command))
@@ -332,7 +344,10 @@ bool _sameVisualLayer(List<SlotStep> a, List<SlotStep> b) {
       .toList();
   if (x.length != y.length) return false;
   for (var i = 0; i < x.length; i++) {
-    if (x[i].command != y[i].command || x[i].argIndex != y[i].argIndex) {
+    if (x[i].command != y[i].command ||
+        x[i].argIndex != y[i].argIndex ||
+        x[i].row != y[i].row ||
+        x[i].col != y[i].col) {
       return false;
     }
   }
@@ -402,6 +417,20 @@ bool _scriptAfterRightDelim(String tex, int off) {
   return false;
 }
 
+/// ★★★ 2026-10-24（批 19 · F1-a）：**紧跟在 `&` 后面的那个 `=` 不是填点**。
+///
+/// `aligned` 这类环境里 `&` 是**列分隔点**：左边 = 右对齐列，右边 = 左对齐列；
+/// **`=` 没有独立位**，它属于**第 2 列的开头**（第 2 列的左边缘 = 第 1 列里最宽那一行的宽度）。
+/// 所以"右格"真正要填的位置是 **`=` 之后**。
+///
+/// 停在 `=` **之前**再打字 ⇒ 内容插在 `=` 前头 ⇒ 那一行的"左式 / 等号 / 右式"三列错位
+/// ⇒ 各行等号对不齐（用户 2026-10-23 反馈 F1 的截图：四行全左端对齐）。
+///
+/// ★ 只让**方向键**跳过（点击仍能落在这里）—— 与"粘合位点"同一口径：
+///   位点保留给点击/吸附，`→`/`←` 不让它白吃一步。
+bool _isAlignedEqSite(String tex, int off) =>
+    off > 0 && off < tex.length && tex[off] == '=' && tex[off - 1] == '&';
+
 /// `←`：上一个文档级光标落点（与 [nextCaretOffset] 镜像）。
 int prevCaretOffset(String source, int offset) {
   final int o = offset.clamp(0, source.length);
@@ -423,6 +452,11 @@ int prevCaretOffset(String source, int offset) {
   var back = i - 1;
   while (back >= 0) {
     if (t.sites[back].glue) {
+      back--;
+      continue;
+    }
+    // ★★★ 2026-10-24（批 19 · F1-a）：`&=` 的 `=` 之前不是填点（与 `→` 对称）
+    if (_isAlignedEqSite(r.tex, t.sites[back].offset)) {
       back--;
       continue;
     }
