@@ -910,13 +910,30 @@ class DocViewState extends State<DocView> {
       //   `env_click_test` ⑧/⑪ 与 `math_blank_landing_test` ③-B 钉住的落点（它们要的是
       //   "公式之后"那一格，而返回 null 会走到页面层的另一条兜底）⇒ **先保持原样**，
       //   等"块外落点"在单元层统一处理时一起改。见后优化清单 §14.7 H6′。
-      // ⏳ 2026-10-24（批 19）：**F1-b「盒右缘外但仍在行带内 ⇒ 落该行末尾」暂缓**。
-      //   想要的语义已想清（按 `EnvGrid.rowBand` 判竖直位置、落那一行的 `maxCol` 末尾），
-      //   但这条分支拿到的 `root` 是**内层 Math 盒**、而外侧留白的判定又在这里，
-      //   实测点"块右侧 + 12px"时实测落点既不进行带分支、也不等于 `tex.length`（得到 33），
-      //   说明尺寸链/入口还有一处没探清 ⇒ **不许猜着改**（本仓踩过"两份判据打架"）。
-      //   下一批先用探针把"tap → 分支"的链路打出来，再一次性改 `env_click_test` ⑧/⑪。
-      if (localPos.dx > root.size.width + 2) return tex.length;
+      // ★★★ 2026-10-24（批 19 · F1-b）：**多行环境里，点落在某条行带内 ⇒ 落那一行的末尾**。
+      //   旧口径（批 11 ③"点外侧 ⇒ 块内末尾"）对多行块太粗：`cases` 两段里想接着写**第一段**，
+      //   点它右边留白 ⇒ 光标跳到整块最后。现在按**竖直位置**判：哪条行带里就落那一行的末尾
+      //   （= 该行最后一格的内容末尾，**不是**块末尾 —— 末行的行末在 `\end{…}` 之前）；行带之外才落块末尾。
+      if (localPos.dx > root.size.width + 2) {
+        if (hasEnv(tex)) {
+          final EnvGrid? grid = buildEnvGrid(
+              root: root,
+              tex: renderTex,
+              displayStyle: displayStyle,
+              fontSize: fontSize ?? 20);
+          if (grid != null) {
+            for (var r = 0; r <= grid.maxRow; r++) {
+              final Rect? band = grid.rowBand[r];
+              if (band == null) continue;
+              if (localPos.dy < band.top || localPos.dy > band.bottom) continue;
+              final int? rowEnd =
+                  envCellOffset(tex, EnvCellHit(r, grid.maxCol, atEnd: true));
+              if (rowEnd != null) return rowEnd;
+            }
+          }
+        }
+        return tex.length;
+      }
     } else {
       // ★★ 2026-10-19（L18；用户选 **方案 B**：**行内公式左边缘 4 px 命中带**）——
       //   探针实测（行内公式在**行首**）：点它左缘 **0 px** ⇒ 落进公式**内部**（offset 7）；

@@ -9,6 +9,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_math_fork/flutter_math.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:mathlang/render/leaf_boxes.dart';
 import 'package:mathlang/render/math_caret.dart';
 import 'package:mathlang/render/slot_marks.dart';
 
@@ -67,5 +68,36 @@ void main() {
   testWidgets('★ 格里填了真内容 ⇒ 不画框（"不用有字还画"）', (WidgetTester tester) async {
     // `a` 填在第 1 行左格 ⇒ 那一格不该再画框
     expect(await boxesAt(tester, r'\begin{aligned}a&=b\\c&=d\end{aligned}', 16), 0);
+  });
+
+  testWidgets(r'★★ 右格的框**不许盖在等号身上**（用户 2026-10-24 四张图）',
+      (WidgetTester tester) async {
+    final GlobalKey key = GlobalKey();
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: Center(
+          child: MathWithCaret(
+            tex: renderMathTex(kTemplate, caretRel: 17),
+            showCaret: true,
+            mathKey: key,
+            mathStyle: MathStyle.display,
+            textFontSize: 20,
+            fontSize: 20,
+          ),
+        ),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    final State<MathWithCaret> st = tester.state(find.byType(MathWithCaret));
+    final List<SlotPad> pads =
+        (st as dynamic).debugPads as List<SlotPad>;
+    expect(pads, isNotEmpty, reason: '右格应当有框');
+    // 找那个 `=`（对齐记号）的字形盒
+    final RenderObject root = key.currentContext!.findRenderObject()!;
+    final LeafBox eq = scanLeafBoxes(root)
+        .eligible
+        .firstWhere((LeafBox b) => (b.text ?? '').trim() == '=');
+    expect(pads.first.rect.left, greaterThanOrEqualTo(eq.rect.right),
+        reason: '框的左缘必须退到 `=` 右缘之后（改前：框 x=20..35.6，`=` 也是 20..35.6 ⇒ 盖上了）');
   });
 }

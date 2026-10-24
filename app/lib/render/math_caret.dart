@@ -328,17 +328,33 @@ class _MathWithCaretState extends State<MathWithCaret> {
           // 判据（**窄口径**，用户 2026-10-24 定）：**紧贴格左缘的那个 `=`** 是对齐记号、
           //   不算内容；其余任何字形（数字 / 字母 / 别的 `=`）都算
           //   ⇒ 一旦格里填了真东西就不再画框（不做"光标在不在都画"）。
+          LeafBox? alignedEq;
+          for (final LeafBox b in boxes) {
+            if (b.kind != LeafBoxKind.glyph) continue;
+            if (!box.inflate(1).contains(b.rect.center)) continue;
+            if ((b.text ?? '').trim() != '=') continue;
+            if ((b.rect.left - box.left).abs() > 1.5) continue;
+            alignedEq = b;
+            break;
+          }
           final bool hasContent = boxes.any((LeafBox b) {
             if (b.kind != LeafBoxKind.glyph) return false;
             if (!box.inflate(1).contains(b.rect.center)) return false;
             final String t = (b.text ?? '').trim();
             if (t.isEmpty) return false;
-            if (t == '=' && (b.rect.left - box.left).abs() <= 1.5) return false;
+            if (identical(b, alignedEq)) return false;
             return true;
           });
           if (!hasContent) {
-            envBox = box;
-            pads.add(SlotPad(box, current: true));
+            // ★★★ 2026-10-24（批 19 · F1-c 续，用户四张图）：**框只圈"填区"，不许盖在等号身上**。
+            //   用户原话：「你这个右部框直接画在了等号身上」。右格的填区在 `=` **右边**，
+            //   所以框的左缘要退到 `=` 的右缘之后（`+1` 是留一点缝，别贴着）。
+            final Rect fillArea = alignedEq == null
+                ? box
+                : Rect.fromLTRB(
+                    alignedEq.rect.right + 1.0, box.top, box.right, box.bottom);
+            envBox = fillArea;
+            pads.add(SlotPad(fillArea, current: true));
           }
         }
       }
