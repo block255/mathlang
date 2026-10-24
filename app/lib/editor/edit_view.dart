@@ -24,6 +24,7 @@ import '../core/doc_settings.dart';
 import '../core/text_normalize.dart';
 import '../lang/auto_expand.dart';
 import '../lang/block_ops.dart';
+import '../lang/break_split.dart';
 import '../lang/clipboard_slice.dart';
 import '../lang/math_spans.dart';
 import '../lang/paste_context.dart';
@@ -346,6 +347,11 @@ class EditViewState extends State<EditView> {
     //     · 结构内部（`\frac{}{}` 的分子里、上下标里）⇒ **不切**，交给 `insert_guard` 推到块后；
     //     · 行间块内部 ⇒ 同上（display 是块级单元，不切）。
     if (_splitInlineMathOnEnter(rawText)) return;
+    // ★★★ 2026-10-24（批 18）：**汉字 / 全角标点 = 断点**（平权 · 推论 ④「围栏不是对象边界」）。
+    //   用户口径（2026-10-24 拍板）：行内公式**顶层**打汉字 ⇒ 把这一段**拆成两半**
+    //   （`$左$` + 汉字 + `$右$`，汉字落文本层）；结构槽里 / 行间块里 ⇒ 接受数学字体。
+    //   纯函数与自检在 `lang/break_split.dart`（那边的注释写全了判据与理由）。
+    if (_splitInlineMathOnBreakChar(rawText)) return;
     // ★★ S4-c：**自动展开**（打字即渲染）先于插入守门人 —— 因为它是"改写用户刚打的那几个字符"，
     //   不是"往后插一段东西"。三条（`/`→分式、词触发、`>=`→`\ge`）都只对**单字符/终止符**生效，
     //   粘贴这种多字符载荷一律不参与（`planAutoExpand` 自己会拒）。
@@ -696,6 +702,29 @@ class EditViewState extends State<EditView> {
     final String repl = '\$$left\$\n\n\$$right\$';
     _mutate(() => _buf.replace(r.openStart, r.closeEnd, repl));
     _buf.setCaret(r.openStart + 1 + left.length + 2 + 1);
+    _pokeBlink();
+    return true;
+  }
+
+  /// **行内公式顶层打汉字 / 全角标点 ⇒ 拆段，字落文本层**（批 18，2026-10-24 用户拍板）。
+  ///
+  /// 规则与自检全在 `lang/break_split.dart`（纯函数、可全域断言）：这里只负责接线，
+  /// 并且**一次 `replace` 写完** ⇒ 一步撤销（与"Enter 断栅栏"同一套）。
+  ///
+  /// 返回 true = 已经处理掉（调用方立刻 return，不再走自动展开/插入守门人）；
+  /// 返回 false = 不归这条管（结构槽里 / 行间块 / 边界不拆的情形 / 混合载荷）。
+  bool _splitInlineMathOnBreakChar(String raw) {
+    if (!isAllBreakChars(raw)) return false;
+    final BreakSplit? plan = planBreakSplit(
+      doc: _buf.buf,
+      caret: _buf.caret,
+      selStart: _buf.hasSelection ? _buf.selectionStart : _buf.caret,
+      selEnd: _buf.hasSelection ? _buf.selectionEnd : _buf.caret,
+      payload: raw,
+    );
+    if (plan == null) return false;
+    _mutate(() => _buf.replace(plan.from, plan.to, plan.text));
+    _buf.setCaret(plan.caret);
     _pokeBlink();
     return true;
   }
