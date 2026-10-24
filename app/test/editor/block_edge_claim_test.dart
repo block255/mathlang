@@ -67,12 +67,26 @@ void main() {
     }
   });
 
-  test('★ 光标为 null ⇒ 都不画', () {
-    final ({bool before, bool after}) c = blockEdgeClaim(
-        caret: null,
-        acceptFrom: acceptFrom,
-        acceptTo: acceptTo,
-        sharesLeftCell: false);
-    expect(c.before || c.after, isFalse);
+  test('★★ 共享那一格**只有一个块画光标**（用户：点两个分段中间出现两根）', () {
+    // A 的 acceptTo = B 的 acceptFrom = 同一个偏移 ⇒ 两块都认领 ⇒ 两个 MathWithCaret 都 showCaret
+    expect(
+        blockShowsCaret(
+            caret: acceptFrom, acceptFrom: acceptFrom, sharesLeftCell: true),
+        isFalse,
+        reason: '共享格让给左边那块 ⇒ 本块不画（改前：两块都画 ⇒ 屏幕两根光标）');
+    // 左邻不是行间块 / 光标不在那一格 ⇒ 照常画
+    expect(
+        blockShowsCaret(
+            caret: acceptFrom, acceptFrom: acceptFrom, sharesLeftCell: false),
+        isTrue);
+    expect(
+        blockShowsCaret(
+            caret: acceptTo, acceptFrom: acceptFrom, sharesLeftCell: true),
+        isTrue,
+        reason: '共享的是"块之前"，"块之后"不受影响');
+    expect(
+        blockShowsCaret(
+            caret: null, acceptFrom: acceptFrom, sharesLeftCell: true),
+        isFalse);
   });
 }

@@ -389,6 +389,21 @@ class _Unit {
       after: caret != null && caret == acceptTo,
     );
 
+/// ★★★ 2026-10-24（批 22）：**这一块要不要把光标画出来**。
+///
+/// 用户实测「点两个分段的花括号中间那一块，出现两个光标」—— 不是边界竖条那套，
+/// 而是**两个单元的认领区间在那一格重叠**：A 的 `acceptTo` 与 B 的 `acceptFrom` 是同一个偏移
+/// （两块之间只有一个 `\n`）⇒ 两个 `MathWithCaret` 都 `showCaret = true`
+/// ⇒ 一根画在 A 的 tex 末尾、一根画在 B 的 tex 开头 ⇒ 屏幕上两根。
+/// ⇒ 共享那一格**只归左边那块**（右边那块不画）。
+@visibleForTesting
+bool blockShowsCaret({
+  required int? caret,
+  required int acceptFrom,
+  required bool sharesLeftCell,
+}) =>
+    caret != null && !(sharesLeftCell && caret == acceptFrom);
+
 /// 供外部（状态栏 / 实验页）显示的分页统计。
 class DocViewStats {
   const DocViewStats({
@@ -1525,7 +1540,11 @@ class DocViewState extends State<DocView> {
             child: EmptyMathMark(
               width: display * 1.2,
               height: display * 1.1,
-              showCaret: caretAbs != null,
+              // ★ 批 22：共享那一格让给左边那块 ⇒ 本块不画（否则屏幕上两根光标）
+            showCaret: blockShowsCaret(
+                caret: rawCaret,
+                acceptFrom: u.acceptFrom,
+                sharesLeftCell: sharesLeftCell),
               // ★ F16：导出抓图时不画这个虚线小框（它是编辑态的标记）
               showEditingAids: !_hideForCapture,
             ),
@@ -1558,7 +1577,11 @@ class DocViewState extends State<DocView> {
             selFrom: selFrom,
             selTo: selTo,
             // 块前那一格（`renderBase - 1`）也要画 —— 它已被本单元认领（acceptFrom）
-            showCaret: caretAbs != null,
+            // ★ 批 22：共享那一格让给左边那块 ⇒ 本块不画（否则屏幕上两根光标）
+            showCaret: blockShowsCaret(
+                caret: rawCaret,
+                acceptFrom: u.acceptFrom,
+                sharesLeftCell: sharesLeftCell),
             // ★ 批 16：脚本槽 ⇒ 竖条变矮（判据同上，源码位点）
             caretScript: caretScript,
             caretEdge: beforeBlock
