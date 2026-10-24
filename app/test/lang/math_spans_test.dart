@@ -47,11 +47,22 @@ void main() {
     expect(s.single.tex, '中间');
   });
 
-  test(r'行内段里遇到 `$$` ⇒ 这一对没配上（不吞掉后面的行间块）', () {
-    final List<MathSpan> s = scanMathSpans('\$a \$\$b\$\$');
-    expect(s.length, 1);
+  // ★★ 2026-10-24（批 17 口径变更，**记账**）：原来是"行内扫到 `$$` ⇒ 这一对没配上"。
+  //   那条的本意是"行内段不许吞掉后面的行间块"，但它顺带把 `$a$$b$` 这种**相邻两个行内段**
+  //   也判成"一个都认不出"（实测返回空表）⇒ 智能包裹看不到这两段 ⇒ 当裸源码再包一层
+  //   （用户导入 `20261021作业编辑` 的整行乱码就是这么来的）。
+  //   现在：**`$$` 只有行首才是围栏**，行内一律"第一个 `$` 就收尾"。本意改用真行间块来钉：
+  test(r'行内段不许吞掉后面的行间块（`$$` 独占行首才算围栏）', () {
+    final List<MathSpan> s = scanMathSpans('\$a\n\$\$\nb\n\$\$');
+    expect(s.length, 1, reason: r'行首的 `$$…$$` 必须完整认出来，不被前面那个落单 `$` 吞掉');
     expect(s.single.display, isTrue);
-    expect(s.single.tex, 'b');
+    expect(s.single.tex, '\nb\n');
+  });
+
+  // 相邻两个行内段：`$a$$b$` = a 与 b（改前一个都认不出，见上条记账）
+  test(r'相邻两个行内段各算一段（`$a$$b$`）', () {
+    final List<MathSpan> s = scanMathSpans(r'$a$$b$');
+    expect(s.map((MathSpan e) => e.tex).toList(), <String>['a', 'b']);
   });
 
   test('summary 截断并压掉换行（清单里要一行显示）', () {

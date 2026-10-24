@@ -877,13 +877,24 @@ class EditorPageState extends State<EditorPage> {
       ];
       _editKey.currentState?.noteExternalWrap(wrapped, spans: spans);
     }
+    // ★★ 2026-10-24（批 17，《整体设计》原则 5）：导入后若文档里有**行内 `$$`**，必须让用户看见。
+    //   行内 `$$` **没有任何合法含义**（只有**行首**的 `$$` 才是行间围栏），可它会被渲染成
+    //   "一个空的行内公式 + 后面的 tex 全掉到文字层" ⇒ 用户看到的是**整行 LaTeX 裸奔**；
+    //   若那段正好吞掉一个 `{`，KaTeX 还会报 `[公式不完整]`。
+    //   （实测事故：`20261021作业编辑.md` 第 15 行本来就有一处，旧版智能包裹被它带偏后
+    //    把第 19 行改坏成 `$$\to$$`。现在包裹那头已经修好，这里补的是**可见性**。）
+    final List<int> inlineDoubleDollar = inlineDoubleDollarLines(text);
     _editKey.currentState?.focusInput();
     // ★★ 2026-10-19（U2）：文案**只说真事** ——
     //   `loadDocument` 会**清撤销栈**（导入 = 新文档，不参与撤销），所以这里**不许**承诺 Ctrl+Z；
     //   安全网是另一条真事：**导入从不写回源文件**（原件一直没动，不满意可以重新导入）。
-    _snack(wrapped > 0
+    final String base = wrapped > 0
         ? '已导入 ${f.name}：智能包裹 $wrapped 处（原文件没动，可重新导入）'
-        : '已导入 ${f.name}');
+        : '已导入 ${f.name}';
+    _snack(inlineDoubleDollar.isEmpty
+        ? base
+        : '$base；⚠ 第 ${inlineDoubleDollar.take(6).join('、')}'
+            '${inlineDoubleDollar.length > 6 ? '…' : ''} 行有行内 `\$\$`（会显示成源码）');
   }
 
   /// ★★ S4-d②：**导出**（`md` / `txt`）。

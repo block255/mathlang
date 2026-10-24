@@ -250,6 +250,15 @@ List<({int from, int to})> _textGroups(String source) {
 bool _isLetterCode(int c) =>
     (c >= 0x41 && c <= 0x5A) || (c >= 0x61 && c <= 0x7A);
 
+/// [a, b) 这一段是不是"碰着 `$`"（含 `$`、或左/右紧邻 `$`）。
+///
+/// ★★ 批 17 的出口闸：碰着就**不包**。理由见 `planSmartWrap` ③·补 的注释 ——
+///   包裹一旦紧挨已有定界符就会拼出 `$$`，而行内 `$$` 没有任何合法含义。
+bool _touchesDollar(String s, int a, int b) =>
+    (a > 0 && s[a - 1] == r'$') ||
+    (b < s.length && s[b] == r'$') ||
+    s.substring(a, b).contains(r'$');
+
 /// **扫描整篇文本**，给出建议包裹的区间
 ///
 /// 会跳过：已有的 `$…$`、`$$…$$` 块、代码块（三反引号围栏）、行内代码、行首列表标记、URL。
@@ -388,9 +397,22 @@ SmartWrapPlan planSmartWrap(String source) {
     }
   }
 
+  // ③·补 ★★★ 2026-10-24（批 17）：**出口加闸 —— run 一律不许碰 `$`**
+  //
+  // 实测事故（用户导入 `20261021作业编辑`）：① 那一行的 `span` 表一旦错位，
+  // "已有结构、不许碰"的跳过区也跟着错 ⇒ 包裹会在 `$\to$` **外面**再套一对 `$`
+  // ⇒ `$$\to$$` ⇒ 整行 LaTeX 裸奔、`{` 被吞的还会报 `[公式不完整]`。
+  // 判据（宁可少包一处，也绝不动已有公式）：
+  //   · run 里**不含** `$`；
+  //   · run 的两端**都不与 `$` 相邻**（相邻就会拼出 `$$`）。
+  final List<WrapRun> safe = <WrapRun>[
+    for (final WrapRun r in merged)
+      if (!_touchesDollar(source, r.start, r.end)) r,
+  ];
+
   // ④ ★★ 行间块升级（B'）：**整行只有这一个式子**且含"显示倾向"的证据 ⇒ `$$…$$`
   final List<WrapRun> settled = <WrapRun>[];
-  for (final WrapRun r in merged) {
+  for (final WrapRun r in safe) {
     final int lineStart =
         r.start == 0 ? 0 : source.lastIndexOf('\n', r.start - 1) + 1;
     int lineEnd = source.indexOf('\n', r.end);
