@@ -313,6 +313,20 @@ SmartEdit smartBackspace(CaretSiteTable t, int rel) {
   final _DelimPair? pair = _delimPairAt(t.tex, r - 1);
   if (pair != null) return SmartEdit.remove(pair.start, pair.end, pair.start);
 
+  // ★★★ 2026-10-24（批 4c · D1）：**本来就是空的**结构，退格 = 把这个结构**整块回收**。
+  //
+  // 用户口径（2026-10-18 那条的补集）：「删空留壳」只针对"**槽里有内容、删掉内容**"：
+  //   槽里本来就没东西时，退格该去掉的是**这个结构本身** —— 否则用户永远删不掉一个
+  //   误插的 `_{}` / `\left|{}\right|`（实测：退格会去啃 `{` `}` `\left` 这些语法字符，
+  //   直接把 tex 弄坏 ⇒ `[公式不完整]`）。
+  //   · 空挂件 `x_{}` / `x^{}` ⇒ 删**挂件本身**（基座留下，与 §4.0'「甲」一致）
+  //   · 空定界符对 `\left|{}\right|` ⇒ **整对**一起删
+  //   ★ 有内容的结构一律不走这条（照旧"删内容、留空壳"）。
+  final _Span? emptyStruct = _emptyStructureAt(t.tex, r);
+  if (emptyStruct != null) {
+    return SmartEdit.remove(emptyStruct.start, emptyStruct.end, emptyStruct.start);
+  }
+
   final CaretSite s = t.snap(r);
 
   // ★ §4.7 **优先**：光标停在某个**操作对象的右端** ⇒ 删的是**整个操作对象**
@@ -378,6 +392,37 @@ bool _isSyntaxOnly(String s) {
   if (s.isEmpty) return false;
   if (RegExp(r'^[\s{}^_\\|(){}\[\]<>.,;:]+$').hasMatch(s)) return true;
   return false;
+}
+
+/// 位置 [r] 是否落在**一个空结构**里；是 ⇒ 返回它该被回收的整体区间（`null` = 不是）。
+///
+/// 只认两种（都是用户实测过、删不掉的形状）：
+/// ① **空挂件** `x_{}` / `x^{}`（含 `{ }` 里只有空白）⇒ 区间 = `_{}` / `^{}`（**不含基座**）；
+/// ② **空定界符对** `\left|{}\right|`（内容只有空白 / 空组）⇒ 区间 = 整对。
+///
+/// ★ 有内容的结构**一律不认**（照旧"删内容、留空壳"）—— 所以这里只做"空"的检查，
+///   不碰任何有内容的形状。
+_Span? _emptyStructureAt(String tex, int r) {
+  // ① 空挂件：`^` / `_` 后面紧跟空组
+  for (final RegExpMatch m
+      in RegExp(r'[\^_]\s*\{\s*\}').allMatches(tex)) {
+    if (r >= m.start && r <= m.end) return _Span(m.start, m.end);
+  }
+  // ② 空定界符对：`\left…` 与紧邻的 `\right…` 之间只有空白 / 空组
+  final List<({int start, int end, String name})> toks = _delimTokens(tex);
+  for (var k = 0; k + 1 < toks.length; k++) {
+    if (toks[k].name != 'left') continue;
+    if (toks[k + 1].name != 'right') continue;
+    final String inner = tex.substring(toks[k].end, toks[k + 1].start);
+    final String bare = inner
+        .replaceAll(RegExp(r'\s'), '')
+        .replaceAll(RegExp(r'\{\s*\}'), '');
+    if (bare.isNotEmpty) continue; // 有内容 ⇒ 不是空结构
+    if (r >= toks[k].start && r <= toks[k + 1].end) {
+      return _Span(toks[k].start, toks[k + 1].end);
+    }
+  }
+  return null;
 }
 
 /// `Delete`：段内相对偏移 [rel] 处往后删（与 [smartBackspace] 镜像）。
