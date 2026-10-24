@@ -505,6 +505,15 @@ Rect? _clampRowHeight(Rect? r, double fontSize) {
   if (r.height <= maxH || maxH <= 1) return r;
   return Rect.fromCenter(center: r.center, width: r.width, height: maxH);
 }
+/// ★★ 2026-10-24（批 7 · A1）：**行盒 → 字形盒** 的经验比。
+///
+/// `RenderLine` 的盒高 = 数学**基线以上**那一截（实测：主行 28 / 分子 10.4 / 分母 8.8 /
+/// 脚本 6.4），而字形 ¶ 盒（KaTeX_Main 的行高盒）在基线**下面**还有 ~3.4 px 下伸。
+/// 竖条要跟"同层的字"一样高，就得按字形盒来量 —— 两者之比实测 ≈ **1.35**
+/// （与 [_clampRowHeight] 里 `fontSize * 1.35` 那条"行盒太紧"的经验值同源）。
+/// ★ 只用它把行盒放大到字形量级，再拿**本层字形盒**封顶 ⇒ 行盒不会把竖条撑得比字还高。
+const double kLineToGlyph = 1.35;
+
 Rect? findLocalRowBox(RenderObject root, Offset at, {RenderObject? anchor}) {
   final List<({Rect rect, double dx, RenderObject? row})> hits =
       <({Rect rect, double dx, RenderObject? row})>[];
@@ -531,6 +540,77 @@ Rect? findLocalRowBox(RenderObject root, Offset at, {RenderObject? anchor}) {
   Rect clip(Rect r) => (rowH <= 0 || r.height <= rowH * 1.6)
       ? r
       : Rect.fromCenter(center: r.center, width: r.width, height: rowH);
+
+  // ★★★ 2026-10-24（批 7 · A1）：**先按"基线"认本层**，取本层的字形盒。
+  //
+  // 用户实测（图 1/图 2）：分子尾的竖条 `0.8..9.6`（h=8.8），而分子里的 `x` 盒是
+  //   `-0.2..13.8` ⇒ **底部差 4.2 px**、而且比指数尾（10.9）还矮 —— 两档看不出差别。
+  // 根因：分子那一行**一个同层字形都找不到**（`x` / `3` 都裹在 `_ScriptPos` 里，
+  //   `sameLayer` 一遇 `CustomLayout` 就 false）⇒ 退到 `RenderLine` 盒（0..10.4）。
+  //   而行盒底 = **数学基线**，字形 ¶ 盒在基线下还有 ~3.4 px 下伸 ⇒ 竖条底部悬空。
+  //
+  // 新判据：**锚点所在行的盒底 = 本层基线**；只取"自己那层行的盒底与它对齐（≤1.2 px）"的
+  //   字形盒 ⇒ 分子取 `x`（−0.2..13.8，底部对齐）；指数那一格锚点行是脚本行（盒底 6.4）
+  //   ⇒ 只取 `3`（−3..10）⇒ 又矮又靠上。**不依赖 `CustomLayout` 层级树、也不引入 0.7 系数**。
+  //
+  // 高度口径（乙：按层级自适应，但行盒"太紧"）：`h = min(行盒高 × kLineToGlyph, 字形盒高)`，
+  //   底边贴**字形盒底**（= 该层基线 + ¶ 盒下伸），再交给 `caretBarRect` 内缩。
+  //   实测：主行 min(28×1.35, 14)=14 · 分子 min(10.4×1.35, 13.8)=13.8 ·
+  //         分母 min(8.8×1.35, 14)=11.9 · 指数 min(6.4×1.35, 13)=8.6 ⇒ 三档明显分开。
+  Rect? rowRectOf(RenderObject? row) {
+    if (row is! RenderBox || !row.hasSize) return null;
+    return row.localToGlobal(Offset.zero, ancestor: root) & row.size;
+  }
+
+  if (anchor != null) {
+    final RenderObject? aRow = rowOf(anchor, root);
+    final Rect? anchorRowBox = rowRectOf(aRow);
+    if (anchorRowBox != null) {
+      ({Rect rect, double dx, RenderObject? row})? containing;
+      ({Rect rect, double dx, RenderObject? row})? nearest;
+      // ★ 第一优先：**同一个 `RenderLine` 实例**（最严格、也最安全）。
+      //   为什么必须有这一档：行间块的**根行盒**把整块（含分式的分母）都包住了，
+      //   于是"盒底相同"会把分母的行也认成本层（实测 `caret_layer_test`
+      //   「块内 tex 末位」：竖条被拖到分母那一行 22.5..39.3）。
+      //   根行里直接挂着的字形（`x` / `=`）它们的行**就是**根行 ⇒ 这一档先把它们挑出来。
+      ({Rect rect, double dx, RenderObject? row})? sameRow;
+      ({Rect rect, double dx, RenderObject? row})? maybeSameRow;
+      for (final ({Rect rect, double dx, RenderObject? row}) h in hits) {
+        if (!identical(h.row, aRow)) continue;
+        final Rect r = clip(h.rect);
+        if (at.dy < r.top || at.dy > r.bottom) continue;
+        if (sameRow == null || h.dx < sameRow.dx) {
+          sameRow = (rect: r, dx: h.dx, row: h.row);
+        }
+      }
+      if (sameRow != null) maybeSameRow = sameRow;
+      for (final ({Rect rect, double dx, RenderObject? row}) h in hits) {
+        final Rect? rb = rowRectOf(h.row);
+        if (rb == null) continue;
+        if ((rb.bottom - anchorRowBox.bottom).abs() > 1.2) continue; // 只认本层基线
+        final Rect r = clip(h.rect);
+        if (nearest == null || h.dx < nearest.dx) {
+          nearest = (rect: r, dx: h.dx, row: h.row);
+        }
+        if (at.dy >= r.top && at.dy <= r.bottom) {
+          if (containing == null || h.dx < containing.dx) {
+            containing = (rect: r, dx: h.dx, row: h.row);
+          }
+        }
+      }
+      final ({Rect rect, double dx, RenderObject? row})? picked =
+          maybeSameRow ?? containing ?? nearest;
+      if (picked != null) {
+        final double h = math.min(anchorRowBox.height * kLineToGlyph, picked.rect.height);
+        if (h > 1) {
+          // 底边贴字形盒底（该层基线 + ¶ 盒下伸）⇒ 底部与同层字对齐
+          return Rect.fromLTRB(picked.rect.left, picked.rect.bottom - h,
+              picked.rect.right, picked.rect.bottom);
+        }
+        return picked.rect;
+      }
+    }
+  }
 
   // ① 层优先：锚点那一行（及其后代行）里、且竖直含基线的字形盒
   final RenderObject? anchorRow = anchor == null ? null : rowOf(anchor, root);
