@@ -40,12 +40,21 @@ void main() {
   });
 
   group('★ 不许漂：别的脚标仍然逐格停', () {
-    test(r'`x^2`：从 x 之后还要能走进指数里', () {
+    // ★★ 2026-10-24（批 5 · H1）**这条期望变了，理由记在这里**：
+    //   `x` 之后那一格是**粘合位点**，与"指数第一位点"**同一根像素**；
+    //   用户实测「点 x 与 3 之间、按两下才到 3 右边」⇒ 现在从粘合位点出发要再跳一格
+    //   （见 `math_nav.nextCaretOffset`）。于是从 `x` 之后**一步落在指数末尾**，
+    //   指数**开头**由 `←` 进来（或从公式首一路 `→` 扫过来）—— 两条路都还在。
+    test(r'`x^2`：从 x 之后一步出公式；指数开头由 `→`(从首) / `←`(从末) 到达', () {
       const String d = r'$x^2$';
       final int afterX = d.indexOf('x') + 1;
       final int step1 = nextCaretOffset(d, afterX);
-      expect(step1, lessThan(d.length - 1),
-          reason: '指数不是"挂件"⇒ 必须停在里面（不然改脚标只能点）');
+      expect(step1, d.length,
+          reason: '粘合位点与"指数第一位点"同一根像素 ⇒ 跳到后面；'
+              '这里后面就是公式末尾（"甲"方案：末尾位点 `→` 一步出去）');
+      // 指数开头（rel 2）两条路都还在：从公式首 `→` 过来、从末尾 `←` 过来
+      expect(nextCaretOffset(d, 1), afterX + 1, reason: '0 → 指数开头');
+      expect(prevCaretOffset(d, afterX + 2), afterX + 1, reason: '末尾 ← 指数开头');
     });
 
     test(r'`\sum_{i=1}^{n}a_i`：金表里那 9 步不许变', () {

@@ -299,6 +299,15 @@ int _contentAtoms(String tex, _Attachment a) => lexVisibleAtoms(tex)
 // 删除
 // ---------------------------------------------------------------------------
 
+/// 作用域的最后一个可见字符是不是**用户手写的收尾括号**（`)` / `]`）—— 批 5 · H5。
+///
+/// ★ 为什么只认这两个：`\left…\right)` 那一族由 `_delimPairAt` **更早**接手（整对删），
+///   轮不到这里；`}` 通常是 `{…}` 的收尾（`\sin{x}`），删它没有"删括号"的语义。
+bool _endsWithPlainCloser(String tex, OpScope s) {
+  final String tail = tex.substring(s.start, s.end).trimRight();
+  return tail.endsWith(')') || tail.endsWith(']');
+}
+
 /// `Backspace`：段内相对偏移 [rel] 处往前删。
 SmartEdit smartBackspace(CaretSiteTable t, int rel) {
   final int r = rel.clamp(0, t.tex.length);
@@ -331,8 +340,16 @@ SmartEdit smartBackspace(CaretSiteTable t, int rel) {
 
   // ★ §4.7 **优先**：光标停在某个**操作对象的右端** ⇒ 删的是**整个操作对象**
   //   （`\sin 2x` / `\sum_{i=1}^{n}a_i b_i` —— 用户已复验；它比"挂件边缘"更粗一层）
+  //
+  // ★★★ 2026-10-24（批 5 · H5）：**但作用域不许吞掉用户手写的收尾括号**。
+  //   用户实测（`\sum_{i=1}^{n}(x+1)`）：「我想点括号后面删括号，但是**只能点到整体的后面**」
+  //   —— 探针坐实：`scopeEndingAt(tex, 19)` 命中整个 `[0,19)` ⇒ 退格一次把整条式子删光。
+  //   口径（平权 ③「不许实现细节泄漏成地位差异」）：**作用域是派生出来的**，
+  //   不许让它改变"删左边最近的墨迹"这条通用规则；只有当收尾**不是**手写括号时才整块删。
   final OpScope? scope = scopeEndingAt(t.tex, s.offset);
-  if (scope != null) return SmartEdit.remove(scope.start, scope.end, scope.start);
+  if (scope != null && !_endsWithPlainCloser(t.tex, scope)) {
+    return SmartEdit.remove(scope.start, scope.end, scope.start);
+  }
 
   // ★★ §4.0' 挂件的边缘像素（见 [_attachmentEdgeAt]）：
   //    `⌫ = 左边最近的墨迹` —— 在挂件**右端那一格**上，左边的墨迹就是挂件里最后一个原子。

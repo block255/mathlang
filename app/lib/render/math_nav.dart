@@ -216,6 +216,19 @@ int nextCaretOffset(String source, int offset) {
     }
     break;
   }
+
+  // ★★★ 2026-10-24（批 5 · H1）：**从"粘合位点"出发时，右边第一格要再跳一格**。
+  //
+  // 用户实测：「点 `x` 与 `3` 之间，再按 `→`，**点两下**才到 `3` 右边；
+  // 你是不是把 x 后面和 3 前面显示成一样的了」—— **确实一样**：
+  // 粘合位点（`x` 之后，注入被挪进脚本内容开头）与"脚本自己的第一个位点"（`3` 之前）
+  // **同一根像素**（这正是 `CaretSite.glue` 的由来）。
+  // 平时撞不上：`→` 的**到达**规则已经跳过粘合位点（上面那个 while）。
+  // 但 D5 之后"点挂件左半 ⇒ 落到对象之前"会把光标停在粘合位点上 ⇒ 再按一下就"没动"。
+  if (t.sites[i].glue && next == i + 1 && next + 1 < t.sites.length) {
+    next++;
+  }
+
   if (next < t.sites.length && t.sites[next].offset < r.tex.length) {
     return r.abs(t.sites[next].offset);
   }
