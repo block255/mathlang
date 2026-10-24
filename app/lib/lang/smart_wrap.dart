@@ -259,6 +259,74 @@ bool _touchesDollar(String s, int a, int b) =>
     (b < s.length && s[b] == r'$') ||
     s.substring(a, b).contains(r'$');
 
+/// ★★★ 2026-10-24（批 26）：`\begin{…}` … `\end{…}` **整段算段内**（与 [ _textGroups ] 同族）。
+///
+/// 实测事故（用户 21:4x 粘贴自己的作业，截图见快照 §9.15）：一行
+/// `F(x) = \begin{cases} \lim_{x \to a^+} f(x), & a \\ f(x), & a < x < b \\ … \end{cases}`
+/// 被 `&` 切成 **4 段**（`&` 不在 [ _isMathChar ] 里）⇒ 每段单独都语法不完整
+/// ⇒ 页面上 `[公式不完整] , & [公式不完整] , & …`（4 段 + 3 个 `&` 落成正文）。
+///
+/// 口径（**不动 `_isMathChar`**：把 `&` 加进去会让 `A & B` 这种普通文本也被当成公式）：
+///   · **单行**环境 ⇒ 整段算段内（`&` / `\\` 跟着一起走）⇒ 一个 run 覆盖整个环境；
+///   · **跨行**环境 ⇒ 整段**锁住不碰** —— 包裹是行内 `$…$`，塞进换行就成了跨行段，
+///     而"行内段不许跨行"是批 17 定的硬规则。宁可原样留着，也绝不切碎。
+List<({int from, int to, bool multiLine})> _envRanges(String source) {
+  final List<({int from, int to, bool multiLine})> out =
+      <({int from, int to, bool multiLine})>[];
+  var i = 0;
+  while (i < source.length) {
+    final int b = source.indexOf(r'\begin', i);
+    if (b < 0) break;
+    var j = b + r'\begin'.length;
+    while (j < source.length && source[j] == ' ') {
+      j++;
+    }
+    if (j >= source.length || source[j] != '{') {
+      i = b + 1;
+      continue;
+    }
+    final int nameEnd = source.indexOf('}', j);
+    if (nameEnd < 0) {
+      i = b + 1;
+      continue;
+    }
+    final String name = source.substring(j + 1, nameEnd);
+    if (name.isEmpty) {
+      i = b + 1;
+      continue;
+    }
+    final String open = '\\begin{$name}';
+    final String close = '\\end{$name}';
+    var depth = 1;
+    var k = nameEnd + 1;
+    var end = -1;
+    while (k < source.length) {
+      final int nb = source.indexOf(open, k);
+      final int ne = source.indexOf(close, k);
+      if (ne < 0) break;
+      if (nb >= 0 && nb < ne) {
+        depth++;
+        k = nb + 1;
+        continue;
+      }
+      depth--;
+      if (depth == 0) {
+        end = ne + close.length;
+        break;
+      }
+      k = ne + 1;
+    }
+    if (end < 0) {
+      i = b + 1;
+      continue;
+    }
+    final String body = source.substring(b, end);
+    out.add((from: b, to: end, multiLine: body.contains('\n')));
+    i = end;
+  }
+  return out;
+}
+
 /// **扫描整篇文本**，给出建议包裹的区间
 ///
 /// 会跳过：已有的 `$…$`、`$$…$$` 块、代码块（三反引号围栏）、行内代码、行首列表标记、URL。
@@ -326,17 +394,30 @@ SmartWrapPlan planSmartWrap(String source) {
   bool inTextGroup(int pos) =>
       textGroups.any((({int from, int to}) r) => pos >= r.from && pos < r.to);
 
+  // ①·补2 ★★★ 2026-10-24（批 26）：**环境（`\begin{…}…\end{…}`）**
+  //   · 单行 ⇒ 整段算段内（`&` 不是数学字符，旧实现会把 `cases` 按 `&` 切成 4 段）；
+  //   · 跨行 ⇒ 整段锁住（行内段不许跨行，见 `_envRanges` 的注释）。
+  final List<({int from, int to, bool multiLine})> envs = _envRanges(source);
+  for (final ({int from, int to, bool multiLine}) e in envs) {
+    if (e.multiLine) locked.add((from: e.from, to: e.to));
+  }
+  bool inEnvBody(int pos) => envs.any((({int from, int to, bool multiLine}) e) =>
+      !e.multiLine && pos >= e.from && pos < e.to);
+
   // ② 按"数学字符"贪心成段，再逐段判定
   var p = 0;
   while (p < source.length) {
-    if (inLocked(p) || !_isMathChar(source.codeUnitAt(p))) {
+    if (inLocked(p) ||
+        !(inEnvBody(p) || _isMathChar(source.codeUnitAt(p)))) {
       p++;
       continue;
     }
     var q = p;
     while (q < source.length &&
         !inLocked(q) &&
-        (inTextGroup(q) || _isMathChar(source.codeUnitAt(q)))) {
+        (inTextGroup(q) ||
+            inEnvBody(q) ||
+            _isMathChar(source.codeUnitAt(q)))) {
       q++;
     }
     // 去掉首尾的空格/标点
