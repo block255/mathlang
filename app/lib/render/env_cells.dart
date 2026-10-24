@@ -49,7 +49,8 @@ class EnvCellHit {
 ///   ② 列是"扫到第一个命中就返回"⇒ **右边空列永远轮不到**（实测：点空列判成第 2 列）；
 /// 网格（格子矩形 + 行带 + 列带）—— **命中**与**画框**共用同一份几何。
 class EnvGrid {
-  EnvGrid(this.cellRect, this.rowBand, this.colBand, this.maxRow, this.maxCol);
+  EnvGrid(this.cellRect, this.rowBand, this.colBand, this.maxRow, this.maxCol,
+      {this.synthetic = const <int>{}});
 
   /// key = row * 1000 + col
   final Map<int, Rect> cellRect;
@@ -57,6 +58,10 @@ class EnvGrid {
   final Map<int, Rect> colBand;
   final int maxRow;
   final int maxCol;
+
+  /// ★ 2026-10-24（D3 续）：这些格子是**补出来的**（原环境里那一格没有墨迹）
+  /// ⇒ 框照画，但**不算"点在墨迹上"**（`EnvCellHit.onInk` 的口径不许被它污染）。
+  final Set<int> synthetic;
 
   Rect? cell(int r, int c) => cellRect[r * 1000 + c];
 }
@@ -119,7 +124,38 @@ EnvGrid? buildEnvGrid({
   }
   final int maxRow = cells.map(rowOf).reduce((int a, int b) => a > b ? a : b);
   final int maxCol = cells.map(colOf).reduce((int a, int b) => a > b ? a : b);
-  if (cellRect.isEmpty) return null;
+
+  // ★★ 2026-10-24（D3）：**格子全都还空着**的环境（刚插出来的 `cases`）也要有网格 ——
+  //   旧代码 `cellRect.isEmpty ⇒ return null` ⇒ 那种块**一个框都不画**（用户："点进去没有框"）。
+  //   这种时候没有墨迹可量 ⇒ 按"根盒 ÷ 行列数"均分，行格仍用 0.7 / 1.2 那套常量。
+  if (cellRect.isEmpty) {
+    final double w = (root is RenderBox && root.hasSize) ? root.size.width : 0;
+    final double h = (root is RenderBox && root.hasSize) ? root.size.height : 0;
+    if (w <= 0 || h <= 0) return null;
+    final int rows = maxRow + 1;
+    final int cols = maxCol + 1;
+    final double pitch = h / rows;
+    final double cw = w / cols;
+    final Map<int, Rect> bands = <int, Rect>{};
+    final Map<int, Rect> cols2 = <int, Rect>{};
+    final Map<int, Rect> cr = <int, Rect>{};
+    final Set<int> synth = <int>{};
+    for (var r = 0; r < rows; r++) {
+      bands[r] = Rect.fromLTRB(0, r * pitch, w, (r + 1) * pitch);
+    }
+    for (var c = 0; c < cols; c++) {
+      cols2[c] = Rect.fromLTRB(c * cw, 0, (c + 1) * cw, h);
+    }
+    for (var r = 0; r < rows; r++) {
+      for (var c = 0; c < cols; c++) {
+        final int k = r * 1000 + c;
+        cr[k] = Rect.fromLTRB(cols2[c]!.left, bands[r]!.top, cols2[c]!.right,
+            bands[r]!.bottom);
+        synth.add(k);
+      }
+    }
+    return EnvGrid(cr, bands, cols2, maxRow, maxCol, synthetic: synth);
+  }
 
   // ② 列带 + 补缺列（先算：行带的左右界也用它）
   final Map<int, Rect> colBand = <int, Rect>{};
@@ -248,7 +284,27 @@ EnvGrid? buildEnvGrid({
       rowBand[row] = rowBand.containsKey(row) ? rowBand[row]!.expandToInclude(r) : r;
     });
   }
-  return EnvGrid(cellRect, rowBand, colBand, maxRow, maxCol);
+  // ★★ 2026-10-24（D3 续）：**空格子的矩形**用"列带 × 行带"补出来。
+  //   框（`envCellBoxIn`）与命中都读 `cellRect`；不补的话空格子只能退到"列带"，
+  //   而列带是**所有行**合并出来的并集 ⇒ 框会看起来落在"别的行有内容的那一列"上
+  //   （用户实测："第二排框却在这里"、"点正确的位置反而不出框"）。
+  final Set<int> synthetic = <int>{};
+  for (var r = 0; r <= maxRow; r++) {
+    final Rect? band = rowBand[r];
+    if (band == null) continue;
+    for (var c = 0; c <= maxCol; c++) {
+      final int k = r * 1000 + c;
+      if (cellRect.containsKey(k)) continue;
+      final Rect? cb = colBand[c];
+      final double left = cb?.left ?? band.left;
+      final double right = cb?.right ?? band.right;
+      if (right <= left) continue;
+      cellRect[k] = Rect.fromLTRB(left, band.top, right, band.bottom);
+      synthetic.add(k);
+    }
+  }
+  return EnvGrid(cellRect, rowBand, colBand, maxRow, maxCol,
+      synthetic: synthetic);
 }
 
 /// 中位数（空表 ⇒ 0）
@@ -300,7 +356,9 @@ EnvCellHit? envCellHitIn(EnvGrid g, Offset localPos) {
   final bool atEnd = cell != null
       ? localPos.dx > cell.center.dx
       : (cb != null && localPos.dx > cb.center.dx);
-  final bool onInk = cell != null && cell.inflate(2).contains(localPos);
+  final bool onInk = cell != null &&
+      !g.synthetic.contains(row * 1000 + col) &&
+      cell.inflate(2).contains(localPos);
   return EnvCellHit(row, col, atEnd: atEnd, onInk: onInk);
 }
 
