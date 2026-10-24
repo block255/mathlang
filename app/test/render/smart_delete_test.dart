@@ -289,9 +289,14 @@ void main() {
       expectDeleted(r'\sin 2x+y', 7, r'\sin 2x');
     });
 
-    test(r'`\sum_{i=1}^{n}a_i b_i` 末尾退格 → 整个求和式（含上下限与内容）', () {
+    // ★★ 2026-10-24（批 10）**口径变了，理由记在这里**：
+    //   用户实测（`\sum_{i=1}^{m}x+4` 连按退格）——「删掉 `4`、`+`，第三下把整个删了」，
+    //   预期是"继续删 `x`"。⇒ **大算符**（`\sum` `\int` …）不再"停在右端就整块删"，
+    //   改为逐字；整块删走**选中整个操作对象**。函数算子（`\sin`/`\log`）仍然整块删。
+    test(r'`\sum_{i=1}^{n}a_i b_i` 末尾退格 → **只删最后一个原子**（大算符不整块删）', () {
       const String tex = r'\sum_{i=1}^{n}a_i b_i';
-      expectDeleted(tex, tex.length, tex);
+      // 乙口径：字形 + 挂件 = 一个对象 ⇒ 先删挂件 `_i`
+      expectDeleted(tex, tex.length, '_i');
     });
 
     test(r'`\sin x\cdot y` 里 `x` 之后退格 → `\sin x`（显式乘号断开）', () {

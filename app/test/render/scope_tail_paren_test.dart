@@ -43,9 +43,10 @@ void main() {
     expect(deletedText(tex, tex.length), tex);
   });
 
-  test(r'★ 对照：`\sum_{i=1}^{n}a_i` 末尾退格 ⇒ 仍然整块删作用域', () {
+  test(r'★ 对照（批 10 收窄）：`\sum_{i=1}^{n}a_i` 末尾退格 ⇒ **只删挂件 `_i`**（大算符不再整块删）', () {
     const String tex = r'\sum_{i=1}^{n}a_i';
-    expect(deletedText(tex, tex.length), tex);
+    // 乙口径：字形 + 挂件 = 一个对象 ⇒ 先删挂件 `_i`（留着 `a`）
+    expect(deletedText(tex, tex.length), '_i');
   });
 
   test(r'★ 对照：`\sum_{i=1}^{n}(x+1)` 的**中段**（`)` 之前）照旧逐字删', () {

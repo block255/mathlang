@@ -243,10 +243,21 @@ class _MathWithCaretState extends State<MathWithCaret> {
         // 但**单行而很高**的公式（`\sum` / `\int` 带堆叠上下限）里，"块底"在**下限那一行**
         // ⇒ 光标看着"掉到 ∑ 下面"（用户 2026-10-24 四张图）。
         // 判据：tex 里**没有 `\\`** ⇒ 单行 ⇒ 按锚点（主行基线）画。
+        //
+        // ★★★ 2026-10-24（批 10）：**竖条的 x 也要贴块边界**（不只是 y）。
+        //   用户实测：「我点后面的空白，光标在整体后面（删除行为说明确实是这样），
+        //   但是光标依然是这么画的」—— 锚点被注入在 tex 末位（块**内**）⇒ 竖条紧贴 `i²`，
+        //   看起来像"在公式里"。块前/块后是**块的边界**，就该画在边界外（与那根灰刻度同侧）。
+        final bool beforeEdge = widget.caretEdge == CaretEdge.before;
+        final RenderBox? rbox = root is RenderBox && root.hasSize ? root : null;
+        final Size boxSize = rbox?.size ?? Size.zero;
+        final double edgeX = (isDisplay && rbox != null)
+            ? (beforeEdge ? -(widget.caretWidth + 1.5) : boxSize.width + 1.5)
+            : at.dx;
         final bool multiRow = widget.tex.contains(r'\\');
-        final Offset baseline = (isDisplay && multiRow)
-            ? Offset(at.dx,
-                widget.caretEdge == CaretEdge.before ? 0.0 : root.size.height)
+        final Offset baseline = isDisplay
+            ? Offset(edgeX,
+                multiRow ? (beforeEdge ? 0.0 : boxSize.height) : at.dy)
             : at;
         bar = textLayerCaretRect(
           baseline: baseline,

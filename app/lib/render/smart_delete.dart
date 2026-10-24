@@ -338,16 +338,19 @@ SmartEdit smartBackspace(CaretSiteTable t, int rel) {
 
   final CaretSite s = t.snap(r);
 
-  // ★ §4.7 **优先**：光标停在某个**操作对象的右端** ⇒ 删的是**整个操作对象**
-  //   （`\sin 2x` / `\sum_{i=1}^{n}a_i b_i` —— 用户已复验；它比"挂件边缘"更粗一层）
+  // ★★★ 2026-10-24（批 10）：**"整块删操作对象"只保留给函数算子**。
   //
-  // ★★★ 2026-10-24（批 5 · H5）：**但作用域不许吞掉用户手写的收尾括号**。
-  //   用户实测（`\sum_{i=1}^{n}(x+1)`）：「我想点括号后面删括号，但是**只能点到整体的后面**」
-  //   —— 探针坐实：`scopeEndingAt(tex, 19)` 命中整个 `[0,19)` ⇒ 退格一次把整条式子删光。
-  //   口径（平权 ③「不许实现细节泄漏成地位差异」）：**作用域是派生出来的**，
-  //   不许让它改变"删左边最近的墨迹"这条通用规则；只有当收尾**不是**手写括号时才整块删。
+  // 用户实测（`\sum_{i=1}^{m}x+4`，从末尾连按退格）：删掉 `4`、`+`，
+  //   第三下把整个 `\sum…x` 一起删了 —— 他们的预期是"继续删 `x`"。
+  // 判据（也是 2026-10-15 那条口径的收窄）：**大算符**（`\sum` `\int` `\prod` … 带堆叠上下限）
+  //   的"整体"横跨上下限、视觉上是一大坨 ⇒ 删它属于"删一大块"，应该走**选中**；
+  //   而**函数算子**（`\sin` `\log` `\lim` …）的 `\sin x` 才是一个"字那么大的对象"，
+  //   光标停在它右端整块删是合理的（`2\sin x` 末尾退格 ⇒ 删 `\sin x`，既有守卫照旧绿）。
+  // ★ 删除粒度总原则（平权 ①）：**由选区决定**，不由"光标恰好在对象尾"决定。
   final OpScope? scope = scopeEndingAt(t.tex, s.offset);
-  if (scope != null && !_endsWithPlainCloser(t.tex, scope)) {
+  if (scope != null &&
+      !kStackedOperatorCommands.contains(scope.command) &&
+      !_endsWithPlainCloser(t.tex, scope)) {
     return SmartEdit.remove(scope.start, scope.end, scope.start);
   }
 

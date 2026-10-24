@@ -1,4 +1,4 @@
-﻿// 数语引擎 · 算子作用域表（§4.7，2026-10-15）
+// 数语引擎 · 算子作用域表（§4.7，2026-10-15）
 //
 // 规格：notes/design/位点与结构导航.md **§4.7 作用域表**。
 // 目标：回答「**一个操作对象到哪结束**」——
@@ -103,6 +103,19 @@ const Set<String> _kRel = <String>{
 
 /// **分隔记号** —— 划界
 const Set<String> _kPunct = <String>{',', ';', r'\colon', '&', r'\\', r'\end'};
+
+/// ★★ 2026-10-24（批 10）：**大算符**（上下限堆叠、被作用内容横跨一大片）。
+///
+/// 删除口径要用它：`\sum` / `\int` 这一族**不做"光标停在右端就整块删"** ——
+/// 它们的"整体"是一大坨（算子 + 上下限 + 内容），删它应该走**选中**；
+/// 而 `\sin x` / `\log_2 x` 这种函数算子，"整体"就是一个字大小的对象，整块删合理。
+const Set<String> kStackedOperatorCommands = <String>{
+  'sum', 'prod', 'coprod', 'int', 'oint', 'iint', 'iiint', 'iiiint', 'idotsint',
+  'bigcup', 'bigcap', 'bigvee', 'bigwedge', 'bigoplus', 'bigotimes', 'bigodot',
+  'bigsqcup', 'biguplus',
+  // ★ `\lim` / `\max` / `\min` 也带堆叠下限，但它们的"内容"只是一个表达式（`\lim_{x\to0}f`），
+  //   实测语义上用户愿意整块删 —— 归**函数算子**那一档（不进这张表）。
+};
 
 /// 一个算子的作用域记录 + "吃完之后的下标"（供外层算子复用）
 class _Arg {
