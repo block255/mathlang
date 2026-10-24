@@ -201,16 +201,33 @@ EnvGrid? buildEnvGrid({
     ]);
   }
   if (pitch <= 0 && fontSize != null && fontSize > 0) pitch = fontSize * 1.2;
+  // ★★ 2026-10-24（批 3 · E4，用户："分段的第二段我鼠标好像点不到"）：
+  //   一个**基线锚点都没有**的环境（整行都没字、连垫子也没配对出来）时，
+  //   用引擎自己的行格：**根盒高 = 行数 × 行距**、**首行基线 = 0.7 × 行距**
+  //   （两条都是 2026-10-19 实测过的常量，见下面 ③ 的注释）。
+  //   旧代码在这种情况下只给"有墨迹的行"建带 ⇒ 空行（如 `cases` 的第二段）**根本不在网格里**
+  //   ⇒ 点第二行会被落到第一行（实测：`\begin{cases}1,&x\in Q\\&\end{cases}` 的 grid 只有 1 行）。
+  if (pitch <= 0 && root is RenderBox && root.hasSize && maxRow >= 0) {
+    final double h = root.size.height;
+    if (h > 0) pitch = h / (maxRow + 1);
+  }
   final Map<int, Rect> rowBand = <int, Rect>{};
-  if (pitch > 0 && anchors.isNotEmpty) {
-    // 缺基线的行（整行都填满的）按最近锚点 + 行距外推
-    for (var r = 0; r <= maxRow; r++) {
-      if (baseline.containsKey(r)) continue;
-      int best = anchors.first;
-      for (final int a in anchors) {
-        if ((a - r).abs() < (best - r).abs()) best = a;
+  if (pitch > 0) {
+    if (baseline.isEmpty) {
+      // 没有任何垫子 ⇒ 按"首行基线 = 0.7 × 行距"铺满（同上实测）
+      for (var r = 0; r <= maxRow; r++) {
+        baseline[r] = (r + 0.7) * pitch;
       }
-      baseline[r] = baseline[best]! + (r - best) * pitch;
+    } else {
+      // 缺基线的行（整行都填满的）按最近锚点 + 行距外推
+      for (var r = 0; r <= maxRow; r++) {
+        if (baseline.containsKey(r)) continue;
+        int best = anchors.first;
+        for (final int a in anchors) {
+          if ((a - r).abs() < (best - r).abs()) best = a;
+        }
+        baseline[r] = baseline[best]! + (r - best) * pitch;
+      }
     }
     final double ascent = 0.7 * pitch;
     var left = double.infinity;

@@ -173,13 +173,94 @@ int nextCaretOffset(String source, int offset) {
   //   这些位置的注入被挪进了"脚本内容开头"⇒ 与脚本第一个位点**同一根像素**。
   //   位点本身保留（点击/吸附要用），只在**方向键**上跳过。
   var next = i + 1;
-  while (next < t.sites.length && t.sites[next].glue) {
-    next++;
+  while (next < t.sites.length) {
+    if (t.sites[next].glue) {
+      next++;
+      continue;
+    }
+    final int off = t.sites[next].offset;
+    // ★ 注：`}` 之后那一格与内容末尾**同一根像素**（括号不可见）—— 但**不统一跳**：
+    //   2026-10-15 用户扫出来的"金表"（`\sum_{i=1}^{n}a_i`）明确要求 14 那一格**要停**，
+    //   统一跳会把它抹掉。D2 只对下面这两族用"同一根像素"规则。
+    //
+    // ★★ 2026-10-24（批 3 · D2）：「`\left…\right` 组里最后一格」与「`\right` 之前」同一根像素
+    //   ⇒ 跳过。实测（`\left|{sinx}\right|`）：不跳时从 `x` 之后出发，第 1 下停在 `}` 与 `\right|`
+    //   之间（屏幕上**一点没动**），第 2 下才出组 —— 用户说的"要点两下才能出去"就是它。
+    if (off <= r.tex.length && r.tex.substring(off).startsWith(r'\right')) {
+      next++;
+      continue;
+    }
+    // ★★★ 2026-10-24（批 3 · D2 续）：**`→` 按"对象"走，不钻进脚本内部**。
+    //
+    // 口径来由：用户要"打完绝对值里最后一个字符，一下就出去"。而 `|…|^{3}` 里的 `3` 是
+    // 那个对象的**挂件**（乙口径：字形 + 挂件 = 一个对象）⇒ `→` 从对象里出去就该**一步出去**；
+    // 想改脚标要么**点**它、要么**`←`** 从右边进来（`←` 有意不跳，见 [prevCaretOffset]）、
+    // 要么用 `Tab` 走槽。
+    // 实测（`\frac{x^{3}}{\left|{sinx}\right|^{3}}`）：不跳时要依次停在 34（`3` 前）、35（`3` 后）、
+    // 36（`}` 后）—— 用户说的"要点两下"就是这两格。
+    final List<SlotStep> cur = t.sites[i].path;
+    final List<SlotStep> cand = t.sites[next].path;
+    final bool entersScript = cand.length == cur.length + 1 &&
+        _samePath(cand, cur) &&
+        (cand.last.command == '^' || cand.last.command == '_') &&
+        // ★ 只对"挂在**闭合定界符**后面的脚标"生效（`\left|…\right|^3`）：
+        //   `\sum_{i=1}^{n}` 的上下限、`x^2` 的指数都**保持原样**（用户 2026-10-15 扫出来的
+        //   "金表"序列就是逐步穿过上下限的，别把那条顺手改掉）。
+        _scriptAfterRightDelim(r.tex, off);
+    if (entersScript) {
+      final List<SlotStep> scriptPrefix = cand;
+      while (next < t.sites.length && _samePath(t.sites[next].path, scriptPrefix)) {
+        next++;
+      }
+      continue;
+    }
+    break;
   }
   if (next < t.sites.length && t.sites[next].offset < r.tex.length) {
     return r.abs(t.sites[next].offset);
   }
   return r.closeEnd; // 段内没有更靠右的位点了 → 走出到 `$` 之后
+}
+
+/// `path` 是否以 [prefix] 开头（逐级相等）
+bool _samePath(List<SlotStep> path, List<SlotStep> prefix) {
+  if (path.length < prefix.length) return false;
+  for (var i = 0; i < prefix.length; i++) {
+    if (!identical(path[i], prefix[i])) {
+      // SlotStep 没有 ==，按内容比
+      if (path[i].command != prefix[i].command ||
+          path[i].argIndex != prefix[i].argIndex ||
+          path[i].row != prefix[i].row ||
+          path[i].col != prefix[i].col) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+/// 这个位点前面的那个 `^` / `_`，是不是挂在**闭合定界符**后面（`\right|` / `\right)` …）。
+///
+/// 判据：从 [off] 往前跳过 `{` 与空格，遇到 `^`/`_` 后，再看它前面的文本是否以
+/// `\right|` / `\right)` / `\right]` / `\right\}` / `\right.` 结尾。
+///
+/// ★ 2026-10-24（批 3 · D2）：只有这一族脚标按"挂件"处理（`→` 一步出去）；
+///   `\sum_{i=1}^{n}` 的上下限、`x^2` 的指数**保持原来的逐格**（金表不许漂）。
+bool _scriptAfterRightDelim(String tex, int off) {
+  var i = off - 1;
+  while (i >= 0 && (tex[i] == '{' || tex[i] == ' ')) {
+    i--;
+  }
+  if (i < 0 || (tex[i] != '^' && tex[i] != '_')) return false;
+  final String head = tex.substring(0, i).trimRight();
+  const List<String> tails = <String>[
+    r'\right|', r'\right)', r'\right]', r'\right\}', r'\right.', r'\right\|', //
+    r'\right\vert', r'\right\Vert',
+  ];
+  for (final String t in tails) {
+    if (head.endsWith(t)) return true;
+  }
+  return false;
 }
 
 /// `←`：上一个文档级光标落点（与 [nextCaretOffset] 镜像）。
