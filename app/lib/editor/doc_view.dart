@@ -905,6 +905,10 @@ class DocViewState extends State<DocView> {
     //   行内公式不走这条（它的宽度就是那几个字，外侧属于段落文本，由段落自己管）。
     if (displayStyle) {
       if (localPos.dx < -2) return 0;
+      // ⏳ 2026-10-24（批 11）：这里本该"块外 ⇒ 块之后"，但改成返回 null 会打乱
+      //   `env_click_test` ⑧/⑪ 与 `math_blank_landing_test` ③-B 钉住的落点（它们要的是
+      //   "公式之后"那一格，而返回 null 会走到页面层的另一条兜底）⇒ **先保持原样**，
+      //   等"块外落点"在单元层统一处理时一起改。见后优化清单 §14.7 H6′。
       if (localPos.dx > root.size.width + 2) return tex.length;
     } else {
       // ★★ 2026-10-19（L18；用户选 **方案 B**：**行内公式左边缘 4 px 命中带**）——
