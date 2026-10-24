@@ -878,11 +878,12 @@ class EditorPageState extends State<EditorPage> {
       _editKey.currentState?.noteExternalWrap(wrapped, spans: spans);
     }
     // ★★ 2026-10-24（批 17，《整体设计》原则 5）：导入后若文档里有**行内 `$$`**，必须让用户看见。
-    //   行内 `$$` **没有任何合法含义**（只有**行首**的 `$$` 才是行间围栏），可它会被渲染成
-    //   "一个空的行内公式 + 后面的 tex 全掉到文字层" ⇒ 用户看到的是**整行 LaTeX 裸奔**；
-    //   若那段正好吞掉一个 `{`，KaTeX 还会报 `[公式不完整]`。
-    //   （实测事故：`20261021作业编辑.md` 第 15 行本来就有一处，旧版智能包裹被它带偏后
-    //    把第 19 行改坏成 `$$\to$$`。现在包裹那头已经修好，这里补的是**可见性**。）
+    //   行内 `$$` **没有任何合法含义**（只有**行首**的 `$$` 才是行间围栏）；它会被读成
+    //   "前一段的收尾 + 下一段的开头"，所以不一定立刻出问题，但只要旁边少一个 `$`，
+    //   就会变成"一个空的行内公式 + 后面的 tex 全掉到文字层"（整行 LaTeX 裸奔）。
+    //   （实测事故：`20261021作业编辑.md` 第 15 行本来就有四处，旧版 `scanMathSpans` 被它
+    //    带偏后把第 19 行改坏成 `$$\to$$`。判据与包裹那头都已修好，这里补的是**可见性**。）
+    //   ★ 措辞只说实话：**不承诺**"一定会显示成源码"（第 15 行修完后就正常渲染了）。
     final List<int> inlineDoubleDollar = inlineDoubleDollarLines(text);
     _editKey.currentState?.focusInput();
     // ★★ 2026-10-19（U2）：文案**只说真事** ——
@@ -894,7 +895,8 @@ class EditorPageState extends State<EditorPage> {
     _snack(inlineDoubleDollar.isEmpty
         ? base
         : '$base；⚠ 第 ${inlineDoubleDollar.take(6).join('、')}'
-            '${inlineDoubleDollar.length > 6 ? '…' : ''} 行有行内 `\$\$`（会显示成源码）');
+            '${inlineDoubleDollar.length > 6 ? '…' : ''} 行有行内 `\$\$`'
+            r'（不是合法围栏，建议改成单个 `$`）');
   }
 
   /// ★★ S4-d②：**导出**（`md` / `txt`）。
