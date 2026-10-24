@@ -179,11 +179,23 @@ AutoExpand? _planScript(String doc, int caret, String mark) {
   if (r != null) {
     final int contentStart = r.contentStart;
     final int rel = (caret - contentStart).clamp(0, r.tex.length);
+    // ★★★ 2026-10-24（批 14b）：**基座必须是"源码顺序上光标之前最后一个原子"**。
+    //
+    // 用户实测（`\sqrt[4]{x}`，光标在 `x` 之后按 Shift+6）：
+    //   结果是 `\sqrt{x}4^{}` —— 根号的**次数 `4` 被甩到根号外面**、指数框扣在 `4` 头上。
+    // 根因：这里原来是"**按列表顺序**取最后一个 `end <= rel` 的原子"，而
+    //   `lexVisibleAtoms` 的顺序**不是源码序**（`4` 排在 `x` 之后）⇒ 基座被选成 `4`
+    //   ⇒ 再把 `4^{}` 插回 `[4]` 那个位置时，被"次数里不许插结构"的守卫搬出根号。
+    // 判据：按 **`end` 最大**取（并列时取 `start` 更大的）——与列表顺序无关。
     VisibleAtom? last;
     for (final VisibleAtom a in lexVisibleAtoms(r.tex)) {
       if (a.kind == 'tail' || a.kind == 'slotpad' || a.kind == 'pad') continue;
-      if (a.end > rel) break;
-      last = a;
+      if (a.end > rel) continue;
+      if (last == null ||
+          a.end > last.end ||
+          (a.end == last.end && a.start > last.start)) {
+        last = a;
+      }
     }
     if (last == null || last.length == 0) return null;
     final String base = r.tex.substring(last.start, last.end);

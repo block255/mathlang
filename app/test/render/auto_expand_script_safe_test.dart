@@ -64,6 +64,27 @@ const List<String> kTex = <String>[
 ];
 
 void main() {
+  // ★★★ 2026-10-24（批 14b）：**基座必须选对** —— 这条钉用户复现的那颗
+  test(r'★★ `\sqrt[4]{x}` 里 x 之后打 `^` ⇒ 基座是 `x`，绝不许动根号的次数 `4`', () {
+    const String tex = r'\left|{x+1+\sqrt[4]{x}}\right|';
+    final String doc = '\$$tex\$';
+    // `\sqrt[4]{x}` 的 `}` 之前那一格 = x 之后
+    final int afterX = doc.indexOf(r'\sqrt[4]{x}') + r'\sqrt[4]{'.length + 1;
+    final AutoExpand? ex = planAutoExpand(
+      doc: doc,
+      caret: afterX,
+      typed: '^',
+      triggers: kTrig,
+    );
+    expect(ex, isNotNull);
+    final String out = applyAutoExpand(doc, ex!);
+    expect(out, contains(r'\sqrt[4]{x^{}}'),
+        reason: r'改前会变成 `\sqrt{x}4^{}`（次数被甩出根号、指数框扣在 4 上）：$out');
+    // 次数 `4` 必须**还在方括号里**
+    expect(RegExp(r'\\sqrt\[[^\[\]]*4[^\[\]]*\]').hasMatch(out), isTrue,
+        reason: r'`4` 必须留在 `\sqrt[…]` 里：$out');
+  });
+
   for (final String tex in kTex) {
     for (final String mark in <String>['^', '_']) {
       test('★★ 打字 `$mark` 在**每个偏移**都不许吃坏结构：$tex', () {
