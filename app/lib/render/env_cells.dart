@@ -130,7 +130,6 @@ EnvGrid? buildEnvGrid({
         tex: tex,
         boxes: boxes,
         atoms: noFill,
-        skipBoxes: plan.skipBoxes,
       );
       if (p.complete) {
         pairing = LeafPairing(
@@ -343,7 +342,6 @@ class _EnvFillPlan {
   const _EnvFillPlan({
     required this.fillAtoms,
     required this.fillGroups,
-    required this.skipBoxes,
   });
 
   /// 这些"垫子原子"**不进配对** —— 它们的盒由 [fillGroups] 直接钉死。
@@ -351,9 +349,6 @@ class _EnvFillPlan {
 
   /// 每个空格子一个组：垫子原子 ↔ **它自己那一格**的格子垫盒。
   final List<PairGroup> fillGroups;
-
-  /// 不归任何原子的盒（列间距 `&`、行尾对齐垫）⇒ 交给配对跳过。
-  final Set<int> skipBoxes;
 }
 
 /// 认出**空格子的格子垫盒**，并把它们从"大家抢"的配对里摘出来。
@@ -408,22 +403,15 @@ _EnvFillPlan? _envFillPlan({
   for (final List<int> cs in colsOfRow.values) {
     cs.sort();
   }
-  final List<int> rows = colsOfRow.keys.toList()..sort();
 
-  // ② 每行期望的垫子序列：`>= 0` = 那一格的 key，`-1` = 列间距
-  final Map<int, List<int>> itemsOfRow = <int, List<int>>{};
-  for (final int r in rows) {
-    final List<int> cs = colsOfRow[r]!;
-    final List<int> items = <int>[];
-    for (var i = 0; i < cs.length; i++) {
-      final int key = r * 1000 + cs[i];
-      if (emptyKeys.contains(key)) items.add(key);
-      if (i < cs.length - 1) items.add(-1);
-    }
-    if (items.isNotEmpty) itemsOfRow[r] = items;
-  }
-
-  // ③ 零高垫子盒，按 y 分行、每行按 x 排
+  // ② 零高垫子盒，按 y 分行、每行按 x 排
+  //
+  // 一行里的垫子**一定把这一行铺满**：`[格0垫?] [格0的行内对齐垫?] [列间距] [格1垫?] …`
+  // —— 格子里的内容比列宽窄时，引擎会**在格内右侧补一个对齐垫**；
+  // 格子空着时补的是我们的 1em 格子垫。两者都是零高 pad ⇒ 光看个数分不出来。
+  // ★ 实测（用户 2026-10-24 的 `\begin{cases}3&\\&\\…\end{cases}`）：第 1 行是
+  //   `[3][10px 对齐垫][列间距][格1垫]` = **3 个垫子**，而我按"每行最多多一个"去对位
+  //   ⇒ 把对齐垫当成了列间距、把列间距当成格1垫 ⇒ 整行错位 ⇒ 第 2 段起判定全歪。
   final List<int> padIdx = <int>[
     for (var i = 0; i < boxes.length; i++)
       if (boxes[i].kind == LeafBoxKind.pad && boxes[i].rect.height.abs() < 0.5) i
@@ -433,79 +421,91 @@ _EnvFillPlan? _envFillPlan({
     final int dy = boxes[a].rect.top.compareTo(boxes[b].rect.top);
     return dy != 0 ? dy : boxes[a].rect.left.compareTo(boxes[b].rect.left);
   });
-  final List<List<int>> groups = <List<int>>[];
+  final List<List<int>> padRows = <List<int>>[];
   for (final int i in padIdx) {
     final double y = boxes[i].rect.top;
-    if (groups.isEmpty ||
-        (boxes[groups.last.first].rect.top - y).abs() > 1.0) {
-      groups.add(<int>[i]);
+    if (padRows.isEmpty ||
+        (boxes[padRows.last.first].rect.top - y).abs() > 1.0) {
+      padRows.add(<int>[i]);
     } else {
-      groups.last.add(i);
+      padRows.last.add(i);
     }
   }
 
-  // ④ 逐行对位
-  final List<int> rowsWithItems = <int>[
-    for (final int r in rows)
-      if (itemsOfRow.containsKey(r)) r
-  ];
-  if (groups.length != rowsWithItems.length) return null;
-  final Map<int, int> fillBoxOfCell = <int, int>{};
-  final Set<int> skip = <int>{};
-  for (var k = 0; k < rowsWithItems.length; k++) {
-    final List<int> items = itemsOfRow[rowsWithItems[k]]!;
-    final List<int> g = groups[k];
-    // 每行允许**多一个**行尾对齐垫（行比列窄时引擎会补）
-    if (g.length != items.length && g.length != items.length + 1) return null;
-    for (var i = 0; i < items.length; i++) {
-      if (items[i] >= 0) {
-        fillBoxOfCell[items[i]] = g[i];
-      } else {
-        skip.add(g[i]);
+  // ③ 学"每一格的左缘"。
+  //
+  // 一行里垫子的**槽位顺序**是确定的：`[格0][间距0][格1][间距1]…`（`2*cols-1` 个槽位），
+  // 但槽位后面还可能**跟着行内对齐垫**（格子里的内容比列宽窄时，引擎在格内右侧补一块）。
+  // ⇒ **只取每行前 `2*cols-1` 个垫子当槽位**，后面的都当对齐垫忽略。
+  // 槽位里放的东西分两种：
+  //   · 格子空着 ⇒ 我们的 1em 格子垫，**左缘 = 这一格的左缘**；
+  //   · 格子里有内容（或内容不足列宽）⇒ 对齐垫，左缘 = **内容的右缘**（只会更靠右）。
+  // ⇒ 同一列取**最小值**就是格子左缘。
+  //
+  // ★ **只学"这一列里有空格子"的列**：那一列全填满时槽位里只剩对齐垫（左缘是内容右缘）
+  //   ⇒ 学出来是假值。实测（3 段 `1,&x>0 / &-1 / &0`）：第 2 列没有空格子 ⇒ 假 colLeft
+  //   会把对齐垫当成格子垫 ⇒ 个数对不上 ⇒ 整份不认。
+  final int cols =
+      cells.map((SlotSpan s) => s.path.last.col ?? 0).reduce((int a, int b) => a > b ? a : b) + 1;
+  final List<int> emptyOfCol = List<int>.filled(cols, 0);
+  for (final int key in emptyKeys) {
+    emptyOfCol[key % 1000]++;
+  }
+  final int slotsPerRow = 2 * cols - 1;
+  final List<double> colLeft = List<double>.filled(cols, double.infinity);
+  var learned = 0;
+  for (final List<int> g in padRows) {
+    if (g.length < slotsPerRow) continue; // 槽位都没铺满（有格子填得满满的）⇒ 这行不当参考
+    learned++;
+    for (var c = 0; c < cols; c++) {
+      if (emptyOfCol[c] == 0) continue;
+      final double x = boxes[g[2 * c]].rect.left;
+      if (x < colLeft[c]) colLeft[c] = x;
+    }
+  }
+  if (learned == 0) return null;
+
+  // ④ 归位：**左缘落在某个格子左缘上**的垫子才是格子垫；其余（列间距、行内对齐垫）不是原子。
+  final List<int> fillBoxes = <int>[];
+  final List<int> fillOfCol = List<int>.filled(cols, 0);
+  for (final List<int> g in padRows) {
+    for (final int box in g) {
+      final double x = boxes[box].rect.left;
+      for (var c = 0; c < cols; c++) {
+        if (emptyOfCol[c] == 0) continue;
+        if ((colLeft[c] - x).abs() <= 0.5) {
+          fillBoxes.add(box);
+          fillOfCol[c]++;
+          break;
+        }
       }
     }
-    for (var i = items.length; i < g.length; i++) {
-      skip.add(g[i]);
-    }
+  }
+  // 每一列的格子垫个数必须恰好等于"这一列的空格子数" —— 多一个少一个都是认错了
+  for (var c = 0; c < cols; c++) {
+    if (fillOfCol[c] != emptyOfCol[c]) return null;
   }
 
-  // ⑤ 同列的格子垫必须左缘一致（同列排版左缘相同）—— 对不上就是认错了
-  final Map<int, double> leftOfCol = <int, double>{};
-  fillBoxOfCell.forEach((int key, int box) {
-    final int c = key % 1000;
-    final double left = boxes[box].rect.left;
-    final double? seen = leftOfCol[c];
-    if (seen != null && (seen - left).abs() > 1.0) {
-      leftOfCol[c] = double.nan;
-    } else if (seen == null) {
-      leftOfCol[c] = left;
-    }
-  });
-  for (final double v in leftOfCol.values) {
-    if (v.isNaN) return null;
-  }
-
-  // ⑥ 垫子原子（按 tex 顺序）↔ 空格子的垫子盒（按行、列升序）
+  // ⑤ 垫子原子（按 tex 顺序 = 行主序）↔ 格子垫盒（按 y、x = 行主序）
   final List<VisibleAtom> fillAtoms = <VisibleAtom>[
     for (final VisibleAtom a in atoms)
       if (isPadAtom(a) && tex.substring(a.start, a.end) == kEnvCellFillTex) a
   ]..sort((VisibleAtom a, VisibleAtom b) => a.start.compareTo(b.start));
-  if (fillAtoms.length != fillBoxOfCell.length) return null;
-  final List<int> keys = fillBoxOfCell.keys.toList()..sort();
+  if (fillAtoms.length != fillBoxes.length) return null;
+  if (fillBoxes.length != emptyKeys.length) return null;
   final List<PairGroup> fillGroups = <PairGroup>[
-    for (var i = 0; i < keys.length; i++)
+    for (var i = 0; i < fillBoxes.length; i++)
       PairGroup(
         fillAtoms[i].start,
         fillAtoms[i].end,
-        fillBoxOfCell[keys[i]]!,
-        fillBoxOfCell[keys[i]]! + 1,
+        fillBoxes[i],
+        fillBoxes[i] + 1,
         fillAtoms[i],
       )
   ];
   return _EnvFillPlan(
     fillAtoms: fillAtoms.toSet(),
     fillGroups: fillGroups,
-    skipBoxes: skip,
   );
 }
 

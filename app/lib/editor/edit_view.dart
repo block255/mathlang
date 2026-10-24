@@ -712,11 +712,17 @@ class EditViewState extends State<EditView> {
     final List<List<String>> cells = splitEnvCells(_envBody(r.tex, style));
     final int rows = cells.isEmpty ? 2 : cells.length;
     final int cols = cells.isEmpty ? 2 : cells.first.length;
+    // ★★ 2026-10-24（D3 续）：**列数的下限只有矩阵需要**（矩阵面板要显示「列数」一栏）。
+    //   对 `cases` / `aligned`（只有行数一栏）来说，列数就是**文档里现在那个值** ——
+    //   以前一刀切 `cols < 2 ? 2 : cols`，把**单列分段**（乙口径的 `\begin{cases}\\`）
+    //   当成两列 ⇒ 一扩增段数，**每一行末尾就被塞进一个 `&`**
+    //   ⇒ 用户实测："2 段确实没有第二列，但我扩增之后每一行就冒出来第二个位点了"。
+    final int colsForDialog = rowsOnly ? (cols < 1 ? 1 : cols) : (cols < 2 ? 2 : cols);
     final EnvSizeChoice? choice = await showEnvSizeDialog(
       context,
       style: style,
       rows: rows < 1 ? 2 : rows,
-      cols: cols < 2 ? 2 : cols,
+      cols: colsForDialog,
       determinant: det,
       rowsOnly: rowsOnly,
       rowsLabel: style == EnvStyle.cases ? '段数' : '行数',

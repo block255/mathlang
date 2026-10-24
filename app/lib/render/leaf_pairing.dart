@@ -405,33 +405,21 @@ class LeafPairing {
 ///     · 只有第一遍失败时，才把"**没有任何原子认领的定界符盒**"标记为 `skip`
 ///       （定界符 ＋ 没有原子期望画这个字 ⇒ 它是外框，不是字符）再走一遍；
 ///       重试成功才采用 —— 否则照样返回第一遍的失败结果（**不掩盖**）。
-/// ★★ 2026-10-24（D3 续）：[skipBoxes] = **事先就知道"没有原子认领"的叶盒下标**。
-///
-/// 目前只有一个来源：**多行环境的列间距**（`&` 那一下在渲染里是一个 1em 宽、零高的垫子盒，
-/// 与我们的空格子预留垫 `\rule{1em}{0pt}` **长得一模一样**）。
-/// 不把它们挡住，垫子原子就会把它们当成"格子垫"吃掉 ⇒ **整行错位一位**
-/// （实测 4 段全空的分段函数：点 2 落 1、点 4 落 3）。
-/// 认它们的办法与风险都由调用方负责（见 `env_cells.dart` 的 `_envGapBoxes`）；
-/// 这里只负责"这些盒不许被任何原子认领"。
 LeafPairing buildLeafPairing({
   required String tex,
   required List<LeafBox> boxes,
   required List<VisibleAtom> atoms,
-  Set<int> skipBoxes = const <int>{},
 }) {
   final LeafPairing first =
-      _pairOnce(tex: tex, boxes: boxes, atoms: atoms, skip: skipBoxes);
+      _pairOnce(tex: tex, boxes: boxes, atoms: atoms);
   if (first.complete) return first;
 
   final Set<int> frame = unclaimedDelimiterBoxes(
       tex: tex, boxes: boxes, atoms: atoms);
   if (frame.isEmpty) return first;
 
-  final LeafPairing again = _pairOnce(
-      tex: tex,
-      boxes: boxes,
-      atoms: atoms,
-      skip: <int>{...skipBoxes, ...frame});
+  final LeafPairing again =
+      _pairOnce(tex: tex, boxes: boxes, atoms: atoms, skip: frame);
   if (!again.complete) return first;
   return LeafPairing(
     groups: again.groups,

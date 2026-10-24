@@ -175,6 +175,37 @@ void main() {
       }
     });
 
+    testWidgets('★★ 用户原样用例：`3&`（第 1 行只有左格有字）—— 其余各段照旧各判各的',
+        (WidgetTester tester) async {
+      // 用户 2026-10-24 给的原文：
+      //   `f(x)=\begin{cases}3&\\&\\&\\&\\&\\&\end{cases}`
+      //   现象：「只有第 2/4/5 行能点到、只有第 4 行带框；第 3 行只能点到后面那个位点」
+      // 根因：第 1 行的 `3` 比列宽窄 ⇒ 引擎在格内右侧补了一个 **10px 的行内对齐垫**
+      //   ⇒ 那行有 3 个垫子但只有 2 个是槽位 ⇒ 按"个数"对位就把整行往后错一位。
+      const String tex = r'f(x)=\begin{cases}3&\\&\\&\\&\\&\\&\end{cases}';
+      final EnvGrid? g = await _grid(tester, tex);
+      expect(g, isNotNull);
+      expect(g!.maxRow, 5, reason: '六段');
+      expect(g.maxCol, 1, reason: '两列');
+      expect(g.rowBand.length, 6);
+      for (var r = 0; r < 5; r++) {
+        expect(g.rowBand[r]!.bottom, closeTo(g.rowBand[r + 1]!.top, 0.01),
+            reason: 'r$r / r${r + 1} 必须首尾相接');
+      }
+      expect(g.colBand[0]!.right, lessThanOrEqualTo(g.colBand[1]!.left + 0.01),
+          reason: 'c0 ${g.colBand[0]} 与 c1 ${g.colBand[1]} 不许重叠');
+      // 每一格的中心都必须判回它自己
+      for (var r = 0; r <= 5; r++) {
+        for (var c = 0; c <= 1; c++) {
+          final Rect? cell = g.cell(r, c);
+          expect(cell, isNotNull, reason: 'r${r}c$c');
+          final EnvCellHit? hit = envCellHitIn(g, cell!.center);
+          expect(hit?.row, r, reason: '点 r${r}c$c ⇒ $hit');
+          expect(hit?.col, c, reason: '点 r${r}c$c ⇒ $hit');
+        }
+      }
+    });
+
     testWidgets('★ 填了一段之后，源偏移仍逐格对', (WidgetTester tester) async {
       final EnvGrid? g = await _grid(tester, filled6);
       expect(g, isNotNull);

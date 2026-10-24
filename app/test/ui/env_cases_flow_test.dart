@@ -119,4 +119,24 @@ void main() {
     await _rightClickMath(tester);
     expect(find.byKey(const Key('env-size-dialog')), findsNothing);
   });
+
+  testWidgets('★★ 单列分段（乙模板）扩增段数 ⇒ **不许给每行塞一个 `&`**',
+      (WidgetTester tester) async {
+    // 用户实测（2026-10-24）：「2 段确实是没有第二列，但是我扩增之后每一行就冒出来第二个位点了」
+    // 根因：`_resizeEnvAt` 给列数设了硬下限 2（`cols < 2 ? 2 : cols`）⇒ 单列分段被当成两列
+    //   ⇒ `resizeEnvironment` 在每行末尾补一个 `&` ⇒ 凭空多出一整列可点位。
+    const String single = r'f(x)=\begin{cases}\\\end{cases}';
+    final DocBuffer buf = await _pump(tester, docOf(single));
+    await _rightClickMath(tester);
+    expect(find.byKey(const Key('env-size-dialog')), findsOneWidget);
+    await tester.enterText(find.byKey(const Key('env-size-rows')), '6');
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('env-size-apply')));
+    await tester.pumpAndSettle();
+
+    expect(_rows(buf.buf), 6, reason: buf.buf.replaceAll('\n', r'\n'));
+    expect(buf.buf.contains('&'), isFalse,
+        reason: '单列分段扩增后**不该出现 `&`**（那就是"第二个位点"）：${buf.buf}');
+    expect(buf.buf.contains(r'f(x)='), isTrue, reason: buf.buf);
+  });
 }
