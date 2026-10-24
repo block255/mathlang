@@ -431,6 +431,17 @@ bool _scriptAfterRightDelim(String tex, int off) {
 bool _isAlignedEqSite(String tex, int off) =>
     off > 0 && off < tex.length && tex[off] == '=' && tex[off - 1] == '&';
 
+/// ★★★ 2026-10-24（批 20）：把"落在 `&=` 的 `=` 之前"的偏移**挪到 `=` 之后**。
+///
+/// 为什么需要：`&` 不画东西，所以"`&` 之前（上一格末尾）"与"`&` 之后（`=` 之前）"
+/// **是同一根像素**；而方向键已经跳过后者（[_isAlignedEqSite]），点击却还能落到那里
+/// ⇒ 同一个位置有两种行为（用户实测："创建时光标落 `&` 左边、鼠标点却落 `&` 右边"）。
+/// 点击路径统一走这个函数 ⇒ 与方向键同一个落点。
+int normalizeAlignedEqOffset(String tex, int rel) {
+  if (rel < 0 || rel > tex.length) return rel;
+  return _isAlignedEqSite(tex, rel) ? rel + 1 : rel;
+}
+
 /// `←`：上一个文档级光标落点（与 [nextCaretOffset] 镜像）。
 int prevCaretOffset(String source, int offset) {
   final int o = offset.clamp(0, source.length);

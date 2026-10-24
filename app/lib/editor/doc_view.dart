@@ -814,7 +814,7 @@ class DocViewState extends State<DocView> {
           _mathBlockKeys[u.id]?.currentContext?.findRenderObject();
       if (mr is! RenderBox || !mr.hasSize) return null;
       final int? caretRel = _caret == null ? null : u.relFor(_caret);
-      final int? texRel = _mathTapTexOffset(
+      final int? texRelRaw = _mathTapTexOffset(
         tex: rawTex,
         renderTex: _renderTexFor(rawTex, caretRel),
         root: mr,
@@ -823,6 +823,9 @@ class DocViewState extends State<DocView> {
         // ★ 行距兜底用（环境里量不出行距时 ×1.2）；行间块的字号是"行间字号"
         fontSize: _s.effectiveDisplayFontSize,
       );
+      // ★★★ 2026-10-24（批 20）：`&=` 的 `=` **之前**不是落点（与方向键同一口径）
+      final int? texRel =
+          texRelRaw == null ? null : normalizeAlignedEqOffset(rawTex, texRelRaw);
       if (texRel == null) return null;
       return u.renderBase + buildCaretSites(rawTex).snap(texRel).offset;
     }
@@ -1038,7 +1041,7 @@ class DocViewState extends State<DocView> {
     }
     final RenderObject? ro = key.currentContext?.findRenderObject();
     if (ro is! RenderBox || !ro.hasSize) return;
-    final int? texRel = _mathTapTexOffset(
+    final int? texRelRaw = _mathTapTexOffset(
       tex: seg.tex,
       renderTex: renderTex,
       root: ro,
@@ -1046,6 +1049,9 @@ class DocViewState extends State<DocView> {
       displayStyle: false, // ★ 行内 = text 样式（`\sum` 的上下限退回脚本位）
       fontSize: _s.bodyFontSize,
     );
+    // ★★★ 2026-10-24（批 20）：同一条口径（点击与方向键落点必须一致）
+    final int? texRel =
+        texRelRaw == null ? null : normalizeAlignedEqOffset(seg.tex, texRelRaw);
     if (texRel == null) return;
     // ★ 位点吸附：落点必须是合法位点（设计稿 §2.4 的 P3）
     final int rel = buildCaretSites(seg.tex).snap(texRel).offset;

@@ -321,6 +321,26 @@ SmartEdit smartBackspace(CaretSiteTable t, int rel) {
   final int r = rel.clamp(0, t.tex.length);
   if (r <= 0) return SmartEdit.none;
 
+  // ★★★ 2026-10-24（批 20 · F2）：**`&` / `\\` / `&=` 的那个 `=` 是结构记号，不许单个删**。
+  //
+  // 用户实测（对齐推导 / 分段函数都中招）：在一格里连按退格，删完内容后**开始啃结构记号**
+  //   ⇒ `\begin{aligned}&=\\&=\end{aligned}` 被啃成 `\begin{aligned}&\&\end{aligned}`
+  //   ⇒ 解析失败 ⇒ 整行变成源码裸奔（还把后面的 `$$` 也吃掉）。
+  // 口径（与 D1「空结构整块回收」同一条，平权 ①：结构记号不是内容）：
+  //   · 环境里**没有用户内容**（只剩 `&` `\\` `=` 骨架）⇒ 退格 = **整块回收这个环境**；
+  //   · 还有内容 ⇒ **跳过记号**，去删左边最近的**真内容**原子（"⌫ = 左边最近的墨迹"）。
+  if (_isEnvSkeleton(t.tex)) {
+    if (_envHasNoContent(t.tex)) {
+      return SmartEdit.remove(0, t.tex.length, 0);
+    }
+    var k = r;
+    while (k > 0 && _isAlignMarkChar(t.tex, k - 1)) {
+      k--;
+    }
+    if (k != r && k > 0) return smartBackspace(t, k);
+    if (k != r) return SmartEdit.none;
+  }
+
   // §4.4 降级：字节级，笨但可预测
   if (t.degraded) return SmartEdit.remove(r - 1, r, r - 1);
 
@@ -835,4 +855,43 @@ _DelimPair? _delimPairAt(String tex, int at) {
     if (toks[k].name == 'right') return _DelimPair(leftStart, toks[k].end);
   }
   return null;
+}
+// ---------------------------------------------------------------- 环境骨架（批 20）
+
+/// 这段 tex 是不是一个**多行环境**（`\begin{…}` … `\end{…}`）。
+bool _isEnvSkeleton(String tex) {
+  final String s = tex.trimLeft();
+  return s.startsWith(r'\begin{') && tex.trimRight().endsWith('}');
+}
+
+/// 环境里**还有没有用户内容**（去掉 `&` `\\` `=` 与空白 / 环境名之后）。
+///
+/// 判据只针对"退格要不要整块回收"这件事：`\begin{aligned}&=\\&=\end{aligned}` 里
+/// 一个用户内容都没有 ⇒ true（可以整块回收）；`rS&=` 里有 `rS` ⇒ false。
+bool _envHasNoContent(String tex) {
+  final int b = tex.indexOf(r'\begin{');
+  final int e = tex.lastIndexOf(r'\end{');
+  if (b < 0 || e <= b) return false;
+  final int bodyFrom = tex.indexOf('}', b) + 1;
+  String body = bodyFrom > 0 && bodyFrom <= e ? tex.substring(bodyFrom, e) : '';
+  body = body
+      .replaceAll(r'\\', '')
+      .replaceAll('&', '')
+      .replaceAll('=', '')
+      .replaceAll(RegExp(r'\s+'), '');
+  return body.isEmpty;
+}
+
+/// 下标 [i] 这个字符是不是**对齐记号**的一部分：`&` · `\\` · `&=` 的那个 `=`。
+bool _isAlignMarkChar(String tex, int i) {
+  if (i < 0 || i >= tex.length) return false;
+  final String c = tex[i];
+  if (c == '&') return true;
+  if (c == r'\') {
+    // 只认 `\\`（换行记号）；别的反斜杠命令不算记号
+    return (i + 1 < tex.length && tex[i + 1] == r'\') ||
+        (i > 0 && tex[i - 1] == r'\');
+  }
+  if (c == '=') return i > 0 && tex[i - 1] == '&';
+  return false;
 }
