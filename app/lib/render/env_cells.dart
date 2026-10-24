@@ -576,6 +576,17 @@ EnvCellHit? envCellHitIn(EnvGrid g, Offset localPos) {
         : localPos.dx - band.right;
     if (d < best) { best = d; col = c; }
   }
+  // ★★★ 2026-10-24（批 22 ①，用户六张图）：**正落在某列左缘（含左缘 +1.5px）⇒ 归左边那一列**。
+  //
+  // 为什么：`&` 不占宽度 ⇒「左格末尾」与「右格开头」是**同一根 x**（就是右列的左缘）。
+  //   用户实测：在左格打 `v`，光标落在偏移 16（= `=` 之前），锚点被注入到**右列起点**
+  //   ⇒ 按"含"判据判成右格 ⇒ **框画到右格去了**（而打字仍然进第 1 列）。
+  //   口径：那个像素属于**左格末尾**（与批 21"点 `=` 左边 ⇒ 落左格"一致）⇒ 往左让一列。
+  //   ★ 真正在右格里（`=` 之后）的光标 x 在 `=` 右缘之外，离右列左缘有 15px 以上 ⇒ 不会误伤。
+  if (col > 0) {
+    final Rect? cb0 = g.colBand[col];
+    if (cb0 != null && localPos.dx <= cb0.left + 1.5) col -= 1;
+  }
   final Rect? cell = g.cell(row, col);
   final Rect? cb = g.colBand[col];
   final bool atEnd = cell != null
