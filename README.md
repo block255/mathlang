@@ -51,7 +51,7 @@ Windows 64 位 · Flutter 桌面应用 · MIT
 cd app
 flutter pub get
 flutter analyze
-flutter test          # 全量 1289 通过 + 0 skip
+flutter test          # 全量 1380 通过 + 0 skip
 flutter build windows --release
 ```
 
@@ -74,7 +74,7 @@ powershell -ExecutionPolicy Bypass -File scripts\pack_msix.ps1     # MSIX + 一�
 ## 目录结构
 
 ```
-app/        Flutter 工程（lib/ 源码 · test/ 1289 条测试）
+app/        Flutter 工程（lib/ 源码 · test/ 1380 条测试）
 notes/      设计文档 / 交接快照 / 开发日志（这个项目最贵的资产）
 scripts/    构建、打包、签名、热重载脚本
 signing/    签名材料（密钥不入库）
@@ -85,7 +85,7 @@ dist/       发布产物（不入库）
 ## 状态
 
 - 版本 **1.0.0**，Windows 已可用；移动端在路线图里（阶段 6）。
-- 测试：`flutter test` **1289 通过 + 0 skip**，`flutter analyze` 零告警。
+- 测试：`flutter test` **1380 通过 + 0 skip**，`flutter analyze` 零告警。
 - 已知限制与有意不做的东西都记在 [`notes/后优化清单.md`](notes/后优化清单.md)。
 
 ## 许可

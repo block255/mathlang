@@ -21,6 +21,8 @@ import 'package:flutter/rendering.dart';
 import 'caret_sites.dart';
 import 'leaf_boxes.dart';
 import 'leaf_pairing.dart';
+import 'slot_pad.dart';
+import 'visible_atoms.dart';
 
 /// 一次格子落点的结果：第几行、第几列、落在该格哪一侧。
 class EnvCellHit {
@@ -102,13 +104,38 @@ EnvGrid? buildEnvGrid({
   if (cells.isEmpty) return null;
   final List<LeafBox> boxes = scanLeafBoxes(root).eligible;
   if (boxes.isEmpty) return null;
-  final LeafPairing pairing = buildLeafPairing(
-    tex: tex,
-    boxes: boxes,
-    atoms: renderOrderAtoms(tex, displayStyle: displayStyle),
-  );
   int rowOf(SlotSpan s) => s.path.last.row ?? 0;
   int colOf(SlotSpan s) => s.path.last.col ?? 0;
+  final int maxRow = cells.map(rowOf).reduce((int a, int b) => a > b ? a : b);
+  final int maxCol = cells.map(colOf).reduce((int a, int b) => a > b ? a : b);
+
+  // ★★★ 2026-10-24（D3 续）：**先把"格子垫"从"大家抢"的配对里摘出来**，再量格子。
+  //   完整根因与判据见 `_envFillPlan` 的注释（一句话：`&` 的列间距和空格子的垫子
+  //   在盒这一层同形，配对会把列间距当成格子垫吃掉 ⇒ 整行错位一位 ⇒ 点 2 落 1）。
+  final List<VisibleAtom> atoms = renderOrderAtoms(tex, displayStyle: displayStyle);
+  final _EnvFillPlan? plan =
+      _envFillPlan(tex: tex, boxes: boxes, cells: cells, atoms: atoms);
+  LeafPairing? pairing;
+  if (plan != null) {
+    final List<VisibleAtom> noFill = <VisibleAtom>[
+      for (final VisibleAtom a in atoms)
+        if (!plan.fillAtoms.contains(a)) a
+    ];
+    final LeafPairing p = buildLeafPairing(
+      tex: tex,
+      boxes: boxes,
+      atoms: noFill,
+      skipBoxes: plan.skipBoxes,
+    );
+    if (p.complete) {
+      pairing = LeafPairing(
+        groups: <PairGroup>[...p.groups, ...plan.fillGroups],
+        complete: true,
+      );
+    }
+  }
+  // 认不出来（有别的垫子混进来）⇒ **整份不认**，退回老路：宁可点不准，也不猜。
+  pairing ??= buildLeafPairing(tex: tex, boxes: boxes, atoms: atoms);
 
   // ① 格子矩形：区间相交判据
   final Map<int, Rect> cellRect = <int, Rect>{};
@@ -122,8 +149,6 @@ EnvGrid? buildEnvGrid({
     }
     if (r != null) cellRect[rowOf(s) * 1000 + colOf(s)] = r;
   }
-  final int maxRow = cells.map(rowOf).reduce((int a, int b) => a > b ? a : b);
-  final int maxCol = cells.map(colOf).reduce((int a, int b) => a > b ? a : b);
 
   // ★★ 2026-10-24（D3）：**格子全都还空着**的环境（刚插出来的 `cases`）也要有网格 ——
   //   旧代码 `cellRect.isEmpty ⇒ return null` ⇒ 那种块**一个框都不画**（用户："点进去没有框"）。
@@ -307,9 +332,178 @@ EnvGrid? buildEnvGrid({
       synthetic: synthetic);
 }
 
+/// 一次"格子垫归位"的计划（见 [_envFillPlan]）。
+class _EnvFillPlan {
+  const _EnvFillPlan({
+    required this.fillAtoms,
+    required this.fillGroups,
+    required this.skipBoxes,
+  });
+
+  /// 这些"垫子原子"**不进配对** —— 它们的盒由 [fillGroups] 直接钉死。
+  final Set<VisibleAtom> fillAtoms;
+
+  /// 每个空格子一个组：垫子原子 ↔ **它自己那一格**的格子垫盒。
+  final List<PairGroup> fillGroups;
+
+  /// 不归任何原子的盒（列间距 `&`、行尾对齐垫）⇒ 交给配对跳过。
+  final Set<int> skipBoxes;
+}
+
+/// 认出**空格子的格子垫盒**，并把它们从"大家抢"的配对里摘出来。
+///
+/// ## 要解决的问题（2026-10-24 探针坐实 · 用户："点第 2 段落第 1 段"）
+///
+/// `cases` / 矩阵的**列间距**（`&` 那一下）在渲染里是一个 **1em 宽、零高的垫子盒**，
+/// 而我们给空格子注入的 `kEnvCellFillTex`（`\rule{1em}{0pt}`）**也是 1em 宽零高** —— 同形。
+/// `_pairOnce` 给垫子原子找盒时是"下一个 pad 盒就是你的" ⇒ 列间距被当成格子垫吃掉
+/// ⇒ **整行错位一位**（实测 4 段全空：8 个垫子原子拿到 12 个盒里的前 8 个，
+/// 于是 r0c1 拿列间距、r1c0 拿 r0c1 的垫子…）⇒ 行带串成
+/// `[0,24) [24,48) [24,48) [48,72)` ⇒ 点 2 落 1、点 4 落 3。
+///
+/// ★ 顺带说明：**这不是"几何该按源 tex 量"的问题**（2026-10-23 的猜测）——
+///   按源 tex 量只会把同一份错位换到另一套坐标里。真问题在"盒 ↔ 原子"的配对。
+///
+/// ## 判据（**个数对不上就整份不认**，宁可点不准也不猜）
+///
+/// 一行从左到右的垫子序列是确定的：
+/// `[格0的垫子?] 间距 [格1的垫子?] 间距 … [格N的垫子?]（行尾对齐垫?）`
+/// —— 某一格**空着**才有它的垫子（空 = trim 后为空 **或** 已经是 `kEnvCellFillTex`，
+/// 与注入侧 `slot_marks.injectSlotMarks` 同一判据）；列与列之间**恒有**一个间距；
+/// 行比列窄时引擎还会补**一个**行尾对齐垫（所以每行允许"多一个"）。
+/// 按 y 把零高垫子盒分行、按 x 排好，与期望序列逐个对位：
+///   · 落到"格垫"位 ⇒ 认成那一格的垫子（**盒 ↔ 原子直接钉死**）
+///   · 落到"间距 / 行尾"位 ⇒ 进 skip（不归任何原子）
+///
+/// 任何一处对不上（多出嵌套结构的尾垫、`\,` 的间距、列数不足的行…）⇒ 返回 null。
+_EnvFillPlan? _envFillPlan({
+  required String tex,
+  required List<LeafBox> boxes,
+  required List<SlotSpan> cells,
+  required List<VisibleAtom> atoms,
+}) {
+  // ① 每行有哪几列、哪几格空着
+  //
+  // ★★ 判据取"这一格里**含**格子垫"（不是"等于"）：光标停在该格时，
+  //   注入链会在这格里再塞一个**光标锚点** `\textcolor{#1E88E5}{\rule{0pt}{0pt}}`
+  //   ⇒ 格子内容变成 `锚点 + \rule{1em}{0pt}`，"等于"就认不出来（实测：光标一进格子，
+  //   后面的点击全部退回错位老路 —— 4 段用例里第 1 击对、第 2 击起错）。
+  //   ★ 反过来不会误认：格子垫**只**注入给"trim 后为空"的格子（`slot_marks`），
+  //     非空格子里不可能出现它。
+  final Map<int, List<int>> colsOfRow = <int, List<int>>{};
+  final Set<int> emptyKeys = <int>{};
+  for (final SlotSpan s in cells) {
+    final int r = s.path.last.row ?? 0;
+    final int c = s.path.last.col ?? 0;
+    (colsOfRow[r] ??= <int>[]).add(c);
+    final String t = tex.substring(s.start, s.end);
+    if (t.trim().isEmpty || t.contains(kEnvCellFillTex)) emptyKeys.add(r * 1000 + c);
+  }
+  for (final List<int> cs in colsOfRow.values) {
+    cs.sort();
+  }
+  final List<int> rows = colsOfRow.keys.toList()..sort();
+
+  // ② 每行期望的垫子序列：`>= 0` = 那一格的 key，`-1` = 列间距
+  final Map<int, List<int>> itemsOfRow = <int, List<int>>{};
+  for (final int r in rows) {
+    final List<int> cs = colsOfRow[r]!;
+    final List<int> items = <int>[];
+    for (var i = 0; i < cs.length; i++) {
+      final int key = r * 1000 + cs[i];
+      if (emptyKeys.contains(key)) items.add(key);
+      if (i < cs.length - 1) items.add(-1);
+    }
+    if (items.isNotEmpty) itemsOfRow[r] = items;
+  }
+
+  // ③ 零高垫子盒，按 y 分行、每行按 x 排
+  final List<int> padIdx = <int>[
+    for (var i = 0; i < boxes.length; i++)
+      if (boxes[i].kind == LeafBoxKind.pad && boxes[i].rect.height.abs() < 0.5) i
+  ];
+  if (padIdx.isEmpty) return null;
+  padIdx.sort((int a, int b) {
+    final int dy = boxes[a].rect.top.compareTo(boxes[b].rect.top);
+    return dy != 0 ? dy : boxes[a].rect.left.compareTo(boxes[b].rect.left);
+  });
+  final List<List<int>> groups = <List<int>>[];
+  for (final int i in padIdx) {
+    final double y = boxes[i].rect.top;
+    if (groups.isEmpty ||
+        (boxes[groups.last.first].rect.top - y).abs() > 1.0) {
+      groups.add(<int>[i]);
+    } else {
+      groups.last.add(i);
+    }
+  }
+
+  // ④ 逐行对位
+  final List<int> rowsWithItems = <int>[
+    for (final int r in rows)
+      if (itemsOfRow.containsKey(r)) r
+  ];
+  if (groups.length != rowsWithItems.length) return null;
+  final Map<int, int> fillBoxOfCell = <int, int>{};
+  final Set<int> skip = <int>{};
+  for (var k = 0; k < rowsWithItems.length; k++) {
+    final List<int> items = itemsOfRow[rowsWithItems[k]]!;
+    final List<int> g = groups[k];
+    // 每行允许**多一个**行尾对齐垫（行比列窄时引擎会补）
+    if (g.length != items.length && g.length != items.length + 1) return null;
+    for (var i = 0; i < items.length; i++) {
+      if (items[i] >= 0) {
+        fillBoxOfCell[items[i]] = g[i];
+      } else {
+        skip.add(g[i]);
+      }
+    }
+    for (var i = items.length; i < g.length; i++) {
+      skip.add(g[i]);
+    }
+  }
+
+  // ⑤ 同列的格子垫必须左缘一致（同列排版左缘相同）—— 对不上就是认错了
+  final Map<int, double> leftOfCol = <int, double>{};
+  fillBoxOfCell.forEach((int key, int box) {
+    final int c = key % 1000;
+    final double left = boxes[box].rect.left;
+    final double? seen = leftOfCol[c];
+    if (seen != null && (seen - left).abs() > 1.0) {
+      leftOfCol[c] = double.nan;
+    } else if (seen == null) {
+      leftOfCol[c] = left;
+    }
+  });
+  for (final double v in leftOfCol.values) {
+    if (v.isNaN) return null;
+  }
+
+  // ⑥ 垫子原子（按 tex 顺序）↔ 空格子的垫子盒（按行、列升序）
+  final List<VisibleAtom> fillAtoms = <VisibleAtom>[
+    for (final VisibleAtom a in atoms)
+      if (isPadAtom(a) && tex.substring(a.start, a.end) == kEnvCellFillTex) a
+  ]..sort((VisibleAtom a, VisibleAtom b) => a.start.compareTo(b.start));  if (fillAtoms.length != fillBoxOfCell.length) return null;
+  final List<int> keys = fillBoxOfCell.keys.toList()..sort();
+  final List<PairGroup> fillGroups = <PairGroup>[
+    for (var i = 0; i < keys.length; i++)
+      PairGroup(
+        fillAtoms[i].start,
+        fillAtoms[i].end,
+        fillBoxOfCell[keys[i]]!,
+        fillBoxOfCell[keys[i]]! + 1,
+        fillAtoms[i],
+      )
+  ];
+  return _EnvFillPlan(
+    fillAtoms: fillAtoms.toSet(),
+    fillGroups: fillGroups,
+    skipBoxes: skip,
+  );
+}
+
 /// 中位数（空表 ⇒ 0）
-double _medianOf(List<double> xs) {
-  if (xs.isEmpty) return 0;
+double _medianOf(List<double> xs) {  if (xs.isEmpty) return 0;
   final List<double> s = List<double>.of(xs)..sort();
   return s[s.length ~/ 2];
 }

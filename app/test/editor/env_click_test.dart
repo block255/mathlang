@@ -369,4 +369,64 @@ void main() {
           reason: '行内公式也必须能右键（以前只有行间块接了手势）');
     });
   });
+
+  group('⑫ ★ 4 段全空的分段函数：点第几段**就落第几段**（2026-10-24 · D3 续）', () {
+    // 用户原话：「点第 2 段落到第 1 段、点第 4 段落到第 3 段」「第 2 段后面还冒出一个位点」。
+    // 根因：`&` 的**列间距**是 1em 宽零高的垫子盒，与空格子的预留垫 `\rule{1em}{0pt}` 同形
+    //   ⇒ 配对把列间距当成格子垫吃掉 ⇒ 整行错位一位。
+    const String cases4 = r'f(x)=\begin{cases}&\\&\\&\\&\end{cases}';
+
+    /// 从真实渲染里量出两列的左缘与行高：
+    /// 零高垫子的 x 有三档 —— 第 1 列垫子、列间距、第 2 列垫子（升序）。
+    ({double col0, double col1, double pitch}) measure(
+        RenderBox root, List<LeafBox> boxes) {
+      final List<double> xs = <double>[
+        for (final LeafBox b in boxes)
+          if (b.kind == LeafBoxKind.pad && b.rect.height.abs() < 0.5) b.rect.left
+      ]..sort();
+      final List<double> uniq = <double>[];
+      for (final double x in xs) {
+        if (uniq.isEmpty || x - uniq.last > 0.5) uniq.add(x);
+      }
+      expect(uniq.length, greaterThanOrEqualTo(2),
+          reason: '至少要量到两列的垫子（实测 $uniq）');
+      return (col0: uniq.first, col1: uniq.last, pitch: root.size.height / 4);
+    }
+
+    testWidgets('★★ 第 2 列：四段各自落回自己那一段的起点', (WidgetTester tester) async {
+      final DocBuffer buf = await _pump(tester, _doc(cases4));
+      final ({RenderBox root, List<LeafBox> boxes}) r = _rig();
+      final ({double col0, double col1, double pitch}) m = measure(r.root, r.boxes);
+      // 源 tex 里第 2 列四格的起点：19 / 22 / 25 / 28（每行 +3）
+      const List<int> starts = <int>[19, 22, 25, 28];
+      for (var row = 0; row < 4; row++) {
+        final Offset target =
+            Offset(m.col1 + 6, (row + 0.5) * m.pitch);
+        buf.setCaret(0);
+        await _leftClick(tester, r.root, target);
+        final int want = buf.buf.indexOf(cases4) + starts[row];
+        expect(buf.caret, want,
+            reason: '点第 ${row + 1} 段第 2 列（$target）⇒ 应在 tex[${starts[row]}]'
+                '（文档 $want），实际 ${buf.caret}');
+      }
+    });
+
+    testWidgets('★★ 第 1 列：四段也各自落回自己那一段', (WidgetTester tester) async {
+      final DocBuffer buf = await _pump(tester, _doc(cases4));
+      final ({RenderBox root, List<LeafBox> boxes}) r = _rig();
+      final ({double col0, double col1, double pitch}) m = measure(r.root, r.boxes);
+      // 源 tex 里第 1 列四格的起点：18 / 21 / 24 / 27
+      const List<int> starts = <int>[18, 21, 24, 27];
+      for (var row = 0; row < 4; row++) {
+        final Offset target =
+            Offset(m.col0 + 6, (row + 0.5) * m.pitch);
+        buf.setCaret(0);
+        await _leftClick(tester, r.root, target);
+        final int want = buf.buf.indexOf(cases4) + starts[row];
+        expect(buf.caret, want,
+            reason: '点第 ${row + 1} 段第 1 列（$target）⇒ 应在 tex[${starts[row]}]'
+                '（文档 $want），实际 ${buf.caret}');
+      }
+    });
+  });
 }
