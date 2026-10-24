@@ -68,6 +68,24 @@ class NormalizeResult {
       : 'Normalize(无变化)';
 }
 
+/// 这个 `^` / `_` 脚本是不是**它所在结构槽的最后一项**（= 槽内容末尾）—— 批 6 · H4。
+///
+/// 判据（文本级，只认"槽结束"，**不认段末与 `\right`**）：
+///   · 后面紧跟 `}` —— 关闭**外层槽**（`\frac{x^{3}}{…}` 的分子 / `\sqrt{x^{2}}` / `\frac{a}{x^{2}}`）
+///   · 后面是 `\\` / `&` / `\end{` —— 多行环境的一格结束
+///
+/// ★ 为什么段末不算：`$a=b^2$` 这种"整段以一个上标收尾"的形态到处都有，
+///   去括号既有的口径（2026-10-17 用户拍板）保持不变；而且段末的"对象之后"就是段外，
+///   不会把"指数尾"和某个**容器**的尾并到一起。
+bool _isSlotTailScript(String tex, SlotSpan s) {
+  var i = s.end;
+  if (s.start > 0 && tex[s.start - 1] == '{') i++; // 跳过自己的 `}`
+  if (i >= tex.length) return false;
+  if (tex[i] == '}') return true; // 关外层槽
+  final String rest = tex.substring(i);
+  return rest.startsWith(r'\\') || rest.startsWith('&') || rest.startsWith(r'\end{');
+}
+
 /// 对**一个数学段的 tex** 跑 normalize（幂等：反复调用第二次无变化）。
 NormalizeResult normalizeTex(String tex, int caretRel) {
   var cur = tex;
@@ -125,9 +143,37 @@ NormalizeResult normalizeTex(String tex, int caretRel) {
       if (_hasAnotherScriptAfter(cur, s.end + 1)) continue; // (a)
       if (s.start >= 3 && cur[s.start - 3] == '}') continue; // (b)
       if (_baseIsStackedOp(cur, s.start - 2)) continue; // (c)
+      // ★★★ 2026-10-24（批 6 · H4 真凶）：(d) **脚本是"结构槽的最后一项" ⇒ 绝不拆**。
+      //
+      // 用户给的目标序列（2026-10-24）：「依次按右箭头：3 左边 → 3 右边 → x³ 的右边（分子尾）→ 分母首」
+      // —— 这四步在 `\frac{x^{3}}{…}` 里**本来就是**四个位点（9 / 10 / 11 / 13）。
+      // 但失焦 normalize 把 `x^{3}` 拆成 `x^3`（下面 ②）⇒ **"指数尾"与"分子尾"并成同一个字节**
+      // （`\frac{x^3}{…}` 的位点：8 / 9 / 11）⇒ 用户看到的就是"3 右边按一下就掉到分母"。
+      // 判据与既有 (a)(b)(c) 同源：**拆了会合并位点 ⇒ 不拆**；这里限定在最要紧的一处 ——
+      // 脚本后面紧跟 `}`（关外层槽）或 `\\` / `&` / `\end{`（环境格结束）。
+      if (_isSlotTailScript(cur, s)) continue; // (d)
       final String inner = cur.substring(s.start, s.end);
       if (lexVisibleAtoms(inner).length != 1) continue; // ★ 多原子绝不去括号
       edits.add((from: s.start - 1, to: s.end + 1, repl: inner, lead: 1));
+    }
+
+    // ③ ★★★ 2026-10-24（批 6）：**结构槽尾的裸脚本参数补回花括号**（② 的反向）。
+    //
+    // 为什么需要它：② 在历史上已经把大量文档写成了 `\frac{x^3}{y}` 这种形态
+    // （花括号一旦被拆，位点就永久并成一个字节）。只加 (d) 只能"不再继续拆"，
+    // 老文档仍然缺"分子尾"这一站 ⇒ 只补最要紧的那一处（结构槽尾），其余形态一律不动。
+    for (final SlotSpan s in t.slots) {
+      if (s.path.isEmpty) continue;
+      final String cmd = s.path.last.command;
+      if (cmd != '^' && cmd != '_') continue;
+      if (s.start <= 0 || s.end >= cur.length) continue;
+      if (cur[s.start - 1] == '{') continue; // 已经带花括号（交给 (d) 保住）
+      if (!_isSlotTailScript(cur, s)) continue;
+      final String inner = cur.substring(s.start, s.end);
+      if (inner.isEmpty) continue;
+      if (lexVisibleAtoms(inner).length != 1) continue; // 只补单原子
+      if (_hasAnotherScriptAfter(cur, s.end)) continue; // 连写脚本不动（`x^2_1`）
+      edits.add((from: s.start, to: s.end, repl: '{$inner}', lead: 0));
     }
 
     if (edits.isEmpty) break;
