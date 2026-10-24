@@ -33,6 +33,9 @@ int _bars(WidgetTester tester) {
   return n;
 }
 
+/// ★ 本文件只验"块前/块后那两格**别丢**"，所以文档里只有**一个**公式块 —— `any` 在这里够用。
+/// ★★ 但"**由哪一块**画"这件事（多块时不许每块都声称光标在自己这儿）
+/// 由 `test/editor/block_caret_ownership_test.dart` 按块断言（批 25）。
 bool _blockShowsCaret(WidgetTester tester) => find
     .byType(MathWithCaret)
     .evaluate()

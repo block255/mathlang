@@ -396,13 +396,31 @@ class _Unit {
 /// （两块之间只有一个 `\n`）⇒ 两个 `MathWithCaret` 都 `showCaret = true`
 /// ⇒ 一根画在 A 的 tex 末尾、一根画在 B 的 tex 开头 ⇒ 屏幕上两根。
 /// ⇒ 共享那一格**只归左边那块**（右边那块不画）。
+///
+/// ★★★ 2026-10-24（批 25）：**补上"光标在不在这块"的区间判据**。
+///   批 23 的探针发现：上面这条只判了 `caret != null` + 共享格，
+///   **没判光标是否落在本块的 `[acceptFrom, acceptTo]`** ⇒ 只要文档里有光标，
+///   **每个**公式块都得到 `true`（实测 4 块 4 个 true）。
+///   今天没画出 k 根竖条，全靠两道巧合：① `doc_view` 只对含光标的单元注锚点
+///   （`showCursor: caretAbs != null`）；② `MathWithCaret._measure` 的 `findCaretAnchor`
+///   找不到那个零尺寸 `ColoredBox` 就返回 null。
+///   ⇒ 一旦注入链变化（给所有块注锚点）或 `findCaretAnchor` 加兜底，屏幕上会同时冒出 k 根。
+///   ⇒ 判据补齐后，`showCaret` 才真的等于它的名字（`math_caret.dart` 的注释原话：
+///   "光标在不在这段数学里（不在 ⇒ 连竖条也不画）"）。
+///
+/// ★ 区间是**闭区间**：`acceptFrom` = 块之前那一格、`acceptTo` = 块之后那一格，两格都归本块
+///   （③-C 定的口径，别改），所以用 `>=` / `<=`；共享格仍由上面那条让给左边。
 @visibleForTesting
 bool blockShowsCaret({
   required int? caret,
   required int acceptFrom,
+  required int acceptTo,
   required bool sharesLeftCell,
 }) =>
-    caret != null && !(sharesLeftCell && caret == acceptFrom);
+    caret != null &&
+    caret >= acceptFrom &&
+    caret <= acceptTo &&
+    !(sharesLeftCell && caret == acceptFrom);
 
 /// ★★★ 2026-10-24（批 23）：**空行与"下一个行间块"抢同一格 ⇒ 空行让位**。
 ///
@@ -1576,6 +1594,7 @@ class DocViewState extends State<DocView> {
             showCaret: blockShowsCaret(
                 caret: rawCaret,
                 acceptFrom: u.acceptFrom,
+                acceptTo: u.acceptTo,
                 sharesLeftCell: sharesLeftCell),
               // ★ F16：导出抓图时不画这个虚线小框（它是编辑态的标记）
               showEditingAids: !_hideForCapture,
@@ -1613,6 +1632,7 @@ class DocViewState extends State<DocView> {
             showCaret: blockShowsCaret(
                 caret: rawCaret,
                 acceptFrom: u.acceptFrom,
+                acceptTo: u.acceptTo,
                 sharesLeftCell: sharesLeftCell),
             // ★ 批 16：脚本槽 ⇒ 竖条变矮（判据同上，源码位点）
             caretScript: caretScript,

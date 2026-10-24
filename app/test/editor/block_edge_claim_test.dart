@@ -71,22 +71,73 @@ void main() {
     // A 的 acceptTo = B 的 acceptFrom = 同一个偏移 ⇒ 两块都认领 ⇒ 两个 MathWithCaret 都 showCaret
     expect(
         blockShowsCaret(
-            caret: acceptFrom, acceptFrom: acceptFrom, sharesLeftCell: true),
+            caret: acceptFrom,
+            acceptFrom: acceptFrom,
+            acceptTo: acceptTo,
+            sharesLeftCell: true),
         isFalse,
         reason: '共享格让给左边那块 ⇒ 本块不画（改前：两块都画 ⇒ 屏幕两根光标）');
     // 左邻不是行间块 / 光标不在那一格 ⇒ 照常画
     expect(
         blockShowsCaret(
-            caret: acceptFrom, acceptFrom: acceptFrom, sharesLeftCell: false),
+            caret: acceptFrom,
+            acceptFrom: acceptFrom,
+            acceptTo: acceptTo,
+            sharesLeftCell: false),
         isTrue);
     expect(
         blockShowsCaret(
-            caret: acceptTo, acceptFrom: acceptFrom, sharesLeftCell: true),
+            caret: acceptTo,
+            acceptFrom: acceptFrom,
+            acceptTo: acceptTo,
+            sharesLeftCell: true),
         isTrue,
         reason: '共享的是"块之前"，"块之后"不受影响');
     expect(
         blockShowsCaret(
-            caret: null, acceptFrom: acceptFrom, sharesLeftCell: true),
+            caret: null,
+            acceptFrom: acceptFrom,
+            acceptTo: acceptTo,
+            sharesLeftCell: true),
         isFalse);
+  });
+
+  // ★★★ 批 25：**光标不在这块的区间里 ⇒ 一律 false**（改前的判据只判 `caret != null`，
+  //   于是文档里只要有一个光标，每个公式块的 showCaret 都是 true）。
+  test('★★ 光标**不在**本块区间 ⇒ 不画（区间判据，批 25）', () {
+    for (final int caret in <int>[acceptFrom - 1, acceptTo + 1, 0, 999]) {
+      expect(
+          blockShowsCaret(
+              caret: caret,
+              acceptFrom: acceptFrom,
+              acceptTo: acceptTo,
+              sharesLeftCell: false),
+          isFalse,
+          reason: 'caret=$caret 在本块 [11,22] 之外');
+    }
+    // 闭区间两端仍归本块（块之前 / 块之后那两格，③-C 定的口径）
+    expect(
+        blockShowsCaret(
+            caret: acceptFrom,
+            acceptFrom: acceptFrom,
+            acceptTo: acceptTo,
+            sharesLeftCell: false),
+        isTrue);
+    expect(
+        blockShowsCaret(
+            caret: acceptTo,
+            acceptFrom: acceptFrom,
+            acceptTo: acceptTo,
+            sharesLeftCell: false),
+        isTrue);
+    // 区间内部照常
+    expect(
+        blockShowsCaret(
+            caret: acceptFrom + 5,
+            acceptFrom: acceptFrom,
+            acceptTo: acceptTo,
+            sharesLeftCell: true),
+        isTrue,
+        reason: '共享规则只影响 acceptFrom 那一格');
   });
 }
