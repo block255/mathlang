@@ -165,6 +165,26 @@ AutoExpand? planAutoExpand({
 // `/` → 分式
 // ---------------------------------------------------------------------------
 
+/// 光标是否正好停在某个 **`^` / `_` 槽的内容末尾**（花括号形式）—— 批 15c。
+///
+/// 为什么需要它：那里**没有合法的"再加一层指数"做法**
+/// （往里套 = 空脚本 `2^{}`；挂到对象层 = `x^{2}^{}`，而 **TeX 不允许同一个基座两个 `^`**）。
+/// ⇒ 编辑层据此**吞掉**这个 `^`/`_` 字符，绝不把文档弄成「公式不完整」。
+bool atScriptContentEnd(String doc, int caret) {
+  final MathRegion? r = mathRegionAt(doc, caret.clamp(0, doc.length));
+  if (r == null) return false;
+  final int rel = (caret - r.contentStart).clamp(0, r.tex.length);
+  for (final SlotSpan s in buildCaretSites(r.tex).slots) {
+    if (s.path.isEmpty) continue;
+    final SlotStep step = s.path.last;
+    if (step.command != '^' && step.command != '_') continue;
+    if (s.end != rel) continue;
+    if (s.end >= r.tex.length || r.tex[s.end] != '}') continue;
+    return true;
+  }
+  return false;
+}
+
 /// 分子 = **光标前那个可见原子**（公式里）/ **光标前那一个字符**（正文里）。
 ///
 /// ★ 公式里用 `lexVisibleAtoms` 的源区间（它跳过 `{` `}` `^` `_` `&` 这些**语法字符**），
@@ -199,27 +219,21 @@ AutoExpand? _planScript(String doc, int caret, String mark) {
       }
     }
     if (last == null || last.length == 0) return null;
-    // ★★★ 2026-10-24（批 15b）：**基座正好是某个脚本的内容末尾 ⇒ 不在里面再套一层**。
+    // ★★★ 2026-10-24（批 15c）：**基座正好是某个脚本的内容末尾 ⇒ 什么都不做**。
     //
     // 用户实测（`\left|{x^{2}}\right|`，光标在 `2` 之后按 Shift+6）：
-    //   得到 `x^{}2^{}` / `x^{2^{}}` —— 前者是 `2` 被搬到 `}` 外面，后者是脚本里嵌空脚本（解析失败）。
-    // 判据（乙口径）：光标已经在"这个对象的内容末尾"，再要指数 = **给整个对象加**
-    //   （`x^{2}^{}`）⇒ 这里只产出**纯脚本载荷 `^{}`**、把 `from/caret` 都设在光标上（不动任何字符），
-    //   再交给 `insert_guard` 的"脚本内容末尾 ⇒ 挪到对象之后"那条把它挂到 `}` 外面。
+    //   先得到 `x^{2^{}}`（脚本里嵌空脚本）· 再得到 `x^{}2^{}`（基座被搬走）·
+    //   我上一版改成"挂到对象层"得到 `x^{2}^{}` —— 也**不合法**：
+    //   **TeX 里同一个基座不能有两个 `^`**（双重指数必须先分组 `{x^{2}}^{}`）。
+    // ⇒ 这里没有"就地合法"的做法，干脆**不响应**（返回 null，由 `_commitText` 把 `^` 吞掉），
+    //   要加第二层指数得先把它分组（面板的分组/括号），或改里面的内容。
     for (final SlotSpan s in buildCaretSites(r.tex).slots) {
       if (s.path.isEmpty) continue;
       final SlotStep step = s.path.last;
       if (step.command != '^' && step.command != '_') continue;
       if (s.end != last.end) continue;
       if (s.end >= r.tex.length || r.tex[s.end] != '}') continue;
-      return AutoExpand(
-        from: caret,
-        caret: caret,
-        tex: '$mark{}',
-        kind: AutoExpandKind.script,
-        template: true,
-        matched: mark,
-      );
+      return null;
     }
     final String base = r.tex.substring(last.start, last.end);
     // ★★★ 2026-10-24（批 14）：**替换区间只能到"基座的末尾"为止，不许扫到光标**。

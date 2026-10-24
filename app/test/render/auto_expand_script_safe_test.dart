@@ -97,14 +97,10 @@ void main() {
       typed: '^',
       triggers: kTrig,
     );
-    expect(ex, isNotNull);
-    final String out = applyAutoExpand(doc, ex!);
-    final String body = out.substring(1, out.length - 1);
-    expect(balanced(out), isTrue, reason: '花括号必须配平：$body');
-    expect(body, contains(r'x^{2}^{}'),
-        reason: r'应当给整个 x² 加指数（`x^{2}^{}`）：$body');
-    expect(body, isNot(contains(r'2^{')),
-        reason: '指数里不许再嵌一层空脚本：$body');
+    // ★ 批 15c：这里**没有合法做法** —— 往里套 = `2^{}`（空脚本），
+    //   挂到对象层 = `x^{2}^{}`（**TeX 不允许同一个基座两个 `^`**）⇒ **不响应**。
+    //   编辑层会把这个 `^` 吞掉（`atScriptContentEnd`）。
+    expect(ex, isNull, reason: '应当不响应，而不是造出 `x^{2^{}}` / `x^{2}^{}`');
   });
 
   for (final String tex in kTex) {
