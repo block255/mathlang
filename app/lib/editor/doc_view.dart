@@ -929,15 +929,25 @@ class DocViewState extends State<DocView> {
     );
     if (hit.onGlyph && hit.offset != null && hit.reliable) {
       final int rel = renderToSourceOffset(renderTex, hit.offset!);
-      // ★★★ 2026-10-24（批 4c · G2）：**点在挂件（`^`/`_`）的字形上 ⇒ 落到"对象"那一层**。
-      //   用户实测：「点 `x` 与 `3` 之间只能点到 `3` 的左边」「在 `x^{3}` 后面加东西只能点到
-      //   `3` 后面」—— 挂件字形把外层的两个落点吃掉了。
-      //   只对**单原子**脚本生效（`\sum_{i=1}^{n}` 的上下限、多层挂件照旧能点进去改），
-      //   进挂件改字仍可走 `→` / `↓` / `Tab`（位点一个都没删）。
+      // ★★★ 2026-10-24（批 8）：**"对象层落点"只对"点在字形盒之外"的点击生效**。
+      //
+      // 来由（两次用户实测，方向相反，必须同时满足）：
+      //   · 批 4c（D5）：「在 `x^{3}` **后面**加东西，只能点到 `3` 后面，点不到这个指数的后面」
+      //     ⇒ 需要"对象之后"可达；
+      //   · 批 8（今天）：「`3` **后面**的位置也点不到，现在点后面一定是整个指数的后面」
+      //     ⇒ 需要"`3` 之后（指数里）"也可达。
+      // 两者只能靠**位置**分开：
+      //   · 点在**字形盒内**（含右半/左半）⇒ 细粒度：`3` 之前 / `3` 之后（就是指数里那两位点）；
+      //   · 点在**字形盒之外**（外扩 2px 与"行内宽容"8px 认领的那些像素）⇒ 落到"对象之前/之后"。
+      // 实测：`x^{3}` 里 `3` 的右缘外只有 ~1px 缝，但它**是**对象边界那一格（11）；
+      //   再往外 8px 内也仍认作"对象之后" ⇒ 手指够得着，而 `3` 本身仍然给了细粒度。
       final Rect? br = hit.boxRect;
-      final bool rightHalf = br == null || localPos.dx >= br.center.dx;
-      final int? outer =
-          buildCaretSites(tex).scriptOuterSiteAt(rel, rightHalf: rightHalf);
+      final bool outsideGlyph =
+          br != null && (localPos.dx < br.left || localPos.dx > br.right);
+      final int? outer = !outsideGlyph
+          ? null
+          : buildCaretSites(tex)
+              .scriptOuterSiteAt(rel, rightHalf: localPos.dx > br.right);
       return outer ?? rel;
     }
 
