@@ -377,6 +377,27 @@ InsertPlan? _neutralInsert(String source, int o, String text) {
   //   只有**结构类载荷**（`^` `_` `\`）才"出槽" —— 挪到 `]` 之后。
   if (text.contains('^') || text.contains('_') || text.contains(r'\')) {
     final CaretSiteTable st = buildCaretSites(r.tex);
+    // ★★★ 2026-10-24（批 15）：**脚本内容末尾不许再嵌一个脚本**。
+    //
+    // 用户实测（`\left|{x^{2}}\right|`，光标在 `2` 之后按 Shift+6）：
+    //   ⇒ `x^{2^{}}` ⇒ 「公式不完整」。
+    // 判据（乙口径：字形 + 挂件 = 一个对象）：光标已经在"对象内容末尾"，
+    //   再打指数应当是**给整个对象加**（`x^{2}^{}`），而不是在脚本里再套一层空脚本。
+    // ⇒ 插入点挪到 `}` 之后（对象层）。★ 只对**花括号形式**生效：
+    //   裸参数 `x^2` 的内容末就是对象末，没有可挪的位置。
+    for (final SlotSpan s in st.slots) {
+      if (s.path.isEmpty) continue;
+      final SlotStep last = s.path.last;
+      if (last.command != '^' && last.command != '_') continue;
+      if (rel != s.end) continue; // 正好停在脚本内容末尾那一格
+      if (s.end >= r.tex.length || r.tex[s.end] != '}') continue; // 只认花括号形式
+      return InsertPlan(
+        r.contentStart + s.end + 1,
+        moved: true,
+        why: '插入点落在**指数/下标的末尾** ⇒ 挪到对象之后'
+            '（在脚本里再嵌一层空脚本会解析失败）',
+      );
+    }
     for (final SlotSpan s in st.slots) {
       if (s.path.isEmpty) continue;
       final SlotStep last = s.path.last;

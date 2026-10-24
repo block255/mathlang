@@ -619,7 +619,16 @@ Rect? findLocalRowBox(RenderObject root, Offset at, {RenderObject? anchor}) {
       final ({Rect rect, double dx, RenderObject? row})? picked =
           maybeSameRow ?? containing ?? nearest;
       if (picked != null) {
-        final double h = math.min(anchorRowBox.height * kLineToGlyph, picked.rect.height);
+        // ★★★ 2026-10-24（批 15）：**高度就取该层字形盒** —— 不再先跟"行盒 × 1.35"取 min。
+        //
+        // 用户实测（`\left|{x+1+\sqrt[3]{x}}\right|`，光标在根号里 `x` 之后）：
+        //   竖条 **h=9.8**，而 `x` 的字形盒 **h=21** ⇒ 明显矮一截。
+        // 根因：被开方数那一层的 `RenderLine` 只有 **8.67** 高（引擎给得极紧），
+        //   `8.67 × 1.35 = 11.7`，与字形盒 21 取 `min` ⇒ 取到 11.7 ⇒ 竖条 9.8。
+        //   "行盒 × 1.35"这条经验换算在**行盒特别紧**的结构里反而把竖条压扁了。
+        // 判据（与分子 / 分母 / 主行统一）：**竖条 = 该层字形盒**；
+        //   拉伸盒仍由 `clip()` 按中位数裁，最外层还有 `_clampRowHeight` 兜底。
+        final double h = picked.rect.height;
         if (h > 1) {
           // 底边贴字形盒底（该层基线 + ¶ 盒下伸）⇒ 底部与同层字对齐
           return Rect.fromLTRB(picked.rect.left, picked.rect.bottom - h,

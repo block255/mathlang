@@ -67,4 +67,17 @@ void main() {
     expect(out, contains(r'\sqrt[4]{x^{}}'), reason: '内容里的位点不该被搬走：$out');
     expect(noBaseReason(out), isNull);
   });
+
+  // ★★★ 2026-10-24（批 15 · 用户②）：**脚本内容末尾不许再嵌一层空脚本**
+  //   用户实测：`\left|{x^{2}}\right|` 里在 `2` 之后按 Shift+6 ⇒ `x^{2^{}}` ⇒ 公式不完整。
+  test(r'★★ 已有指数的内容末尾插 `^{}` ⇒ 挪到对象之后（`x^{2}^{}`），不许嵌套空脚本', () {
+    const String t2 = r'\left|{x^{2}}\right|';
+    // `2` 之后那一格 = `}` 之前
+    final int afterTwo = t2.indexOf(r'x^{2}') + r'x^{'.length + 1;
+    final String out = inserted(t2, afterTwo, r'^{}');
+    expect(out, contains(r'x^{2}^{}'),
+        reason: r'应当在对象层加指数（`x^{2}^{}`），不许得到 `x^{2^{}}`：$out');
+    expect(out, isNot(contains(r'^{2^{')),
+        reason: '脚本内容里不许再嵌一个空脚本：$out');
+  });
 }

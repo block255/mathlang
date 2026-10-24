@@ -81,9 +81,11 @@ void main() {
         r.scan.eligible.firstWhere((LeafBox b) => b.text == '3').rect;
     expect(three.bottom - r.bar.bottom, lessThan(3.0),
         reason: '指数里的 `3` 盒底 10.0 ⇒ 竖条底应在 9 上下');
-    // ★ 高度按"脚本那一层的行盒"（6.4×1.35 = 8.6），**不是**分子那一档的 13.8 ——
-    //   这正是"两档看得出差别"的来源；竖条比字形矮一点是正常的（光标不画到字顶上）。
-    expect(r.bar.height, lessThan(10.0), reason: '脚本档要明显矮于行档（13.8）');
+    // ★ 2026-10-24（批 15）：口径统一成"**竖条 = 该层字形盒**"之后，
+    //   指数档的竖条也从 8.6 变成 10.9（`3` 的字形盒 13.0 × 0.84）。
+    //   与分子档（11.6）差别主要在**位置**（基线差 3.8 px）而不是高度 ——
+    //   若以后要"脚本档明显更矮"，得把位点层级（是不是 `^`/`_` 槽）传进来单独缩。
+    expect(r.bar.height, lessThan(12.0), reason: '脚本档不该高过行档');
   });
 
   testWidgets('★ 分母那一档也有自己的行高（不跟着分子走）', (WidgetTester tester) async {
