@@ -247,6 +247,52 @@ class CaretSiteTable {
   CaretSite? prevOf(int index) =>
       (index - 1 >= 0 && index - 1 < sites.length) ? sites[index - 1] : null;
 
+  /// ★★★ 2026-10-24（批 4c · G2）：**点在挂件（`^` / `_`）的字形上 ⇒ 落到"对象"那一层**。
+  ///
+  /// 用户实测两条：
+  ///   · 「点 `x` 与 `3` 之间，只能点到指数位 `3` 的左边，点不到底数位 `x` 的右边」；
+  ///   · 「想在 `x^{3}` 后面加东西，只能点到 `3` 后面，点不到这个指数的后面」。
+  /// 也就是：**挂件字形把"外层"的两个落点吃掉了**。挂件在视觉上是"挂在基座旁边的一小块"，
+  /// 点它两半，语义上应当分别是"对象之前 / 对象之后"（与 §4.0'「一个字形 + 它挂的上下标 = 一个对象」
+  /// 同一条口径；进挂件里改字仍可以走 `→` / `↓` / `Tab`，位点一个都没删）。
+  ///
+  /// 返回 `null` = 这条不适用（让调用方按原落点走）。**三条护栏**：
+  /// ① 只在**脚本**槽（`^` / `_`）里生效 —— `\frac` 的分子分母、环境格子都不动；
+  /// ② 只对**单原子**脚本生效（脚本内容有 2 个及以上原子时不生效）——
+  ///    这样 `\sum_{i=1}^{n}` 的上下限、`x_{a_i}` 这种多层挂件**照旧能点进去改**；
+  /// ③ 找不到更外层的邻居时返回 `null`。
+  int? scriptOuterSiteAt(int rel, {required bool rightHalf}) {
+    if (sites.isEmpty) return null;
+    final CaretSite here = snap(rel);
+    if (here.path.isEmpty) return null;
+    final int depth = here.path.length;
+    final String last = here.path.last.command;
+    if (last != '^' && last != '_') return null;
+    final int idx = sites.indexOf(here);
+    if (idx < 0) return null;
+    // ② 这个脚本槽里有几个位点（单原子 = 2 个：原子首 / 原子末）
+    var lo = idx;
+    var hi = idx;
+    while (lo - 1 >= 0 && sites[lo - 1].path.length >= depth) {
+      lo--;
+    }
+    while (hi + 1 < sites.length && sites[hi + 1].path.length >= depth) {
+      hi++;
+    }
+    if (hi - lo + 1 != 2) return null;
+    // ③ 找更外层的邻居
+    if (rightHalf) {
+      for (var j = hi + 1; j < sites.length; j++) {
+        if (sites[j].path.length < depth) return sites[j].offset;
+      }
+      return null;
+    }
+    for (var j = lo - 1; j >= 0; j--) {
+      if (sites[j].path.length < depth) return sites[j].offset;
+    }
+    return null;
+  }
+
   @override
   String toString() =>
       'CaretSiteTable(${tex.length} 字符, ${sites.length} 位点, ${slots.length} 槽'

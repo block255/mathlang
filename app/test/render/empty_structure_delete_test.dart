@@ -85,7 +85,7 @@ void main() {
 
     test(r'$\left|{sinx}\right|$ 里退格 ⇒ 只少一个字母', () {
       final String got = _back(r'\left|{sinx}\right|', 11); // `x` 之后
-      expect(got, '\$\$\n' + r'\left|{sin}\right|' + '\n\$\$', reason: got);
+      expect(got, '\$\$\n${r'\left|{sin}\right|'}\n\$\$', reason: got);
     });
 
     test('全域扫：这一批所有用例退格之后都配平（不产生坏 tex）', () {

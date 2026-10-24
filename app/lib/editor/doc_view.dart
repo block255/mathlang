@@ -928,7 +928,17 @@ class DocViewState extends State<DocView> {
       displayStyle: displayStyle,
     );
     if (hit.onGlyph && hit.offset != null && hit.reliable) {
-      return renderToSourceOffset(renderTex, hit.offset!);
+      final int rel = renderToSourceOffset(renderTex, hit.offset!);
+      // ★★★ 2026-10-24（批 4c · G2）：**点在挂件（`^`/`_`）的字形上 ⇒ 落到"对象"那一层**。
+      //   用户实测：「点 `x` 与 `3` 之间只能点到 `3` 的左边」「在 `x^{3}` 后面加东西只能点到
+      //   `3` 后面」—— 挂件字形把外层的两个落点吃掉了。
+      //   只对**单原子**脚本生效（`\sum_{i=1}^{n}` 的上下限、多层挂件照旧能点进去改），
+      //   进挂件改字仍可走 `→` / `↓` / `Tab`（位点一个都没删）。
+      final Rect? br = hit.boxRect;
+      final bool rightHalf = br == null || localPos.dx >= br.center.dx;
+      final int? outer =
+          buildCaretSites(tex).scriptOuterSiteAt(rel, rightHalf: rightHalf);
+      return outer ?? rel;
     }
 
     // ★★ P2-D（2026-10-18）：多行环境**按格子**判落点（判的是"没点中字形"的那些位置）。
