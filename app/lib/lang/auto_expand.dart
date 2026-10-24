@@ -14,6 +14,7 @@
 // ★★ 与插入侧守门人的关系：本文件只算"删掉哪一段 + 展开成什么 tex"，
 //   真正的落点/建壳/行边界由 `symbol_insert.applySymbolInsert`（内部走 `insert_guard`）决定。
 
+import '../render/caret_sites.dart' show SlotSpan, SlotStep, buildCaretSites;
 import '../render/math_nav.dart';
 import '../render/visible_atoms.dart';
 import 'word_triggers.dart';
@@ -198,6 +199,28 @@ AutoExpand? _planScript(String doc, int caret, String mark) {
       }
     }
     if (last == null || last.length == 0) return null;
+    // ★★★ 2026-10-24（批 15b）：**基座正好是某个脚本的内容末尾 ⇒ 不在里面再套一层**。
+    //
+    // 用户实测（`\left|{x^{2}}\right|`，光标在 `2` 之后按 Shift+6）：
+    //   得到 `x^{}2^{}` / `x^{2^{}}` —— 前者是 `2` 被搬到 `}` 外面，后者是脚本里嵌空脚本（解析失败）。
+    // 判据（乙口径）：光标已经在"这个对象的内容末尾"，再要指数 = **给整个对象加**
+    //   （`x^{2}^{}`）⇒ 这里只产出**纯脚本载荷 `^{}`**、把 `from/caret` 都设在光标上（不动任何字符），
+    //   再交给 `insert_guard` 的"脚本内容末尾 ⇒ 挪到对象之后"那条把它挂到 `}` 外面。
+    for (final SlotSpan s in buildCaretSites(r.tex).slots) {
+      if (s.path.isEmpty) continue;
+      final SlotStep step = s.path.last;
+      if (step.command != '^' && step.command != '_') continue;
+      if (s.end != last.end) continue;
+      if (s.end >= r.tex.length || r.tex[s.end] != '}') continue;
+      return AutoExpand(
+        from: caret,
+        caret: caret,
+        tex: '$mark{}',
+        kind: AutoExpandKind.script,
+        template: true,
+        matched: mark,
+      );
+    }
     final String base = r.tex.substring(last.start, last.end);
     // ★★★ 2026-10-24（批 14）：**替换区间只能到"基座的末尾"为止，不许扫到光标**。
     //

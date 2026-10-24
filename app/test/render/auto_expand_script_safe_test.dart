@@ -85,6 +85,28 @@ void main() {
         reason: r'`4` 必须留在 `\sqrt[…]` 里：$out');
   });
 
+  // ★★★ 2026-10-24（批 15b）：**已有指数的内容末尾再打指数 ⇒ 挂到对象层**
+  test(r'★★ `x^{2}` 的 `2` 之后打 `^` ⇒ `x^{2}^{}`（不许 `x^{2^{}}` 或 `x^{}2^{}`）', () {
+    const String tex = r'\left|{x^{2}}\right|';
+    final String doc = '\$$tex\$';
+    // `2` 之后那一位 = `}` 之前
+    final int afterTwo = doc.indexOf(r'x^{2}') + r'x^{'.length + 1;
+    final AutoExpand? ex = planAutoExpand(
+      doc: doc,
+      caret: afterTwo,
+      typed: '^',
+      triggers: kTrig,
+    );
+    expect(ex, isNotNull);
+    final String out = applyAutoExpand(doc, ex!);
+    final String body = out.substring(1, out.length - 1);
+    expect(balanced(out), isTrue, reason: '花括号必须配平：$body');
+    expect(body, contains(r'x^{2}^{}'),
+        reason: r'应当给整个 x² 加指数（`x^{2}^{}`）：$body');
+    expect(body, isNot(contains(r'2^{')),
+        reason: '指数里不许再嵌一层空脚本：$body');
+  });
+
   for (final String tex in kTex) {
     for (final String mark in <String>['^', '_']) {
       test('★★ 打字 `$mark` 在**每个偏移**都不许吃坏结构：$tex', () {

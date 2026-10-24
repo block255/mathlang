@@ -375,16 +375,16 @@ InsertPlan? _neutralInsert(String source, int o, String text) {
   // —— 可选参数是"尺寸/次数"，里面出现没有基座的 `^{}` 直接解析失败。
   // 口径：**里面的位点保留**（点 `4` 改成 `3` 必须能原地改），
   //   只有**结构类载荷**（`^` `_` `\`）才"出槽" —— 挪到 `]` 之后。
-  if (text.contains('^') || text.contains('_') || text.contains(r'\')) {
+  // ★★★ 2026-10-24（批 15）：**纯脚本载荷（`^{}` / `_{}`）不许落在脚本内容末尾**。
+  //
+  // 用户实测（`\left|{x^{2}}\right|`，光标在 `2` 之后按 Shift+6）：
+  //   期望"给整个 x² 再加一层指数"，结果拿到 `x^{2^{}}`（脚本里嵌空脚本）⇒ 公式不完整。
+  // 判据：光标已经在"对象内容末尾"，纯脚本载荷应当挂到**对象层**（`}` 之后）。
+  // ★ 只对**纯脚本**载荷生效：自动展开传下来的是 `2^{}` 这种"基座 + 脚本"，
+  //   那种是"把基座换掉再插回原位"，**绝不能搬走**（踩过：`2` 被搬到 `}` 外面）。
+  final bool pureScript = text.isNotEmpty && (text[0] == '^' || text[0] == '_');
+  if (pureScript) {
     final CaretSiteTable st = buildCaretSites(r.tex);
-    // ★★★ 2026-10-24（批 15）：**脚本内容末尾不许再嵌一个脚本**。
-    //
-    // 用户实测（`\left|{x^{2}}\right|`，光标在 `2` 之后按 Shift+6）：
-    //   ⇒ `x^{2^{}}` ⇒ 「公式不完整」。
-    // 判据（乙口径：字形 + 挂件 = 一个对象）：光标已经在"对象内容末尾"，
-    //   再打指数应当是**给整个对象加**（`x^{2}^{}`），而不是在脚本里再套一层空脚本。
-    // ⇒ 插入点挪到 `}` 之后（对象层）。★ 只对**花括号形式**生效：
-    //   裸参数 `x^2` 的内容末就是对象末，没有可挪的位置。
     for (final SlotSpan s in st.slots) {
       if (s.path.isEmpty) continue;
       final SlotStep last = s.path.last;
@@ -398,6 +398,10 @@ InsertPlan? _neutralInsert(String source, int o, String text) {
             '（在脚本里再嵌一层空脚本会解析失败）',
       );
     }
+  }
+
+  if (text.contains('^') || text.contains('_') || text.contains(r'\')) {
+    final CaretSiteTable st = buildCaretSites(r.tex);
     for (final SlotSpan s in st.slots) {
       if (s.path.isEmpty) continue;
       final SlotStep last = s.path.last;
