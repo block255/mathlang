@@ -1218,13 +1218,25 @@ class DocViewState extends State<DocView> {
     //   ★ 用 `_hideCaret`（= 失焦 **或** 导出中）：
     //     它决定"光标/选区画不画"，是同一帧的渲染输入；不进键就永远是池里的旧样子。
     final String aidsKey = _hideCaret ? '#a1' : '#a0';
-    if (rel == null) return '${u.contentKey}$selKey$caretKey$aidsKey';
+    // ★★★ 2026-10-24（批 24 —— 用户稳定复现"点另一块时整块闪一帧"的真根因）：
+    //   **池里的 widget 内嵌着"这一单元自己的身份"**（`MathWithCaret.mathKey` =
+    //   `_mathBlockKeys[u.id]`，而 `Math.tex(key: mathKey)` 就是那个 GlobalKey）。
+    //   池却**只按内容**寻址 ⇒ 两块内容一模一样时（用户的文档里
+    //   `\begin{cases}4\\\end{cases}` 出现两次）键相同 ⇒ 后一块从池里拿回
+    //   **前一块的 widget 实例**，里面装的是**前一块的 GlobalKey**
+    //   ⇒ 同一帧同一个 GlobalKey 出现在两处 ⇒ 框架把元素搬走
+    //   ⇒ 实测：**整块消失一帧** + 21 处框架断言（`childRenderObject.parent != null`、
+    //   `_debugRelayoutBoundaryAlreadyMarkedNeedsLayout`、`!childSemantics.renderObject._needsLayout`）。
+    //   ⇒ 键里必须带**单元身份** `u.id`。内容键保留：同一单元内容不变时照旧复用
+    //   （打字只改被编辑那一个单元的键；插入/删除块会让后面单元的 id 变一次 ⇒ 重建一次，可接受）。
+    final String idKey = '#u${u.id}';
+    if (rel == null) return '$idKey${u.contentKey}$selKey$caretKey$aidsKey';
     // ★ 组合态也要进键：拼音变化会改变"含光标那个单元"的 widget 内容，
     //   不进键就会从池里拿回上一帧的旧拼音（叠字/不刷新）。
     final String comp = _composingFor(u, rel).isEmpty
         ? ''
         : '#k${_composingFor(u, rel).hashCode}';
-    return '${u.contentKey}#c$rel$comp$selKey$caretKey$aidsKey';
+    return '$idKey${u.contentKey}#c$rel$comp$selKey$caretKey$aidsKey';
   }
 
   /// 这个单元要不要接组合串（**只给含光标的那一个单元，且行间公式块不接**）。
