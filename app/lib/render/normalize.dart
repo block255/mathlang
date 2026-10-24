@@ -68,22 +68,26 @@ class NormalizeResult {
       : 'Normalize(无变化)';
 }
 
-/// 这个 `^` / `_` 脚本是不是**它所在结构槽的最后一项**（= 槽内容末尾）—— 批 6 · H4。
+/// 这个 `^` / `_` 脚本是不是**它所在容器的最后一项**（= 容器内容末尾）—— 批 6 · H4。
 ///
-/// 判据（文本级，只认"槽结束"，**不认段末与 `\right`**）：
-///   · 后面紧跟 `}` —— 关闭**外层槽**（`\frac{x^{3}}{…}` 的分子 / `\sqrt{x^{2}}` / `\frac{a}{x^{2}}`）
+/// 判据（文本级，只认"**容器结束**"，**不认段末**）：
+///   · 后面紧跟 `}` —— 关闭结构槽（`\frac{x^{3}}{…}` 的分子 / `\sqrt{x^{2}}` / `\frac{a}{x^{2}}`）
+///   · 后面是 `\right` —— 透明定界符组结束（`\left(x^{2}\right)` / `\left|{x^{2}}\right|`）
 ///   · 后面是 `\\` / `&` / `\end{` —— 多行环境的一格结束
 ///
-/// ★ 为什么段末不算：`$a=b^2$` 这种"整段以一个上标收尾"的形态到处都有，
-///   去括号既有的口径（2026-10-17 用户拍板）保持不变；而且段末的"对象之后"就是段外，
-///   不会把"指数尾"和某个**容器**的尾并到一起。
-bool _isSlotTailScript(String tex, SlotSpan s) {
+/// ★ 为什么段末不算：`$a=b^2$` 这种"整段以上标收尾"到处都有，而且段末的"对象之后"
+///   落在**公式外**（`closeEnd`，文字层），与"指数尾"本来就是两个不同位置、
+///   `→` 也不会把它们并成一格（"甲"方案会跳过 tex 末位点）⇒ 没有合并问题。
+bool _isContainerTailScript(String tex, SlotSpan s) {
   var i = s.end;
   if (s.start > 0 && tex[s.start - 1] == '{') i++; // 跳过自己的 `}`
   if (i >= tex.length) return false;
-  if (tex[i] == '}') return true; // 关外层槽
+  if (tex[i] == '}') return true; // 关结构槽
   final String rest = tex.substring(i);
-  return rest.startsWith(r'\\') || rest.startsWith('&') || rest.startsWith(r'\end{');
+  return rest.startsWith(r'\right') ||
+      rest.startsWith(r'\\') ||
+      rest.startsWith('&') ||
+      rest.startsWith(r'\end{');
 }
 
 /// 对**一个数学段的 tex** 跑 normalize（幂等：反复调用第二次无变化）。
@@ -151,7 +155,7 @@ NormalizeResult normalizeTex(String tex, int caretRel) {
       // （`\frac{x^3}{…}` 的位点：8 / 9 / 11）⇒ 用户看到的就是"3 右边按一下就掉到分母"。
       // 判据与既有 (a)(b)(c) 同源：**拆了会合并位点 ⇒ 不拆**；这里限定在最要紧的一处 ——
       // 脚本后面紧跟 `}`（关外层槽）或 `\\` / `&` / `\end{`（环境格结束）。
-      if (_isSlotTailScript(cur, s)) continue; // (d)
+      if (_isContainerTailScript(cur, s)) continue; // (d)
       final String inner = cur.substring(s.start, s.end);
       if (lexVisibleAtoms(inner).length != 1) continue; // ★ 多原子绝不去括号
       edits.add((from: s.start - 1, to: s.end + 1, repl: inner, lead: 1));
@@ -168,7 +172,7 @@ NormalizeResult normalizeTex(String tex, int caretRel) {
       if (cmd != '^' && cmd != '_') continue;
       if (s.start <= 0 || s.end >= cur.length) continue;
       if (cur[s.start - 1] == '{') continue; // 已经带花括号（交给 (d) 保住）
-      if (!_isSlotTailScript(cur, s)) continue;
+      if (!_isContainerTailScript(cur, s)) continue;
       final String inner = cur.substring(s.start, s.end);
       if (inner.isEmpty) continue;
       if (lexVisibleAtoms(inner).length != 1) continue; // 只补单原子

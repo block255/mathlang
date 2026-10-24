@@ -35,6 +35,16 @@ void main() {
       const String tex = '\\begin{cases}x^{2}\\\\y\\end{cases}';
       expect(normalizeTex(tex, 0).tex, tex);
     });
+
+    test(r'定界符组尾也不拆（`\left(x^{2}\right)`）', () {
+      const String tex = r'\left(x^{2}\right)';
+      expect(normalizeTex(tex, 0).tex, tex);
+    });
+
+    test(r'绝对值组尾也不拆（`\left|{x^{2}}\right|`）', () {
+      const String tex = r'\left|{x^{2}}\right|';
+      expect(normalizeTex(tex, 0).tex, tex);
+    });
   });
 
   group('③ 反向：槽尾的裸参数**补回**花括号', () {
@@ -50,6 +60,14 @@ void main() {
 
     test(r'\sqrt{x^2} ⇒ \sqrt{x^{2}}', () {
       expect(normalizeTex(r'\sqrt{x^2}', 0).tex, r'\sqrt{x^{2}}');
+    });
+
+    test(r'组尾的裸参数也补回：\left(x^2\right) ⇒ \left(x^{2}\right)', () {
+      expect(normalizeTex(r'\left(x^2\right)', 0).tex, r'\left(x^{2}\right)');
+    });
+
+    test(r'绝对值组尾同理：\left|{x^2}\right| ⇒ \left|{x^{2}}\right|', () {
+      expect(normalizeTex(r'\left|{x^2}\right|', 0).tex, r'\left|{x^{2}}\right|');
     });
 
     test(r'多原子不补：\frac{x^{n+1}}{y} 不动', () {
