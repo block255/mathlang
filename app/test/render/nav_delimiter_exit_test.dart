@@ -57,8 +57,26 @@ void main() {
       expect(prevCaretOffset(d, afterX + 2), afterX + 1, reason: '末尾 ← 指数开头');
     });
 
-    test(r'`\sum_{i=1}^{n}a_i`：金表里那 9 步不许变', () {
-      const String d = r'$\sum_{i=1}^{n}a_i$';
+    // ★★★ 2026-10-24（批 5b · 嵌套普查抓出来的第二类）：D2 的「`\right` 之前那一格跳过」
+    //   **判据太宽** —— 它只看"后面是不是 `\right`"，没看"前面那个字符可见不可见"。
+    //   普查原文（改前）：`\left(x^2\right)` 的 `→ = 0 → 6 → 8 → 出公式`（9 被吃掉）
+    //   ⇒ `2` 之后那一格停不到，想"写完指数"只能点。收窄后：只有前面是 `}` 才跳。
+    test(r'★ `\left(x^2\right)`：`2` 之后那一格要停（它前面是可见的 `2`）', () {
+      const String d = r'$\left(x^2\right)$';
+      final int two = d.indexOf('2'); // `2` 之前那一格（= 位点 rel 8）
+      expect(nextCaretOffset(d, two), two + 1, reason: '`2` 之前 → `2` 之后（改前这一步被吃掉）');
+      expect(nextCaretOffset(d, two + 1), d.length,
+          reason: '再一下出公式（tex 末尾那一格按「甲」跳过）');
+    });
+
+    test(r'★ 对照（D2 本意不许漂）：`\left|{sinx}\right|` 组内 `}` 之后**照旧**跳', () {
+      const String d = r'$\left|{sinx}\right|$';
+      final int afterBrace = d.indexOf(r'\right');
+      expect(nextCaretOffset(d, afterBrace - 1), d.length,
+          reason: '`}` 不可见 ⇒ 与 `\\right` 之前同一根像素 ⇒ 一下出组出公式');
+    });
+
+    test(r'`\sum_{i=1}^{n}a_i`：金表里那 9 步不许变', () {      const String d = r'$\sum_{i=1}^{n}a_i$';
       final List<int> rel = <int>[];
       var c = 1;
       for (var i = 0; i < 12; i++) {

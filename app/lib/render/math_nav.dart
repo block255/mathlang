@@ -186,7 +186,14 @@ int nextCaretOffset(String source, int offset) {
     // ★★ 2026-10-24（批 3 · D2）：「`\left…\right` 组里最后一格」与「`\right` 之前」同一根像素
     //   ⇒ 跳过。实测（`\left|{sinx}\right|`）：不跳时从 `x` 之后出发，第 1 下停在 `}` 与 `\right|`
     //   之间（屏幕上**一点没动**），第 2 下才出组 —— 用户说的"要点两下才能出去"就是它。
-    if (off <= r.tex.length && r.tex.substring(off).startsWith(r'\right')) {
+    //
+    // ★★★ 2026-10-24（批 5b · 嵌套普查）：**这条只在"前一个字符不可见"时才成立**。
+    //   普查抓到的反例：`\left(x^2\right)` 的 `x^2` —— `2` 之后那一格**也**紧跟着 `\right`，
+    //   但它前面是**看得见的 `2`** ⇒ 跳过就等于"`→` 从 `2` 之前一下蹦出公式"，
+    //   用户根本停不到"写完指数"的位置（实测 `→ 0 → 6 → 8 → 出公式`，9 被吃掉）。
+    //   判据收窄成：**前一字符是 `}`**（组收尾，不可见）才跳。
+    final bool afterGroupBrace = off > 0 && r.tex[off - 1] == '}';
+    if (afterGroupBrace && off <= r.tex.length && r.tex.substring(off).startsWith(r'\right')) {
       next++;
       continue;
     }
