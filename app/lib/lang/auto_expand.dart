@@ -187,9 +187,20 @@ AutoExpand? _planScript(String doc, int caret, String mark) {
     }
     if (last == null || last.length == 0) return null;
     final String base = r.tex.substring(last.start, last.end);
+    // ★★★ 2026-10-24（批 14）：**替换区间只能到"基座的末尾"为止，不许扫到光标**。
+    //
+    // 用户实测（`\left|{x+1+\sqrt[3]{x}}\right|`，光标在根号里 `x` 之后按 Shift+6）：
+    //   ⇒ 「公式不完整」。
+    // 根因：`_applyAutoExpand` 做的是 `buf.replaceRange(ex.from, ex.caret, '')`
+    //   —— 而这里原来把**用户光标位置**当区间终点。当光标停在 `x` 的**右边界之后**
+    //   （比如 `}` 之后那一格、`\right` 之前），`[x, 光标)` 会把中间那个**不可见的 `}`**
+    //   一起删掉 ⇒ `\sqrt[3]{x^{}` 少一个花括号 ⇒ 解析失败。
+    // 判据：基座是 `x`，要换掉的也只有 `x` ⇒ 区间 = `[x 起点, x 终点)`。
+    //   花括号形式的 `}` 与裸参数（`x^2` 那种 `cEnd == span.end`）都自动正确。
+    final int baseEnd = contentStart + last.end;
     return AutoExpand(
       from: contentStart + last.start,
-      caret: caret,
+      caret: baseEnd,
       tex: '$base$mark{}',
       kind: AutoExpandKind.script,
       template: true,
