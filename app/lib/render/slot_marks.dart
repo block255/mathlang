@@ -146,7 +146,17 @@ SlotMarkResult injectSlotMarks(String tex, {required int caretRel}) {
     for (final SlotSpan s in t.slots)
       if (s.isEnvCell &&
           tex.substring(s.start, s.end).trim().isEmpty)
-        _Ins(s.start, kEnvCellFillTex, shiftAt: true),
+        // ★★★ 2026-10-24（D3 续）：`shiftAt: false` —— **光标正好在这格起点时不往后挪**。
+        //
+        // 实测（用户那份 `f(x)=\begin{cases}x&\\&\\&\end{cases}`，caret 在第二段第一格）：
+        //   老实现把垫子插在 `s.start` 且 `shiftAt: true` ⇒ 光标的 rel 被 +1em 推后
+        //   ⇒ 注入成 `\rule{1em}{0pt}\textcolor{…}`（**锚点在垫子右边**）
+        //   ⇒ 光标/框画在**这一格的右缘**（≈ 下一列的左边界）。
+        //   而 `envCellHitIn` 的列判据是"含左也含右"，边界上那一点点误差就会把框判到**右边那一列**
+        //   ⇒ 用户看到"第二段没有框、框跑到后面去了"。
+        //   改成 `shiftAt: false`（只在 rel **严格大于**落点时才挪）⇒ 锚点落在垫子**之前**
+        //   = 格子的左缘；已经在这格里打过字的情形照旧（rel > s.start 仍然会挪）。
+        _Ins(s.start, kEnvCellFillTex, shiftAt: false),
     // ② ★ 尾垫（§11.18）：插在**内容末尾**、花括号**之内** ⇒ 装饰跟着内容变长
     for (final SlotSpan s in t.slots)
       if (s.path.isNotEmpty &&
