@@ -299,16 +299,27 @@ const String kEmptyFormulaTex = kEmptySlotTex;
 ///   · `caretRel` = **光标逻辑位置**（不受闪烁/选区影响）⇒ 决定"注不注空槽垫子"（会改宽度！）
 ///   · `showCursor` = **视觉上画不画竖条**（闪烁灭、有选区时 false）
 ///   以前两者共用同一个 `caretRel`（闪烁灭 ⇒ -1），于是垫子每秒增删两次 ⇒ 整段重排两次。
-String renderMathTex(String tex, {required int caretRel, bool showCursor = true}) {
+String renderMathTex(String tex,
+    {required int caretRel, bool showCursor = true, bool inlineFractions = false}) {
   // ★ 空公式也要画出来（§6.1.1）——它没有任何槽可注入，所以要单独兜一句
   if (tex.trim().isEmpty) {
     final String mark = caretRel < 0 ? kEmptyFormulaTex : kCurrentSlotTex;
     // 光标在里面时再补一根光标条（否则用户不知道自己停在哪儿）
     return (caretRel < 0 || !showCursor) ? mark : mark + kCursorTex;
   }
-  // ★ 2026-10-20：先做**显示修正**（`\limsup`/`\liminf` 补 `\limits`），偏移同步映射
-  final FixedTex fixed = withOperandLimits(tex);
-  final int rel = caretRel < 0 ? caretRel : fixed.mapOffset(caretRel);
+  // ★★ 2026-10-24（批 4 · C1）：**行内分式加大** —— `\frac` 换 `\dfrac`（只在行内跑）。
+  //   用户口径："可以适当把分式的尺寸弄大一点，不一定非要全尺寸，但至少可以大一点；
+  //   可以允许行高变高"。实测行内 `\frac` 的分子分母是 **0.71 档**（15 vs 正文 21），
+  //   `\dfrac` 是 1.0 档（21）—— 这套引擎里没有介于两者之间的旋钮（0.7/0.5 是包里的常量），
+  //   而 `{\large\frac…}` 那种 hack 会因为 `\large` 不在结构命令表里而多出幻影原子 ⇒ 命中判死。
+  //   ★ 只改**渲染**用的 tex，源码一个字符都不动。
+  final FixedTex big =
+      inlineFractions ? withBigFractions(tex) : FixedTex(tex, const <int>[]);
+  // ★ 2026-10-20：再做**显示修正**（`\limsup`/`\liminf` 补 `\limits`），偏移同步映射
+  final FixedTex fixed = withOperandLimits(big.tex);
+  final int rel = caretRel < 0
+      ? caretRel
+      : fixed.mapOffset(big.mapOffset(caretRel));
   final SlotMarkResult marks = injectSlotMarks(fixed.tex, caretRel: rel);
   // 光标不在这段里 → 只画空槽，不画光标（`marks.rel` 此时为负，不能喂给 injectCursor）
   if (caretRel < 0 || !showCursor) return marks.tex;

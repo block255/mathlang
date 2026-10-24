@@ -21,6 +21,7 @@
 
 import 'caret_sites.dart';
 import 'slot_marks.dart';
+import 'tex_fixups.dart';
 import 'visible_atoms.dart';
 
 /// **给命中测试用的原子表**：渲染 tex 的可见原子，**按渲染顺序**（= 叶盒顺序）。
@@ -38,7 +39,8 @@ List<VisibleAtom> atomsForHitTest(String renderTex) =>
 
 /// 一个被注入的常量串
 class _Marker {
-  const _Marker(this.text, {this.isStructTail = false});
+  const _Marker(this.text,
+      {this.isStructTail = false, this.atOffset = 0, this.lenOverride});
 
   final String text;
 
@@ -47,6 +49,15 @@ class _Marker {
   /// 但点击它要回到**结构末尾**（= 内容末尾 + 收尾 `}`）——
   /// 因为整段尾垫在视觉上属于**装饰**（横线的那一截），指它 = 指这个结构。
   final bool isStructTail;
+
+  /// 插入点在匹配串里的**偏移**（默认 0 = 串首）。目前只有 `\dfrac` 用到：
+  /// 它是在 `\frac` 里插一个 `d`，插入点是串内第 1 个字符处。
+  final int atOffset;
+
+  /// 实际插入的长度（默认 = 整个串长）。`\dfrac` 只插入 1 个字符。
+  final int? lenOverride;
+
+  int get len => lenOverride ?? text.length;
 }
 
 /// 所有可能被注入的常量串（长串在前，避免短串把长串的一部分也匹配上）
@@ -56,6 +67,9 @@ List<_Marker> get _kMarkers => <_Marker>[
       _Marker(kEmptySlotTex),
       _Marker(kCursorTex),
       _Marker(kEnvCellFillTex),
+      // ★★ 2026-10-24（批 4 · C1）：行内 `\frac` → `\dfrac` 只多插一个 `d`
+      //   （`\` **之后**），所以插入点 = 串内第 1 个字符处、长度 1。
+      _Marker(kBigFrac, atOffset: 1, lenOverride: 1),
       _Marker(kStructTailTex, isStructTail: true),
     ];
 
@@ -109,7 +123,11 @@ List<({int at, int len, bool tail})> _insertionsOf(String renderTex) {
     if (m.text.isEmpty) continue;
     var i = renderTex.indexOf(m.text);
     while (i >= 0) {
-      found.add((at: i, len: m.text.length, tail: m.isStructTail));
+      found.add((
+        at: i + m.atOffset,
+        len: m.len,
+        tail: m.isStructTail,
+      ));
       i = renderTex.indexOf(m.text, i + 1);
     }
   }

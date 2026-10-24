@@ -362,6 +362,9 @@ class _InlineMathTextState extends State<InlineMathText> {
       s.tex,
       caretRel: slotHere ? slotPl!.localRel : -1,
       showCursor: caretHere,
+      // ★★ 2026-10-24（批 4 · C1）：**行内**分式加大（`\frac` → `\dfrac`）。
+      //   行间块（`doc_view` 那条）不传 ⇒ 保持 display 尺寸（它本来就是全尺寸）。
+      inlineFractions: true,
     );
 
     // ★★ ⑤ 选区：`source` 里公式段是 `$tex$` ⇒ 内容从 `s.start + 1` 开始
