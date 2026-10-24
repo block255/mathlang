@@ -1364,7 +1364,18 @@ class DocViewState extends State<DocView> {
             BlockType.math => sliceStart > 0 ? sliceStart - 1 : 0,
             _ => null,
           },
-          acceptTo: b.type == BlockType.math ? sliceStart + src.length : null,
+          acceptTo: switch (b.type) {
+            BlockType.math => sliceStart + src.length,
+            // ★★★ 2026-10-24（批 27）：**分界线块也要认领自己那一整行**（用户实测"点分界线下面那行
+            //   光标不显示"）。它的渲染文本是空的（`_renderParts` 给 `('', 0)`）⇒ 默认
+            //   `acceptTo = renderBase + 0 = sliceStart` = **行首**，于是：
+            //     · `blankRunAfter(buf, sliceStart)` 看到的是 `-` 而不是 `\n` ⇒ **分界线下面那个空行
+            //       根本没有空行槽** ⇒ 点它、光标落对了，但没人画；
+            //     · 文末槽的 `_blankOffsetAfter` 同理返回 -1 ⇒ 文末在分界线之后也没有光标。
+            //   改成"认领整片源码"（与行间公式块同一条口径）⇒ 换行符回到 `acceptTo` 那一格。
+            BlockType.divider => sliceStart + src.length,
+            _ => null,
+          },
         ));
         k++;
       }
@@ -1679,7 +1690,36 @@ class DocViewState extends State<DocView> {
         );
 
       case BlockType.divider:
-        return const Divider(height: 12, thickness: 1);
+        // ★★ 批 27：分界线这一行**也要看得见光标**（它没有任何文本能挂光标 ⇒ 自己画一根）。
+        //   用户 2026-10-24 实测「点分界线下面那行光标不显示」—— 除下面那个空行之外，
+        //   `---` 这三格本身同样是死区（点上去光标移过去了，屏幕上什么都没有 = 平权反例）。
+        //   ★ 竖条画在**行首**（这一行没有可参照的字形，固定左边），
+        //     高度用文本层标准（与"文字后面的光标"同一把尺），溢出 12px 的行高（`Clip.none`）。
+        final bool dividerCaret = !_hideCaret &&
+            widget.caretVisible &&
+            u.relFor(_caret) != null;
+        final double dividerCaretH = textCaretHeight(body);
+        return SizedBox(
+          height: 12,
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: <Widget>[
+              const Positioned.fill(
+                child: Center(child: Divider(height: 1, thickness: 1)),
+              ),
+              if (dividerCaret)
+                Positioned(
+                  left: 0,
+                  top: (12 - dividerCaretH) / 2,
+                  child: Container(
+                    width: 1.5,
+                    height: dividerCaretH,
+                    color: const Color(kCaretColorValue),
+                  ),
+                ),
+            ],
+          ),
+        );
 
       case BlockType.pageBreak:
         return const SizedBox.shrink();
