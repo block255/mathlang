@@ -356,6 +356,28 @@ bool _samePath(List<SlotStep> path, List<SlotStep> prefix) {
   return true;
 }
 
+/// ★★★ 2026-10-24（批 16）：光标这一格是不是落在**脚本槽**里（`^` / `_` 的内容）？
+///
+/// 用途只有一个：**脚本档的竖条要明显更矮**（用户拍板"变矮"）——
+/// `MathWithCaret.caretScript` 拿它去选高度口径（见 `findLocalRowBox` 的 `script`）。
+///
+/// ★ 判据来自**位点表**，不靠几何猜（"盒多矮"那种判据会把分母也认成脚本）：
+///   `snap(rel).path.last.command ∈ {^, _}` —— 与 `caretDepth` 完全同源。
+///
+/// ★ 为什么把表建在 `rel` 上而不是 `rel+1`：`rel` 是**内容偏移**（`$` 之内的位置），
+///   位点表就是按内容偏移建的；越界一律 false（调用方不必先夹）。
+bool isScriptSite(String tex, int rel) {
+  if (rel < 0 || rel > tex.length) return false;
+  return isScriptPath(buildCaretSites(tex).snap(rel).path);
+}
+
+/// 同上，给**已经算好位点**的调用方复用（省一次建表）。
+bool isScriptPath(List<SlotStep> path) {
+  if (path.isEmpty) return false;
+  final String cmd = path.last.command;
+  return cmd == '^' || cmd == '_';
+}
+
 /// 这个位点前面的那个 `^` / `_`，是不是挂在**闭合定界符**后面（`\right|` / `\right)` …）。
 ///
 /// 判据：从 [off] 往前跳过 `{` 与空格，遇到 `^`/`_` 后，再看它前面的文本是否以

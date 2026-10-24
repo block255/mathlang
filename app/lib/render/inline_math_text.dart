@@ -13,6 +13,7 @@ import 'caret_ownership.dart';
 import 'caret_sites.dart';
 import 'empty_math_mark.dart';
 import 'math_caret.dart';
+import 'math_nav.dart';
 import 'projection.dart';
 import 'slot_marks.dart';
 /// ★★ §6.5 **公式范围可见** —— ⚠️ **2026-10-15 晚撤掉了"整段淡色底"那一版**。
@@ -376,10 +377,14 @@ class _InlineMathTextState extends State<InlineMathText> {
     // ★★ U3（2026-10-21）：光标所在的**槽层深**（0 = 主行）—— 由位点表给，不靠几何猜。
     //   只在本段确实画/占光标时才算（只算这一段，成本可忽略）。
     int caretDepth = 0;
+    // ★★ 批 16（2026-10-24 用户拍板"变矮"）：脚本槽（`^` / `_` 的内容）⇒ 竖条单独缩
+    bool caretScript = false;
     if (caretHere || slotHere) {
       final int? rel = caretHere ? pl?.localRel : slotPl?.localRel;
       if (rel != null) {
-        caretDepth = buildCaretSites(s.tex).snap(rel).path.length;
+        final CaretSite site = buildCaretSites(s.tex).snap(rel);
+        caretDepth = site.path.length;
+        caretScript = isScriptPath(site.path);
       }
     }
 
@@ -389,7 +394,12 @@ class _InlineMathTextState extends State<InlineMathText> {
           : PlaceholderAlignment.middle,
       baseline: baseline ? TextBaseline.alphabetic : null,
       child: onTap == null && widget.onMathRightClick == null
-          ? _mathWidget(key, tex, caretHere: caretHere, edge: edge, sel: sel, caretDepth: caretDepth)
+          ? _mathWidget(key, tex,
+              caretHere: caretHere,
+              edge: edge,
+              sel: sel,
+              caretDepth: caretDepth,
+              caretScript: caretScript)
           : GestureDetector(
               // ★ 右键：行内公式也要能"改尺寸"（只有多行环境会被接住）。
               //   `opaque` 是为了**公式内部的空白**也归它（与行间那块同一口径）。
@@ -406,7 +416,12 @@ class _InlineMathTextState extends State<InlineMathText> {
                 child: MouseRegion(
                   cursor: SystemMouseCursors.text,
                   child:
-                      _mathWidget(key, tex, caretHere: caretHere, edge: edge, sel: sel, caretDepth: caretDepth),
+                      _mathWidget(key, tex,
+                          caretHere: caretHere,
+                          edge: edge,
+                          sel: sel,
+                          caretDepth: caretDepth,
+                          caretScript: caretScript),
                 ),
               ),
             ),
@@ -423,6 +438,7 @@ class _InlineMathTextState extends State<InlineMathText> {
           {bool caretHere = false,
           CaretEdge edge = CaretEdge.none,
           int caretDepth = 0,
+          bool caretScript = false,
           ({int from, int to})? sel}) =>
       MathWithCaret(
         tex: tex,
@@ -431,6 +447,8 @@ class _InlineMathTextState extends State<InlineMathText> {
         showCaret: caretHere,
         caretEdge: edge,
         caretDepth: caretDepth, // ★ U3：0 = 主行 ⇒ 竖条按文本层标准画高
+        // ★ 批 16：脚本槽（上标/下标内容）⇒ 竖条明显更矮（用户拍板）
+        caretScript: caretScript,
         // ★ F16：导出抓图时不画任何编辑辅助
         showEditingAids: widget.showEditingAids,
         // ★ 文本层字号（"公式前后那两格"按它画，与文字后面的光标地位等同）

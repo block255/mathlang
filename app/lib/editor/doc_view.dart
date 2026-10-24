@@ -45,6 +45,7 @@ import '../render/injection_map.dart';
 import '../render/leaf_boxes.dart';
 import '../render/leaf_pairing.dart';
 import '../render/math_caret.dart';
+import '../render/math_nav.dart';
 import '../render/tex_fixups.dart';
 import '../render/projection.dart';
 import '../render/slot_marks.dart';
@@ -1418,6 +1419,12 @@ class DocViewState extends State<DocView> {
               slotCaretAbs == null ? -1 : slotCaretAbs - u.renderBase,
           showCursor: caretAbs != null,
         );
+        // ★★ 批 16（2026-10-24 用户拍板"变矮"）：光标在**脚本槽**（`^` / `_` 的内容）里
+        //   ⇒ 竖条单独缩矮（与行内公式同一判据、同一函数）。
+        //   ★ 位点表按**源码** `text` 建（不是注入过的 `tex`）—— 注入会挪偏移。
+        //   ★ 块前/块后那两格用 `caretEdge` 那条路，不看这个值。
+        final int texRel = slotCaretAbs == null ? -1 : slotCaretAbs - u.renderBase;
+        final bool caretScript = texRel >= 0 && isScriptSite(text, texRel);
         // ⚠️ 2026-10-15 晚：原先这里给整段行间公式刷淡色底（§6.5 旧版），**已撤** ——
         //    它把"渲染提示"画成了"一个对象"（用户指出 `$\frac{a}{b}=\sqrt{2}$` 是三个对象）。
         //    见 `inline_math_text.kMathRangeColor` 的注释与《编辑地基与手感》§六-6。
@@ -1480,6 +1487,8 @@ class DocViewState extends State<DocView> {
             selTo: selTo,
             // 块前那一格（`renderBase - 1`）也要画 —— 它已被本单元认领（acceptFrom）
             showCaret: caretAbs != null,
+            // ★ 批 16：脚本槽 ⇒ 竖条变矮（判据同上，源码位点）
+            caretScript: caretScript,
             caretEdge: beforeBlock
                 ? CaretEdge.before
                 : (afterBlock ? CaretEdge.after : CaretEdge.none),

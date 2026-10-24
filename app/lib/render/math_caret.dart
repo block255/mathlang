@@ -64,7 +64,18 @@ class MathWithCaret extends StatefulWidget {
     this.selTo,
     this.showEditingAids = true,
     this.caretDepth = -1,
+    this.caretScript = false,
   });
+
+  /// ★★★ 2026-10-24（批 16，用户拍板"变矮"）：光标这一格是不是落在**脚本槽**里
+  /// （上标 / 下标的内容，即位点表路径最后一步是 `^` / `_`）？
+  ///
+  /// 为什么要单独知道：批 15 把竖条高度统一成"该层字形盒"之后，**指数档 10.9 vs 分子档 11.6**
+  /// —— 只差 0.7 px，靠位置区分（用户："一眼看不出我在指数里"）。
+  /// 脚本档要**重新变矮**（≈7.3，字形盒封顶前是 8.6）⇒ 与行档明显分开。
+  ///
+  /// 判据**不靠几何猜**（不量"盒有多矮"），由位点表直接给（与 [caretDepth] 同源）。
+  final bool caretScript;
 
   /// ★★ 2026-10-20（T-C 实测 F16）：**要不要画"编辑辅助"**（空槽虚线框 / 当前槽淡蓝底 /
   /// 边界刻度 / 光标竖条）。
@@ -202,7 +213,9 @@ class _MathWithCaretState extends State<MathWithCaret> {
       //     （否则"分式后面"会被分母抢走 —— 用户实测）。
       if (widget.caretEdge == CaretEdge.none) {
         final Rect? rowBox = _clampRowHeight(
-            findLocalRowBox(root, at, anchor: anchor), widget.fontSize);
+            findLocalRowBox(root, at,
+                anchor: anchor, script: widget.caretScript),
+            widget.fontSize);
         // ★★ U3（2026-10-21 用户实测 + 探针）：「同一视觉行上，光标不该因为旁边是文字还是
         //   数学符号而变高变矮」—— 这是**平权**在光标上的直接要求。
         //   实测（正文 16px，行内公式）：文字侧竖条 h 20.0（= 字号×1.25），
@@ -532,7 +545,11 @@ Rect? _clampRowHeight(Rect? r, double fontSize) {
 /// ★ 只用它把行盒放大到字形量级，再拿**本层字形盒**封顶 ⇒ 行盒不会把竖条撑得比字还高。
 const double kLineToGlyph = 1.35;
 
-Rect? findLocalRowBox(RenderObject root, Offset at, {RenderObject? anchor}) {
+/// [script] = 光标在**脚本槽**里（上标 / 下标的内容，判据由调用方从位点表给出）。
+///   `true` ⇒ 高度回到 `min(行盒 × kLineToGlyph, 本层字形盒)`（指数档实测 8.6）
+///   `false` ⇒ 高度 = 本层字形盒（批 15 口径：行盒特别紧的结构里也不会被压扁）。
+Rect? findLocalRowBox(RenderObject root, Offset at,
+    {RenderObject? anchor, bool script = false}) {
   final List<({Rect rect, double dx, RenderObject? row})> hits =
       <({Rect rect, double dx, RenderObject? row})>[];
   void walk(RenderObject o) {
@@ -628,7 +645,12 @@ Rect? findLocalRowBox(RenderObject root, Offset at, {RenderObject? anchor}) {
         //   "行盒 × 1.35"这条经验换算在**行盒特别紧**的结构里反而把竖条压扁了。
         // 判据（与分子 / 分母 / 主行统一）：**竖条 = 该层字形盒**；
         //   拉伸盒仍由 `clip()` 按中位数裁，最外层还有 `_clampRowHeight` 兜底。
-        final double h = picked.rect.height;
+        //   ★★★ 2026-10-24（批 16，用户拍板）：**只有脚本槽**例外 ——
+        //   上标/下标的内容里回到 `min(行盒 × kLineToGlyph, 字形盒)`（实测 8.6），
+        //   让"指数档"与"行档"一眼分得开（批 15 之后两者只差 0.7 px）。
+        final double h = script
+            ? math.min(anchorRowBox.height * kLineToGlyph, picked.rect.height)
+            : picked.rect.height;
         if (h > 1) {
           // 底边贴字形盒底（该层基线 + ¶ 盒下伸）⇒ 底部与同层字对齐
           return Rect.fromLTRB(picked.rect.left, picked.rect.bottom - h,
