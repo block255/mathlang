@@ -356,7 +356,28 @@ SmartEdit smartBackspace(CaretSiteTable t, int rel) {
   // §4.0 通则：与光标**同层**、紧邻左侧的那一个可见对象
   final _Span? obj = _objectLeftOf(t, s.offset);
   if (obj == null) return SmartEdit.none; // 同层左边什么都没有
+  // ★★★ 2026-10-24 **安全网**（用户实测"每次必坏"）：要删的那一项若是**纯语法**
+  //   （定界符 `|` / 花括号 / `^` `_` / `\left` `\right` 这类），而光标左边紧贴着一个
+  //   **普通字母** ⇒ 改删那个字母。
+  //   实测的坏法：在 `\left|{sinx}\right|` 的组内容里任意两个字母之间退格，
+  //   `_objectLeftOf` 返回的都是 `\left` 后面那根 `|`（[18,19)）⇒ `\left{sinx}\right|`
+  //   ⇒ KaTeX 报 `[公式不完整]`；而且删的总是同一根 `|`，所以每处都报错。
+  //   ★ 只拦"纯语法"这一种坏结果，不改变其它任何既有口径（`\alpha` 整词、`b^2` 裸参数连删、
+  //     挂件边缘、算子作用域… 那些 obj 都不是纯语法 ⇒ 一律照旧）。
+  if (_isSyntaxOnly(t.tex.substring(obj.start, obj.end.clamp(0, t.tex.length)))) {
+    final String prev = r > 0 ? t.tex[r - 1] : '';
+    if (RegExp(r'[A-Za-z0-9]').hasMatch(prev)) {
+      return SmartEdit.remove(r - 1, r, r - 1);
+    }
+  }
   return SmartEdit.remove(obj.start, obj.end, obj.start);
+}
+
+/// 这一段源码是不是**纯语法**（没有任何内容字符）：花括号 / `^` / `_` / 反斜杠命令 / 定界符。
+bool _isSyntaxOnly(String s) {
+  if (s.isEmpty) return false;
+  if (RegExp(r'^[\s{}^_\\|(){}\[\]<>.,;:]+$').hasMatch(s)) return true;
+  return false;
 }
 
 /// `Delete`：段内相对偏移 [rel] 处往后删（与 [smartBackspace] 镜像）。
