@@ -12,7 +12,7 @@
     { "id": "overline", "kind": "template", "tex": "\\overline{}", "label": "上划线", "alias": ["overline", "bar"], "pinyin": "shx", "keywords": ["共轭", "平均值"], "group": "结构" },
     { "id": "hat", "kind": "template", "tex": "\\hat{}", "label": "帽子", "alias": ["hat"], "pinyin": "mz", "keywords": ["估计量", "单位向量"], "group": "结构" },
     { "id": "vec", "kind": "template", "tex": "\\vec{}", "label": "向量", "alias": ["vec", "vector"], "pinyin": "xl", "keywords": ["箭头", "矢量"], "group": "结构" },
-    { "id": "cases", "kind": "template", "insertAs": "display", "tex": "\\begin{cases}&\\\\&\\end{cases}", "preview": "\\begin{cases}x&x\\ge 0\\\\-x&x<0\\end{cases}", "label": "分段", "alias": ["cases", "piecewise"], "pinyin": "fd", "keywords": ["分段函数", "大括号", "多行"], "group": "结构" },
+    { "id": "cases", "kind": "template", "insertAs": "display", "tex": "\\begin{cases}\\\\\\end{cases}", "preview": "\\begin{cases}x,\\ x\\ge 0\\\\-x,\\ x<0\\end{cases}", "label": "分段", "alias": ["cases", "piecewise"], "pinyin": "fd", "keywords": ["分段函数", "大括号", "多行", "逗号"], "group": "结构" },
     { "id": "aligned", "kind": "template", "insertAs": "display", "tex": "\\begin{aligned}&=\\\\&=\\end{aligned}", "preview": "\\begin{aligned}a&=b+c\\\\&=d\\end{aligned}", "label": "对齐推导", "alias": ["aligned", "align"], "pinyin": "dqtd", "keywords": ["多行", "等号对齐", "推导"], "group": "结构" },
 
     { "id": "alpha", "kind": "symbol", "tex": "\\alpha", "label": "阿尔法", "alias": ["alpha"], "pinyin": "aef", "keywords": ["希腊"], "group": "符号", "subgroup": "希腊" },
