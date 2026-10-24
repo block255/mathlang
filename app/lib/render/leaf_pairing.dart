@@ -484,12 +484,24 @@ LeafPairing _pairOnce({
     return null;
   }
 
-  /// 从 [from] 起"跳过垫子 / 空字盒 / 外框盒"后数 [span] 个字形盒；不够返回 null
+  /// 从 [from] 起"跳过垫子 / 空字盒 / 空白盒 / 外框盒"后数 [span] 个字形盒；不够返回 null
   ///
   /// ★ **只跳"中间"的垫子，不吞"后面"的垫子**：尾垫（`\rule{3pt}{0pt}`）本身就是一个
   ///   **垫子原子**，它紧跟在内容末尾 —— 若这里把尾随垫子也并进组里，
   ///   尾垫原子就找不到自己的盒了（实测：`\sqrt[3]{x}` 报"第 2 个是 3"）。
-  ({int to, List<String> texts})? peek(int from, int span) {
+  ///
+  /// ★★ [skipSpace]（2026-10-24，用户实测 ①③ 的根因）：**`\text{…}` 里的空格会画出一个
+  ///   "空格字形盒"（有宽度、文本是空格），而词法侧不算原子**（`visible_atoms` 对所有
+  ///   `' '` 一律跳过）。旧代码把这个盒当成"该原子画的那个字" ⇒
+  ///   `\text{旁注：当 }` 之后**整份配对失败**（实测原因串：
+  ///   `原子 x[20,21) 期望画 "x"，实际盒是 " "（第 6 个）`）⇒ 那一块点击整体退化
+  ///   （点 CJK 落到别的偏移 / 干脆没反应）。⇒ 现在：**纯空白的字形盒不吃"内容盒"名额**。
+  ///
+  /// ⚠️ 例外只有一个：**原子自己就是空格**（`\ ` 空格命令，源码里那一个字符是空白）——
+  ///   那种原子**必须**吃掉一个空格盒，否则它后面每个原子都往前错一格。
+  ///   由调用方按 [skipSpace] = false 传进来（见 `_pairOnce` 里的 `atomIsSpace`）。
+  ({int to, List<String> texts})? peek(int from, int span,
+      {required bool skipSpace}) {
     final List<String> texts = <String>[];
     var k = from;
     while (k < boxes.length && texts.length < span) {
@@ -506,6 +518,10 @@ LeafPairing _pairOnce({
       if (t.isEmpty) {
         k++;
         continue; // `\not` 那条斜杠：与别的字形重合，不占原子
+      }
+      if (skipSpace && t.trim().isEmpty) {
+        k++;
+        continue; // `\text{…}` 里的空格：有盒无字，不占"内容盒"名额
       }
       texts.add(t);
       k++;
@@ -539,8 +555,15 @@ LeafPairing _pairOnce({
     // ① 命令原子：先试"多字母名 = N 个盒"（`\sin` = 3 盒），再退回 1 盒
     final String? expect = expectedGlyphFor(tex, a);
     final String name = a.kind.startsWith(r'\') ? a.kind.substring(1) : '';
+    // ★★ 2026-10-24：**只有"自己就是空格"的原子**（`\ ` 空格命令）才吃空格盒。
+    //   判据与 `hasInk` 里那条一致（源码里那一个字符本身是空白）。
+    final bool atomIsSpace = a.kind == 'esc' &&
+        a.start + 1 < tex.length &&
+        tex[a.start + 1] == ' ';
+    final bool skipSpaceBoxes = !atomIsSpace;
     if (expect == null && name.length > 1) {
-      final ({int to, List<String> texts})? multi = peek(bi, name.length);
+      final ({int to, List<String> texts})? multi =
+          peek(bi, name.length, skipSpace: skipSpaceBoxes);
       if (multi != null && multi.texts.join() == name) {
         groups.add(PairGroup(a.start, a.end, bi, multi.to, a));
         bi = multi.to;
@@ -548,7 +571,8 @@ LeafPairing _pairOnce({
       }
     }
     // ② 单盒
-    final ({int to, List<String> texts})? one = peek(bi, 1);
+    final ({int to, List<String> texts})? one =
+        peek(bi, 1, skipSpace: skipSpaceBoxes);
     if (one == null) {
       fail('原子 ${a.kind}[${a.start},${a.end}) 没有盒了（共 ${boxes.length} 盒）');
       break;
