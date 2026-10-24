@@ -121,17 +121,23 @@ EnvGrid? buildEnvGrid({
       for (final VisibleAtom a in atoms)
         if (!plan.fillAtoms.contains(a)) a
     ];
-    final LeafPairing p = buildLeafPairing(
-      tex: tex,
-      boxes: boxes,
-      atoms: noFill,
-      skipBoxes: plan.skipBoxes,
-    );
-    if (p.complete) {
-      pairing = LeafPairing(
-        groups: <PairGroup>[...p.groups, ...plan.fillGroups],
-        complete: true,
+    if (noFill.isEmpty) {
+      // ★ 整块环境**一个字都没有**（全空的分段/矩阵）：没有墨迹要配对 ⇒
+      //   别去走配对（空的配对会被判"一个组都没配上"而退回老路）。
+      pairing = LeafPairing(groups: plan.fillGroups, complete: true);
+    } else {
+      final LeafPairing p = buildLeafPairing(
+        tex: tex,
+        boxes: boxes,
+        atoms: noFill,
+        skipBoxes: plan.skipBoxes,
       );
+      if (p.complete) {
+        pairing = LeafPairing(
+          groups: <PairGroup>[...p.groups, ...plan.fillGroups],
+          complete: true,
+        );
+      }
     }
   }
   // 认不出来（有别的垫子混进来）⇒ **整份不认**，退回老路：宁可点不准，也不猜。
@@ -143,8 +149,8 @@ EnvGrid? buildEnvGrid({
     Rect? r;
     for (final PairGroup g in pairing.groups) {
       if (g.srcEnd <= s.start || g.srcStart >= s.end) continue;
-      final Rect h = g.hull(boxes);
-      if (h.width <= 0 && h.height <= 0) continue;
+      final Rect? h = _groupInkRect(g, boxes);
+      if (h == null) continue;
       r = r == null ? h : r.expandToInclude(h);
     }
     if (r != null) cellRect[rowOf(s) * 1000 + colOf(s)] = r;
@@ -483,7 +489,8 @@ _EnvFillPlan? _envFillPlan({
   final List<VisibleAtom> fillAtoms = <VisibleAtom>[
     for (final VisibleAtom a in atoms)
       if (isPadAtom(a) && tex.substring(a.start, a.end) == kEnvCellFillTex) a
-  ]..sort((VisibleAtom a, VisibleAtom b) => a.start.compareTo(b.start));  if (fillAtoms.length != fillBoxOfCell.length) return null;
+  ]..sort((VisibleAtom a, VisibleAtom b) => a.start.compareTo(b.start));
+  if (fillAtoms.length != fillBoxOfCell.length) return null;
   final List<int> keys = fillBoxOfCell.keys.toList()..sort();
   final List<PairGroup> fillGroups = <PairGroup>[
     for (var i = 0; i < keys.length; i++)
@@ -502,8 +509,32 @@ _EnvFillPlan? _envFillPlan({
   );
 }
 
+/// **一个组的"墨迹"外框**：只取**字形盒**，垫子盒不算。
+///
+/// ★★ 2026-10-24（D3 续）：配对时 `peek` 会把"夹在中间的垫子"跳过去，但**不改 `bi`**
+///   ⇒ 组的 `[boxFrom, boxTo)` 里常常**挂着前面那个垫子**（列间距、空格子的垫子、行尾对齐垫）。
+///   拿 `g.hull()` 当格子矩形，格子就会**向左/向上溢出到邻行邻列**
+///   （实测两列布局里 c0 的带被撑到 17.8..105.9，与 c1 重叠 ⇒ 点哪都判到第 0 列）。
+///   墨迹才是"这一格里的内容"，垫子是排版细节 ⇒ 只量字形盒。
+///
+/// 整组没有字形盒（格子垫 / 尾垫这类纯垫子）⇒ 退回整组外框（零高，正好当基线锚点）。
+Rect? _groupInkRect(PairGroup g, List<LeafBox> boxes) {
+  Rect? r;
+  for (var i = g.boxFrom; i < g.boxTo && i < boxes.length; i++) {
+    final LeafBox b = boxes[i];
+    if (b.kind != LeafBoxKind.glyph) continue;
+    if ((b.text ?? '').trim().isEmpty) continue;
+    r = r == null ? b.rect : r.expandToInclude(b.rect);
+  }
+  if (r != null) return r;
+  final Rect h = g.hull(boxes);
+  if (h.width <= 0 && h.height <= 0) return null;
+  return h;
+}
+
 /// 中位数（空表 ⇒ 0）
-double _medianOf(List<double> xs) {  if (xs.isEmpty) return 0;
+double _medianOf(List<double> xs) {
+  if (xs.isEmpty) return 0;
   final List<double> s = List<double>.of(xs)..sort();
   return s[s.length ~/ 2];
 }

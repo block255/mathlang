@@ -130,4 +130,73 @@ void main() {
     expect(g.maxCol, 1);
     _everyCellLandsOnItself(g);
   });
+
+  group('★ 6 行 × 2 列（老两列分段模板）：每格都要判到自己', () {
+    // 「每行还是有第二个位点」= 两列分段里每行有两个格子；两列 + 多行时
+    // 行带曾只剩 5 条（6 行）、列带曾重叠（c0 17.8..105.9 vs c1 57.8..105.9）。
+    const String empty6 =
+        r'\begin{cases}&\\&\\&\\&\\&\\&\end{cases}';
+    const String filled6 =
+        r'\begin{cases}&\\&\\1,&x>0\\&\\&\\&\end{cases}';
+
+    testWidgets('全空：6 条行带 + 2 条不重叠的列带', (WidgetTester tester) async {
+      final EnvGrid? g = await _grid(tester, empty6);
+      expect(g, isNotNull);
+      expect(g!.maxRow, 5, reason: '六段');
+      expect(g.maxCol, 1);
+      expect(g.rowBand.length, 6);
+      for (var r = 0; r < 5; r++) {
+        expect(g.rowBand[r]!.bottom, closeTo(g.rowBand[r + 1]!.top, 0.01),
+            reason: 'r$r / r${r + 1} 必须首尾相接');
+      }
+      expect(g.colBand[0]!.right, lessThanOrEqualTo(g.colBand[1]!.left + 0.01),
+          reason: 'c0 ${g.colBand[0]} 与 c1 ${g.colBand[1]} 不许重叠');
+      _everyCellLandsOnItself(g);
+    });
+
+    testWidgets('★ 中间一段填了东西：其余各段照旧各判各的', (WidgetTester tester) async {
+      final EnvGrid? g = await _grid(tester, filled6);
+      expect(g, isNotNull);
+      expect(g!.maxRow, 5);
+      expect(g.rowBand.length, 6);
+      for (var r = 0; r < 5; r++) {
+        expect(g.rowBand[r]!.bottom, closeTo(g.rowBand[r + 1]!.top, 0.01),
+            reason: 'r$r / r${r + 1} 必须首尾相接（有字的那行也不许把行高撑歪）');
+      }
+      // 每一格的中心都必须判回它自己（点哪落哪）
+      for (var r = 0; r <= 5; r++) {
+        for (var c = 0; c <= 1; c++) {
+          final Rect? cell = g.cell(r, c);
+          expect(cell, isNotNull, reason: 'r${r}c$c');
+          final EnvCellHit? hit = envCellHitIn(g, cell!.center);
+          expect(hit?.row, r, reason: '点 r${r}c$c ⇒ $hit');
+          expect(hit?.col, c, reason: '点 r${r}c$c ⇒ $hit');
+        }
+      }
+    });
+
+    testWidgets('★ 填了一段之后，源偏移仍逐格对', (WidgetTester tester) async {
+      final EnvGrid? g = await _grid(tester, filled6);
+      expect(g, isNotNull);
+      // 源槽：r0c0[13,13) r0c1[14,14) r1c0[16,16) r1c1[17,17)
+      //       r2c0[19,21) r2c1[22,25) r3c0[27,27) r3c1[28,28)
+      //       r4c0[30,30) r4c1[31,31) r5c0[33,33) r5c1[34,34)
+      const List<List<int>> want = <List<int>>[
+        <int>[13, 14],
+        <int>[16, 17],
+        <int>[19, 22],
+        <int>[27, 28],
+        <int>[30, 31],
+        <int>[33, 34],
+      ];
+      for (var r = 0; r <= 5; r++) {
+        for (var c = 0; c <= 1; c++) {
+          final EnvCellHit? hit = envCellHitIn(g!, g.cell(r, c)!.center);
+          expect(hit, isNotNull);
+          expect(envCellOffset(filled6, hit!), want[r][c],
+              reason: 'r${r}c$c ⇒ $hit');
+        }
+      }
+    });
+  });
 }
