@@ -367,6 +367,28 @@ class _Unit {
   }
 }
 
+/// ★★★ 2026-10-24（批 21）：**行间块的边界竖条归谁**（`before` / `after` 各一格）。
+///
+/// 用户实测「有时候同时存在两个光标」：两个**紧挨着**的行间块（中间只有一个 `\n`）
+/// 让同一个偏移**同时**属于 A 的"块之后"（`base + length`）与 B 的"块之前"（`base - 1`）
+/// ⇒ 两块各画一根竖条 ⇒ 屏幕上两根光标。
+///
+/// 口径：
+///   ① 只认**紧贴**的那两格（相等判据；旧的 `<` / `>` 连更远的空白都算，更容易撞）；
+///   ② 两个块**共享**那一格时（左邻是另一个行间块的收尾 `$$`）⇒ 让给**左边那块**
+///      （它画"块之后"），本块不画"块之前"。
+@visibleForTesting
+({bool before, bool after}) blockEdgeClaim({
+  required int? caret,
+  required int acceptFrom,
+  required int acceptTo,
+  required bool sharesLeftCell,
+}) =>
+    (
+      before: caret != null && caret == acceptFrom && !sharesLeftCell,
+      after: caret != null && caret == acceptTo,
+    );
+
 /// 供外部（状态栏 / 实验页）显示的分页统计。
 class DocViewStats {
   const DocViewStats({
@@ -1468,9 +1490,30 @@ class DocViewState extends State<DocView> {
         //      `caretAbs > renderEnd` **永远不成立**（2026-10-16 实测：用户看到的
         //      "行间还是分母位高度"就是这个），块后那一格会退回数学层标准。
         final int? rawCaret = _caret;
-        final bool beforeBlock = rawCaret != null && rawCaret < u.renderBase;
-        final bool afterBlock =
-            rawCaret != null && rawCaret > u.renderBase + u.renderLength;
+        // ★★★ 2026-10-24（批 21，用户实测"有时候会出现同时存在两个光标"）：
+        //   边界竖条只在光标**紧贴**这一块时才画 —— 原来是 `< / >`，
+        //   于是"两个行间块之间那一段空白"同时满足 A 的"块之后"和 B 的"块之前"
+        //   ⇒ **两个块各画一根竖条** ⇒ 屏幕上两根光标。
+        //   改成**相等**判据：A 只认 `A.end`、B 只认 `B.start - 1`。
+        //
+        //   ★ 但两个**紧挨着**的行间块（中间只有一个 `\n`）会让这个格**同时**属于
+        //     A 的"块之后"与 B 的"块之前" ⇒ 仍然两根。判据：本块左邻是不是**另一个行间块的收尾 `$$`**
+        //     （`buf[renderBase-1] == '\n' && buf[renderBase-2] == '$'`）⇒ 这一格**让给左边那块**
+        //     （它画"块之后"），本块不画"块之前" ⇒ 共享格上恒为**一根**竖条。
+        final String src = widget.buffer.buf;
+        // 左邻是不是**另一个行间块的收尾 `$$`**（`acceptFrom` 那一格是换行、再前一格是 `$`）
+        final bool sharesLeftCell = u.acceptFrom >= 1 &&
+            u.acceptFrom < src.length &&
+            src[u.acceptFrom] == '\n' &&
+            src[u.acceptFrom - 1] == r'$';
+        final ({bool before, bool after}) edge = blockEdgeClaim(
+          caret: rawCaret,
+          acceptFrom: u.acceptFrom,
+          acceptTo: u.acceptTo,
+          sharesLeftCell: sharesLeftCell,
+        );
+        final bool beforeBlock = edge.before;
+        final bool afterBlock = edge.after;
         // ★★ ④-5：行间公式用**自己的字号**（`DocSettings.effectiveDisplayFontSize`，
         //   默认 = 正文 × 1.25）。块内的光标不需要另设判据 —— 它取自当地 ¶ 盒（自动跟随）；
         //   块**之前 / 之后**那两格仍按**段落文本层**标准（`textFontSize: body`，§11.27）。

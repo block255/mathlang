@@ -82,10 +82,11 @@ void main() {
     expect(envCellOffset(kTex, const EnvCellHit(0, 0, atEnd: false)), 15);
   });
 
-  test(r'★★ 点击落点归一：`&=` 的 `=` 之前 ⇒ 一律挪到 `=` 之后（与方向键一致）', () {
-    expect(normalizeAlignedEqOffset(kTex, 16), 17,
-        reason: r'改前点这里会停在 `=` 前（与"创建时落点"不一致 ⇒ 同一位置两种行为）');
-    expect(normalizeAlignedEqOffset(kTex, 20), 21, reason: '第二行同理');
+  test(r'★★ 点击落点归一：`&=` 的 `=` 之前 ⇒ 一律挪到 **`&` 之前**（左格末尾，与方向键一致）', () {
+    // ★ 用户 2026-10-24 复验：往**右**挪很反直觉（"点等号左边却进到右边"）⇒ 改往左。
+    expect(normalizeAlignedEqOffset(kTex, 16), 15,
+        reason: '点在 `=` 左边的像素 ⇒ 落左格末尾（改前会跳到 `=` 之后）');
+    expect(normalizeAlignedEqOffset(kTex, 20), 19, reason: '第二行同理');
     for (final int rel in <int>[0, 15, 17, 19, 21, 34]) {
       expect(normalizeAlignedEqOffset(kTex, rel), rel, reason: 'rel=$rel 不该被挪');
     }
