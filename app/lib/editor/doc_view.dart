@@ -1359,9 +1359,20 @@ class DocViewState extends State<DocView> {
           //    `relFor` 会把两端**夹进 tex** ⇒ 光标画在公式的**左 / 右边缘**（与行内对称）。
           acceptFrom: switch (b.type) {
             BlockType.bulletList || BlockType.orderedList => sliceStart,
+            // ★★ 批 28：标题 / 引用的**标记区**（`### ` / `> `）也归本单元。
+            //   原来落到默认值 `renderBase`（= 标记之后）⇒ **空标题块**（`### ` 后面没字）
+            //   整个标记区没人认领 ⇒ 光标进不去、也就没有竖条
+            //   （探针 v30 逐偏移实测：分界线后面那个空 `### ` 的 30–34 全是死区）。
+            //   与列表项同口径：标记区算"内容开头"。
+            BlockType.heading1 ||
+            BlockType.heading2 ||
+            BlockType.heading3 ||
+            BlockType.quote =>
+              sliceStart,
             // ★ 与行内公式的「两端各多认领一格」对称：**块前那一格**也算（否则光标从上面
             //   往下走进块时，最后一格没人管 ⇒ 又是"光标消失"）
             BlockType.math => sliceStart > 0 ? sliceStart - 1 : 0,
+            BlockType.divider => sliceStart,
             _ => null,
           },
           acceptTo: switch (b.type) {

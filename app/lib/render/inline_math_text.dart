@@ -157,6 +157,25 @@ class _InlineMathTextState extends State<InlineMathText> {
       _internalKeys.removeWhere((k, _) => !live.contains(k));
     }
 
+    // ★★ 2026-10-24（批 28）：**空的一段也要看得见光标**。
+    //
+    // 实测（用户作业文档结尾 `---\n\n### \n\n`）：空标题块（`### ` 后面没字）的渲染文本是 `''`
+    // ⇒ 下面那条 `for (segs)` 一个 span 都不产出 ⇒ 光标落在这一行时**一根竖条都不画**：
+    //   探针逐偏移扫出来 30–34 全是死区（用户读成"光标消失"、那一段空隙读成"多了一个空行"）。
+    //
+    // 口径：空文本只有一个位置 ⇒ 光标只要在本单元里就画在行首。
+    //   ★ 用**普通空格**当"占位字符"（必须有一个 span，否则这一行没有行高）：
+    //     实测空的 `Text.rich` 比"有一个字"的行**矮 7px**（空 `### ` 25.4 vs 有字 32.4）
+    //     ⇒ 空标题里打出第一个字时整块会突然长高、页面跳一下。空格正好把行高补回 32.4。
+    //   ★ 不用 `\u200B`（零宽空格）：版面一样，但它在某些字体里缺字形 ⇒ 可能渲染成豆腐块。
+    if (widget.source.isEmpty) {
+      final bool here = rel != null && rel <= 0;
+      return Text.rich(TextSpan(style: widget.textStyle, children: <InlineSpan>[
+        const TextSpan(text: ' '),
+        if (here && widget.showEditingAids) _caretBar(),
+      ]));
+    }
+
     for (var i = 0; i < segs.length; i++) {
       final ProjectionSegment s = segs[i];
       if (s.isMath) {
