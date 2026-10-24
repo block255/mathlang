@@ -178,6 +178,21 @@ int nextCaretOffset(String source, int offset) {
       next++;
       continue;
     }
+    // ★★★ 2026-10-24（批 12）：**与当前站位同一根像素的站点不单独停**。
+    //
+    // 判据：两站之间**全是不可见字符**（`{` `}` `^` `_` 空格，以及 `\text` `\mathrm`
+    // `\operatorname` 这类**只换字体、不画东西**的命令名）。
+    // 实测漏网的两个（普查 30 式子 × 2 样式）：`\left|{x^2}\right|` 的 `6→7`（中间只有 `{`）、
+    // `\text{当}` 的 `0→6`（中间是 `\text{`）。用户的表现就是**按一下 `→` 屏幕没动**。
+    // ★ 与"跳过粘合位点"是同一条原则（每一步都要看得见），这里推广到所有隐形间隔。
+    // ★ 必须**同一层**才跳：`\sum_{i=1}^{n}` 的"下限尾(9) → 上限首(12)"中间也只有 `^{`，
+    //   但那两站一个在**下限那一行**、一个在**上限那一行** ⇒ 竖条位置完全不同、**必须停**
+    //   （2026-10-15 的金表就要求停 12）。所以判据是"不可见间隔 **且** 同一容器"。
+    if (_sameVisualLayer(t.sites[i].path, t.sites[next].path) &&
+        _invisibleBetween(r.tex, t.sites[i].offset, t.sites[next].offset)) {
+      next++;
+      continue;
+    }
     final int off = t.sites[next].offset;
     // ★ 注：`}` 之后那一格与内容末尾**同一根像素**（括号不可见）—— 但**不统一跳**：
     //   2026-10-15 用户扫出来的"金表"（`\sum_{i=1}^{n}a_i`）明确要求 14 那一格**要停**，
@@ -250,6 +265,80 @@ int nextCaretOffset(String source, int offset) {
   return r.closeEnd; // 段内没有更靠右的位点了 → 走出到 `$` 之后
 }
 
+/// ★★★ 2026-10-24（批 12）：两站之间**全是不可见字符** ⇒ 两根位点画在同一根像素上。
+///
+/// 认作"不可见"的：
+///   · 花括号 / 上下标 / 空格 / 换行 / `&` / `[` `]` —— 纯语法，不画东西
+///   · **只换字体**的命令名：`\text` `\mathrm` `\operatorname` `\mathbf` `\mathit`
+///     `\textcolor` `\color` `\rm` `\bf` `\it`（命令名本身不占宽）
+/// ★ 其余命令一律算"看得见"：`\left` `\right`（它们的**分隔符**会画东西，比如 `\left|` 那根竖线）、
+///   `\alpha` `\sum` … 全都会画出墨迹来。
+bool _invisibleBetween(String tex, int from, int to) {
+  final int a = from.clamp(0, tex.length);
+  final int b = to.clamp(0, tex.length);
+  if (b <= a) return true;
+  var i = a;
+  while (i < b) {
+    final String ch = tex[i];
+    // ★ 命令分支必须**先**判：否则 `\` 会被下面那张"普通不可见字符"表吃掉，
+    //   `\text` 就会被逐字符拆开、`t` `e` `x` `t` 全当"看得见"（实测踩过）。
+    if (ch == r'\') {
+      if (i + 1 < b && tex[i + 1] == r'\') {
+        i += 2; // `\\` 换行：不画东西
+        continue;
+      }
+      var j = i + 1;
+      while (j < b && _isAsciiLetter(tex[j])) {
+        j++;
+      }
+      final String name = tex.substring(i + 1, j);
+      if (j > i + 1 && _kFontOnlyCommands.contains(name)) {
+        i = j;
+        continue;
+      }
+      return false; // 其它命令都会画出墨迹（`\left|` 那根竖线、`\alpha` …）
+    }
+    if ('{}^_ []\n\t\r&'.contains(ch)) {
+      i++;
+      continue;
+    }
+    return false;
+  }
+  return true;
+}
+
+bool _isAsciiLetter(String c) {
+  final int u = c.codeUnitAt(0);
+  return (u >= 65 && u <= 90) || (u >= 97 && u <= 122);
+}
+
+/// **只换字体**的命令（`\text` `\mathrm` …）：它们的参数在**同一条基线上**，
+/// 不像 `^` `_` / `\frac` / 环境那样真的换一层 ⇒ 判"是不是同一层"时要把它们**抹掉**。
+const Set<String> _kFontOnlyCommands = <String>{
+  'text', 'mathrm', 'operatorname', 'mathbf', 'mathit', 'mathsf', 'mathtt',
+  'textcolor', 'color', 'rm', 'bf', 'it', 'displaystyle', 'textstyle',
+};
+
+/// 两条位点路径**视觉上是否同一层**（抹掉"只换字体"的槽再比）。
+///
+/// 为什么不能直接比 `path`：`\text{当}` 的内容槽是 `text#0`，而"`\text` 之前"是主行 ——
+/// 结构上不同槽，**视觉上是同一层、同一根基线**（实测两站竖条完全相同）。
+bool _sameVisualLayer(List<SlotStep> a, List<SlotStep> b) {
+  final List<SlotStep> x = a
+      .where((SlotStep s) => !_kFontOnlyCommands.contains(s.command))
+      .toList();
+  final List<SlotStep> y = b
+      .where((SlotStep s) => !_kFontOnlyCommands.contains(s.command))
+      .toList();
+  if (x.length != y.length) return false;
+  for (var i = 0; i < x.length; i++) {
+    if (x[i].command != y[i].command || x[i].argIndex != y[i].argIndex) {
+      return false;
+    }
+  }
+  return true;
+}
+
 /// `path` 是否以 [prefix] 开头（逐级相等）
 bool _samePath(List<SlotStep> path, List<SlotStep> prefix) {
   if (path.length < prefix.length) return false;
@@ -308,9 +397,19 @@ int prevCaretOffset(String source, int offset) {
   final CaretSite s = t.snap(r.rel(o));
   final int i = t.indexOf(s.offset);
   // ★ `←` 也跳过粘合位点（对称；理由见 [nextCaretOffset]）。
+  // ★★ 2026-10-24（批 12）：**同样跳过"与当前站位同一根像素"的站点**（不可见间隔）。
   var back = i - 1;
-  while (back >= 0 && t.sites[back].glue) {
-    back--;
+  while (back >= 0) {
+    if (t.sites[back].glue) {
+      back--;
+      continue;
+    }
+    if (_sameVisualLayer(t.sites[i].path, t.sites[back].path) &&
+        _invisibleBetween(r.tex, t.sites[back].offset, t.sites[i].offset)) {
+      back--;
+      continue;
+    }
+    break;
   }
   if (back >= 0) return r.abs(t.sites[back].offset);
   return r.openStart; // 段内第一个位点 → 走出到 `$` 之前
