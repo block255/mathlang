@@ -237,7 +237,14 @@ class _MathWithCaretState extends State<MathWithCaret> {
         //   （用户实测：从第 2 行右式末尾按 Tab 退出公式，光标落在两行中间靠右）。
         final bool isDisplay =
             widget.mathStyle == MathStyle.display && root is RenderBox && root.hasSize;
-        final Offset baseline = isDisplay
+        // ★★★ 2026-10-24（批 9 · H6）：**只有多行环境才贴块顶/块底**。
+        //
+        // 原来一律按块边画（`aligned` / `cases` 的锚点浮在两行之间，贴边才对）。
+        // 但**单行而很高**的公式（`\sum` / `\int` 带堆叠上下限）里，"块底"在**下限那一行**
+        // ⇒ 光标看着"掉到 ∑ 下面"（用户 2026-10-24 四张图）。
+        // 判据：tex 里**没有 `\\`** ⇒ 单行 ⇒ 按锚点（主行基线）画。
+        final bool multiRow = widget.tex.contains(r'\\');
+        final Offset baseline = (isDisplay && multiRow)
             ? Offset(at.dx,
                 widget.caretEdge == CaretEdge.before ? 0.0 : root.size.height)
             : at;

@@ -236,7 +236,15 @@ int nextCaretOffset(String source, int offset) {
     next++;
   }
 
-  if (next < t.sites.length && t.sites[next].offset < r.tex.length) {
+  // ★★★ 2026-10-24（批 9 · H6）：**行间块要停在 tex 末位**（那就是 ∑ / ∫ 的"正右边"）。
+  //
+  // 用户实测（`\sum_{i=1}^{n}`）：打完上限 `n` 按 `→`，光标**没有**停在 ∑ 正右边，
+  //   而是直接出了公式、落到"块之后"那一格（竖条贴块底 ⇒ 看起来"掉到 ∑ 下面"），
+  //   在那里按删除**整块**就没了。
+  // 判据：`$` 不可见 ⇒ 行内公式的 tex 末位与"公式之后"同一根像素 ⇒ 跳过（原有口径，别动）；
+  //   而**行间块的末位是看得见的**（∑ 的右侧），必须停 —— 再按一下才出块。
+  if (next < t.sites.length &&
+      (t.sites[next].offset < r.tex.length || r.isDisplay)) {
     return r.abs(t.sites[next].offset);
   }
   return r.closeEnd; // 段内没有更靠右的位点了 → 走出到 `$` 之后
