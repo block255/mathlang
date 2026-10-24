@@ -317,7 +317,56 @@ bool _endsWithPlainCloser(String tex, OpScope s) {
 }
 
 /// `Backspace`：段内相对偏移 [rel] 处往前删。
-SmartEdit smartBackspace(CaretSiteTable t, int rel) {
+/// ★★★ 2026-10-24（批 29）：**删除的产物必须是合法 tex** —— 不许把「控制词」和「字母」粘成新命令。
+///
+/// 实测（用户 22:29 截图）：tex = `\exists x_{0}\in[x_{2}`，光标停在 `[` 之后按 Backspace
+/// ⇒ 删掉 `[` ⇒ `\exists x_{0}\inx_{2}` ⇒ **`\inx` 是未定义命令** ⇒ 页面红字 `[公式不完整]`。
+/// 同一条 tex 里，光标在 `[` **之前**时删的是 `\in`（结果合法）——
+/// 差别只在"删的是不是一个把命令和字母分开的分隔符"。
+///
+/// 口径（与 D4「组内退格不许删到 `\|`」同族，都是"⌫ 不许把文档弄坏"）：
+///   · 若删除区间的**右侧以字母/数字开头**，且**左侧正好以一条完整命令结尾**
+///     （`tex[from]` 本身不是字母 ⇒ 删的是分隔符，不是命令内部的字）,
+///   · 则改删**那条命令**（保留分隔符），光标落到命令起点。
+/// 例：`\exists x_{0}\in[x_{2}` 在 `[` 后按 ⌫ ⇒ 删 `\in` ⇒ `\exists x_{0}[x_{2}` ✓
+SmartEdit _guardCommandGlue(String tex, SmartEdit e) {
+  final int? from = e.from;
+  final int? to = e.to;
+  if (from == null || to == null) return e;
+  if (from <= 0 || from > tex.length || to > tex.length || to <= from) return e;
+
+  // ① `\left` / `\right` **后面那个分隔符**被删掉 ⇒ 命令失去参数
+  //    （`Expected group after \right`）⇒ 按"分隔符不可单删"的老口径**整对删**。
+  //    实测来源：全域扫描 `\left(x^{2}\right)` 的第 10 格按 Delete。
+  //    ★ 这一条**不能用 `tex[to]`**，所以必须放在下面的越界检查**之前**
+  //      （删除区间恰好到文末时 to == tex.length）。
+  if (to - from == 1) {
+    final bool afterRight = from >= 6 && tex.substring(from - 6, from) == r'\right';
+    final bool afterLeft = from >= 5 && tex.substring(from - 5, from) == r'\left';
+    if (afterRight || afterLeft) {
+      final _DelimPair? p = _delimPairAt(tex, from - 1);
+      if (p != null) return SmartEdit.remove(p.start, p.end, p.start);
+    }
+  }
+
+  // ② 不许把「控制词」和后面的字母/数字粘成新命令
+  if (from >= tex.length || to >= tex.length) return e;
+  if (_isAsciiLetter(tex.codeUnitAt(from))) return e; // 在命令名**内部**删（另一类情形）
+  final int c = tex.codeUnitAt(to);
+  if (!_isAsciiLetter(c) && !(c >= 0x30 && c <= 0x39)) return e;
+  final Match? m = RegExp(r'\\[A-Za-z]+$').firstMatch(tex.substring(0, from));
+  if (m == null) return e;
+  return SmartEdit.remove(m.start, from, m.start);
+}
+
+bool _isAsciiLetter(int c) =>
+    (c >= 0x41 && c <= 0x5A) || (c >= 0x61 && c <= 0x7A);
+
+/// `Backspace`：段内相对偏移 [rel] 处往前删（外层包装见 [_guardCommandGlue]）。
+SmartEdit smartBackspace(CaretSiteTable t, int rel) =>
+    _guardCommandGlue(t.tex, _backspaceCore(t, rel));
+
+SmartEdit _backspaceCore(CaretSiteTable t, int rel) {
   final int r = rel.clamp(0, t.tex.length);
   if (r <= 0) return SmartEdit.none;
 
@@ -483,7 +532,11 @@ _Span? _emptyStructureAt(String tex, int r) {
 }
 
 /// `Delete`：段内相对偏移 [rel] 处往后删（与 [smartBackspace] 镜像）。
-SmartEdit smartDelete(CaretSiteTable t, int rel) {
+/// `Delete`（往后删）—— 外层同样过 [_guardCommandGlue]。
+SmartEdit smartDelete(CaretSiteTable t, int rel) =>
+    _guardCommandGlue(t.tex, _deleteCore(t, rel));
+
+SmartEdit _deleteCore(CaretSiteTable t, int rel) {
   final int r = rel.clamp(0, t.tex.length);
   if (r >= t.tex.length) return SmartEdit.none;
 
