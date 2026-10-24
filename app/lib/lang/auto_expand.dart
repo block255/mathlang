@@ -219,22 +219,41 @@ AutoExpand? _planScript(String doc, int caret, String mark) {
       }
     }
     if (last == null || last.length == 0) return null;
-    // ★★★ 2026-10-24（批 15c）：**基座正好是某个脚本的内容末尾 ⇒ 什么都不做**。
+    // ★★★ 2026-10-24（批 15d）：**光标停在"整个对象之后"（`}` 之后）⇒ 先分组再加指数**。
     //
-    // 用户实测（`\left|{x^{2}}\right|`，光标在 `2` 之后按 Shift+6）：
-    //   先得到 `x^{2^{}}`（脚本里嵌空脚本）· 再得到 `x^{}2^{}`（基座被搬走）·
-    //   我上一版改成"挂到对象层"得到 `x^{2}^{}` —— 也**不合法**：
-    //   **TeX 里同一个基座不能有两个 `^`**（双重指数必须先分组 `{x^{2}}^{}`）。
-    // ⇒ 这里没有"就地合法"的做法，干脆**不响应**（返回 null，由 `_commitText` 把 `^` 吞掉），
-    //   要加第二层指数得先把它分组（面板的分组/括号），或改里面的内容。
+    // 用户问：「在整体后面加指数，正常也没有不加括号就这么干的情况，遇到了该怎么处理」
+    // ⇒ 答案就是**替用户补那对花括号**：`{x^{2}}^{}`。
+    // 实测（探针 v17）：`{x^{2}}^{}` ✓ 可渲染；而 `x^{2}^{}` ❌（同一基座两个 `^`）。
     for (final SlotSpan s in buildCaretSites(r.tex).slots) {
       if (s.path.isEmpty) continue;
       final SlotStep step = s.path.last;
       if (step.command != '^' && step.command != '_') continue;
-      if (s.end != last.end) continue;
-      if (s.end >= r.tex.length || r.tex[s.end] != '}') continue;
-      return null;
+      if (s.end >= r.tex.length || r.tex[s.end] != '}') continue; // 只认花括号形式
+      final int objEnd = s.end + 1; // `}` 之后
+      if (rel != objEnd) continue; // 正停在"对象之后"那一格
+      VisibleAtom? baseAtom;
+      for (final VisibleAtom a in lexVisibleAtoms(r.tex)) {
+        if (a.kind == 'tail' || a.kind == 'slotpad' || a.kind == 'pad') continue;
+        if (a.end <= s.start - 1) baseAtom = a; // 紧贴在 `^{` 前面那个原子 = 基座
+      }
+      if (baseAtom == null) continue;
+      final String obj = r.tex.substring(baseAtom.start, objEnd);
+      final int from = contentStart + baseAtom.start;
+      return AutoExpand(
+        from: from,
+        caret: from + obj.length, // 换掉的只有"整个对象"
+        tex: '{$obj}$mark{}',
+        kind: AutoExpandKind.script,
+        template: true,
+        matched: mark,
+      );
     }
+    // ★★★ 2026-10-24（批 15d）：**在"指数内容末尾"打 `^` ⇒ 就地再嵌一层**（`x^{2^{}}`）。
+    //
+    // 批 15c 曾在这里"不响应"，理由是怕 `x^{2^{}}` 渲染不出来 —— **实测是错的**：
+    //   `\left|{x^{2^{}}}\right|` 在**每一个**光标位置都能渲染（探针 v19）；
+    //   真正不合法的是 **`x^{2}^{}`**（同一基座两个 `^`，"双重指数"）。
+    // 所以这里什么都不用特判：走常规"基座 = `2`、包成 `2^{}`" 就得到合法且符合直觉的结果。
     final String base = r.tex.substring(last.start, last.end);
     // ★★★ 2026-10-24（批 14）：**替换区间只能到"基座的末尾"为止，不许扫到光标**。
     //

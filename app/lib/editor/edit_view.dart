@@ -364,15 +364,6 @@ class EditViewState extends State<EditView> {
         _applyAutoExpand(ex);
         return;
       }
-      // ★★★ 2026-10-24（批 15c）：**在"指数/下标的末尾"打 `^`/`_` ⇒ 吞掉这个字符**。
-      //   那里没有合法做法：往里套 = `2^{}`（空脚本）· 挂到对象层 = `x^{2}^{}`
-      //   （**TeX 不允许同一个基座两个 `^`**，会直接「公式不完整」）。
-      //   与其把文档弄坏，不如不响应（想加第二层请先分组 / 或改里面的内容）。
-      if (rawText.length == 1 &&
-          (rawText == '^' || rawText == '_') &&
-          atScriptContentEnd(_buf.buf, _buf.caret)) {
-        return;
-      }
     }
     // ★★ 自动分隔（2026-10-17 用户拍板）：**"命令词结不结束"不该由用户来判断**。
     //   TeX 的控制词只由字母组成，紧跟字母会被读成一个更长的命令名（`\sin` + `x` ⇒ `\sinx`）。

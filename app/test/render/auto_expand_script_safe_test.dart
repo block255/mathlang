@@ -86,7 +86,7 @@ void main() {
   });
 
   // ★★★ 2026-10-24（批 15b）：**已有指数的内容末尾再打指数 ⇒ 挂到对象层**
-  test(r'★★ `x^{2}` 的 `2` 之后打 `^` ⇒ `x^{2}^{}`（不许 `x^{2^{}}` 或 `x^{}2^{}`）', () {
+  test(r'★★ `x^{2}` 的 `2` 之后打 `^` ⇒ **就地嵌一层** `x^{2^{}}`（用户："在指数后面就给指数加指数"）', () {
     const String tex = r'\left|{x^{2}}\right|';
     final String doc = '\$$tex\$';
     // `2` 之后那一位 = `}` 之前
@@ -97,10 +97,32 @@ void main() {
       typed: '^',
       triggers: kTrig,
     );
-    // ★ 批 15c：这里**没有合法做法** —— 往里套 = `2^{}`（空脚本），
-    //   挂到对象层 = `x^{2}^{}`（**TeX 不允许同一个基座两个 `^`**）⇒ **不响应**。
-    //   编辑层会把这个 `^` 吞掉（`atScriptContentEnd`）。
-    expect(ex, isNull, reason: '应当不响应，而不是造出 `x^{2^{}}` / `x^{2}^{}`');
+    // ★ 批 15d：**就地嵌一层**（`x^{2^{}}`）—— 探针实测这种写法在**每个**光标位置都能渲染；
+    //   不合法的只有 `x^{2}^{}`（双重指数）与"把基座搬走"的 `x^{}2^{}`。
+    expect(ex, isNotNull);
+    final String out = applyAutoExpand(doc, ex!);
+    final String body = out.substring(1, out.length - 1);
+    expect(balanced(out), isTrue, reason: '花括号必须配平：$body');
+    expect(body, contains(r'x^{2^{}}'), reason: '应当是 `x^{2^{}}`：$body');
+    expect(body, isNot(contains(r'}^{2^{')), reason: '不许把基座搬到 `}` 外面：$body');
+  });
+
+  test(r'★★ `x^{2}` 的 **`}` 之后**打 `^` ⇒ 自动补分组 `{x^{2}}^{}`', () {
+    const String tex = r'\left|{x^{2}}\right|';
+    final String doc = '\$$tex\$';
+    final int afterBrace = doc.indexOf(r'x^{2}') + r'x^{2}'.length;
+    final AutoExpand? ex = planAutoExpand(
+      doc: doc,
+      caret: afterBrace,
+      typed: '^',
+      triggers: kTrig,
+    );
+    expect(ex, isNotNull, reason: '对象之后应当能加指数（先分组）');
+    final String out = applyAutoExpand(doc, ex!);
+    final String body = out.substring(1, out.length - 1);
+    expect(balanced(out), isTrue, reason: '花括号必须配平：$body');
+    expect(body, contains(r'{x^{2}}^{}'),
+        reason: r'必须是 `{x^{2}}^{}`（双重指数 `x^{2}^{}` 不合法）：$body');
   });
 
   for (final String tex in kTex) {
