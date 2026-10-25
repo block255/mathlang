@@ -526,6 +526,57 @@ int? verticalStopAt(String source, int offset, {required bool up}) {
 ///
 /// ★ 判据只看**光标紧邻**的那一段，不看整篇：`一\n\n\n行` 从左到右退格会
 ///   先吃掉真空段落那一行（k=3 ⇒ 删 1），再吃掉段落边界（k=2 ⇒ 删 2）。
+/// 行间围栏的定界符（`$$`）
+const String _kMathFence = r'$$';
+
+/// 删掉 `[from,to)` 之后，**交界处那一行**的行间围栏会不会被弄坏？
+///
+/// ★★ 2026-10-25（用户 2026-10-24 实测"某处连按两下退格 ⇒ 整块源码裸奔"）：
+///   判据放在**块边界**这一层（`_paragraphBreakDelete` / `_textLayerDelete`），
+///   **不放进** `smartEditAt` 的事后闸 —— 那样会连"段内回收整段"的删除一起管住，
+///   2026-10-24 试过：全量 12 红，收窄后仍 3 红（`struct_tail_test` ×2 /
+///   `delete_in_group_test` ×1），已回退。见快照 §9.21 的"修法 A 被否决"。
+///
+/// 只在"删的是**纯换行**"时才判 —— 删其它字符不可能把围栏挪位置、也不可能粘一起。
+/// 三类坏法（探针 v50 逐偏移实测，守卫 `fence_delete_test`）：
+/// ① **围栏被挪到行中间**（`文字$$` / `(a)$$`）—— 围栏不在行首 ⇒ 那一块作废；
+/// ② **两个围栏粘成一行**（`$$$$`）—— 两块合成**一个空块**，两块内容一起去见鬼；
+/// ③ **收尾围栏**后面粘上内容（`$$B`）—— 收尾被当成新的开头 ⇒ 块不再闭合。
+bool _fenceBrokenByDelete(String source, int from, int to) {
+  if (from < 0 || to > source.length || from >= to) return false;
+  final String gone = source.substring(from, to);
+  if (gone.replaceAll('\n', '').isNotEmpty) return false; // 只判"删换行"
+
+  // 交界处那一行 = 左边残行 + 右边残行
+  var ls = from;
+  while (ls > 0 && source[ls - 1] != '\n') {
+    ls--;
+  }
+  var le = to;
+  while (le < source.length && source[le] != '\n') {
+    le++;
+  }
+  final String left = source.substring(ls, from);
+  final String right = source.substring(to, le);
+  final String merged = left + right;
+
+  // ① 围栏在行中间（前缀有非空白内容）
+  for (var k = merged.indexOf(_kMathFence);
+      k >= 0;
+      k = merged.indexOf(_kMathFence, k + 1)) {
+    if (merged.substring(0, k).trim().isNotEmpty) return true;
+  }
+  // ② 两个围栏粘成一行
+  if (merged.contains(_kMathFence + _kMathFence)) return true;
+  // ③ 收尾围栏后面粘上内容
+  if (left.trimRight().endsWith(_kMathFence) &&
+      right.trim().isNotEmpty &&
+      !right.trimLeft().startsWith(_kMathFence)) {
+    return true;
+  }
+  return false;
+}
+
 SmartEdit? _paragraphBreakDelete(String source, int o, {required bool forward}) {
   var k = 0;
   if (forward) {
@@ -539,11 +590,26 @@ SmartEdit? _paragraphBreakDelete(String source, int o, {required bool forward}) 
   }
   if (k < 2) return null;
   final int n = k == 2 ? 2 : 1;
-  if (forward) {
-    if (o + n > source.length) return null;
-    return SmartEdit.remove(o, o + n, o);
+  final SmartEdit full = forward
+      ? (o + n > source.length
+          ? SmartEdit.none
+          : SmartEdit.remove(o, o + n, o))
+      : SmartEdit.remove(o - n, o, o - n);
+  if (!full.isNone && !_fenceBrokenByDelete(source, full.from!, full.to!)) {
+    return full;
   }
-  return SmartEdit.remove(o - n, o, o - n);
+  // ★★ 2026-10-25（现场 a）：两块之间空一行时，"段落边界删两个换行"会把
+  //   `$$`+`$$` 粘成 `$$$$`。退一步**只删 1 个换行** —— 空行照样消失，
+  //   两块各自完整、并成前后相邻的两个行间块（这才是用户想要的结果）。
+  final SmartEdit one = forward
+      ? (o + 1 > source.length
+          ? SmartEdit.none
+          : SmartEdit.remove(o, o + 1, o))
+      : (o <= 0 ? SmartEdit.none : SmartEdit.remove(o - 1, o, o - 1));
+  if (!one.isNone && !_fenceBrokenByDelete(source, one.from!, one.to!)) {
+    return one;
+  }
+  return SmartEdit.none;
 }
 
 /// 文档级 `Backspace` / `Delete` 的处置（**绝对偏移**）。
@@ -620,8 +686,19 @@ SmartEdit _textLayerDelete(String source, int offset, {required bool forward}) {
     return _innerBoundaryDelete(adj, forward: forward);
   }
   // 文字：一个对象 = 一个字符
-  if (!forward) return o <= 0 ? SmartEdit.none : SmartEdit.remove(o - 1, o, o - 1);
-  return o >= source.length ? SmartEdit.none : SmartEdit.remove(o, o + 1, o);
+  //   ★★ 2026-10-25：**不许把行间围栏拽离行首**（`(a)$$` / `文字$$` 那类）。
+  //   删的是"围栏行前面那个换行"时，宁可这一下不生效（围栏行本身用户看不见，
+  //   想删这一块的正路是"把内容删空 ⇒ 整块回收"，见上面 emptyShell 那条）。
+  if (!forward) {
+    if (o <= 0) return SmartEdit.none;
+    final SmartEdit e = SmartEdit.remove(o - 1, o, o - 1);
+    if (_fenceBrokenByDelete(source, e.from!, e.to!)) return SmartEdit.none;
+    return e;
+  }
+  if (o >= source.length) return SmartEdit.none;
+  final SmartEdit e = SmartEdit.remove(o, o + 1, o);
+  if (_fenceBrokenByDelete(source, e.from!, e.to!)) return SmartEdit.none;
+  return e;
 }
 
 /// 从**公式外侧**删除 ⇒ **委托进公式的内层边界**（§3.3「同一根像素」）：
