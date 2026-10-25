@@ -351,7 +351,16 @@ SmartEdit _guardCommandGlue(String tex, SmartEdit e) {
 
   // ② 不许把「控制词」和后面的字母/数字粘成新命令
   if (from >= tex.length || to >= tex.length) return e;
-  if (_isAsciiLetter(tex.codeUnitAt(from))) return e; // 在命令名**内部**删（另一类情形）
+  // ★★ 2026-10-25（用户实测"在 `\text{旁注：}` 里删旁字 ⇒ 整块 `[公式不完整]`"）：
+  //   **删除区间只要切进一段 `\命令` 的名字里，这一下就不许删**。
+  //   实测坏法（探针 v59，真文档 + 真按键 + 真实引擎解析）：
+  //     · 绝对 1872（`\t`｜`e` 之间）退格 ⇒ 删 `t` ⇒ `\ext{旁注：}` ⇒ 解析失败；
+  //     · 绝对 1873（`\e`｜`x` 之间）退格 ⇒ 删 `e` ⇒ `\txt{旁注：}` ⇒ 解析失败；
+  //   全域扫描还抓到 `\quad` 被删成 `\uad`。
+  //   ★ 正常路径不会走到这里（入口 [_snapInput] 已按位点表吸附），这条是**兜底**：
+  //     万一将来又从别处传进一个非位点偏移，宁可"这一下不生效"，也不许把命令名劈开。
+  if (_cutsCommandName(tex, from, to)) return SmartEdit.none;
+  if (_isAsciiLetter(tex.codeUnitAt(from))) return e; // 在命令名**内部**删（兜底见上一条）
   final int c = tex.codeUnitAt(to);
   if (!_isAsciiLetter(c) && !(c >= 0x30 && c <= 0x39)) return e;
   final Match? m = RegExp(r'\\[A-Za-z]+$').firstMatch(tex.substring(0, from));
@@ -359,12 +368,42 @@ SmartEdit _guardCommandGlue(String tex, SmartEdit e) {
   return SmartEdit.remove(m.start, from, m.start);
 }
 
+/// `[from,to)` 有没有**切进某条 `\命令` 的名字内部**（端点在名字中间）。
+///
+/// 例：`\text` 占 `[69,74)`，命令名是 `[70,74)`
+/// ⇒ 删 `[71,72)`（"t"）或 `[72,73)`（"e"）都算切；删 `[69,74)`（整条）不算。
+bool _cutsCommandName(String tex, int from, int to) {
+  for (final RegExpMatch m in RegExp(r'\\[A-Za-z]+').allMatches(tex)) {
+    final int nameStart = m.start + 1; // `\` 之后
+    final int nameEnd = m.end; // 名字末字符之后
+    if (from > nameStart && from < nameEnd) return true;
+    if (to > nameStart && to < nameEnd) return true;
+  }
+  return false;
+}
+
+/// 入口**吸附**：调用方给的偏移不一定是合法位点。
+///
+/// ★★ 2026-10-25（用户实测）：光标可能停在 `\text` 的**命令名中间**
+/// （实测绝对 1872 / 1873，而 `snap` 会把它们吸附到 1874 或 1870）
+/// ⇒ 直接按字节删就会把命令名劈成 `\ext` / `\txt` ⇒ `[公式不完整]`。
+///
+/// ★ 只改**恰好会切进命令名**的那一类偏移：其余非位点偏移**原样放行**，
+///   不改变任何既有行为（位点表退化时也不动）。
+int _snapInput(CaretSiteTable t, int rel) {
+  final int r = rel.clamp(0, t.tex.length);
+  if (t.degraded) return r;
+  if (t.sites.any((CaretSite s) => s.offset == r)) return r; // 已经是合法位点
+  if (!_cutsCommandName(t.tex, r, r)) return r; // 不切命令名 ⇒ 照旧
+  return t.snap(r).offset;
+}
+
 bool _isAsciiLetter(int c) =>
     (c >= 0x41 && c <= 0x5A) || (c >= 0x61 && c <= 0x7A);
 
 /// `Backspace`：段内相对偏移 [rel] 处往前删（外层包装见 [_guardCommandGlue]）。
 SmartEdit smartBackspace(CaretSiteTable t, int rel) =>
-    _guardCommandGlue(t.tex, _backspaceCore(t, rel));
+    _guardCommandGlue(t.tex, _backspaceCore(t, _snapInput(t, rel)));
 
 SmartEdit _backspaceCore(CaretSiteTable t, int rel) {
   final int r = rel.clamp(0, t.tex.length);
@@ -532,9 +571,9 @@ _Span? _emptyStructureAt(String tex, int r) {
 }
 
 /// `Delete`：段内相对偏移 [rel] 处往后删（与 [smartBackspace] 镜像）。
-/// `Delete`（往后删）—— 外层同样过 [_guardCommandGlue]。
+/// `Delete`（往后删）—— 外层同样过 [_guardCommandGlue]，入口同样吸附（见 [_snapInput]）。
 SmartEdit smartDelete(CaretSiteTable t, int rel) =>
-    _guardCommandGlue(t.tex, _deleteCore(t, rel));
+    _guardCommandGlue(t.tex, _deleteCore(t, _snapInput(t, rel)));
 
 SmartEdit _deleteCore(CaretSiteTable t, int rel) {
   final int r = rel.clamp(0, t.tex.length);
