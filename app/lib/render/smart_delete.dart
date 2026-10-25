@@ -401,6 +401,105 @@ int _snapInput(CaretSiteTable t, int rel) {
 bool _isAsciiLetter(int c) =>
     (c >= 0x41 && c <= 0x5A) || (c >= 0x61 && c <= 0x7A);
 
+/// 这个区域是不是**只换字体的包装**（`\text{…}` / `\textbf{…}` / `\mbox{…}` …）的参数。
+///
+/// ★★ 2026-10-25（用户拍板："接受外来的 `\text`，但删里面的东西要干脆"）：
+///   它们在屏幕上**只画参数内容、自己不画任何东西**，宽度为零时连像素都没有；
+///   而且 `math_nav._kFontOnlyCommands` 早就把 `text` 归为"只换字体、不换层"（方向键当它透明）。
+///   ⇒ 删除时**不许**把它们当"墙"（否则空 `\text{}` 上按 ⌫ 会"跳一下"，而那个跳在屏幕上
+///     是同一像素 ⇒ 用户感觉"按了没反应"）。删除改为按 §4.0 通则删**可见对象**。
+///
+/// ★ 只认**文本族**（`kTextModeCommands`）：`\frac` / `\sqrt` / 环境这些**看得见边界**的照旧是墙。
+bool _isFontOnlyRegion(TexRegion r) =>
+    r.isSlot && r.path.isNotEmpty && kTextModeCommands.contains(r.path.last.command);
+
+/// 这一下会不会把 font-only 包装**删空**；会 ⇒ 返回"该整条删掉的区间"（含包装本身）。
+///
+/// ★★ 2026-10-25（用户两句原话："接受外来时的这个，但是删它里面的东西时，能够干脆地
+///   符合直觉地删干净就可以了吧" ＋ "删干净了，可以不留幽灵 text 区，反正我们自己的
+///   行间主路径是接受数学字体的"）：
+///
+/// 三个约束一起满足：
+/// 1. **不许死按** —— 空 `\text{}` 宽度为零，单独删它在屏幕上没有任何变化 ⇒ 必须**带上一个
+///    可见对象**（往左带前一个原子 / 往右带后一个原子）；
+/// 2. **不许留幽灵** —— 把里面最后一点内容删掉的那一下，**同一次按键**连包装一起回收
+///    （我们的行间主路径本来就接受汉字用数学字体排，不需要留空 `\text{}` 等着以后打字）；
+/// 3. **不许误伤** —— 只认 [kTextModeCommands] 这一族；包装外面紧邻的若是**语法记号**
+///    （`{` `}` `^` `_`）或什么都不剩，就只删包装本身。
+///
+/// [obj] 是 §4.0 算出来的"要删的那个可见对象"（可能为 null：光标在这一层最左边/最右边）。
+_Span? _absorbFontOnlyWrapper(
+  CaretSiteTable t,
+  TexRegion? reg,
+  _Span? obj, {
+  required bool forward,
+}) {
+  if (reg == null || !_isFontOnlyRegion(reg)) return null;
+  final String tex = t.tex;
+  final ({int from, int to})? wrap = _fontOnlyWrapperSpan(tex, reg);
+  if (wrap == null) return null;
+
+  // ① 这一下删完之后，包装里还有没有"看得见的字符"？
+  final String inner = tex.substring(reg.start, reg.end);
+  final List<VisibleAtom> atoms = lexVisibleAtoms(inner).toList();
+  final bool empties = atoms.every((VisibleAtom a) =>
+      obj != null &&
+      a.start + reg.start >= obj.start &&
+      a.end + reg.start <= obj.end);
+
+  if (empties) {
+    // ② 这一下**确实要删掉里面最后一点可见内容** ⇒ 只把"整条包装"一起带走
+    //    （包装里就含那个可见原子 ⇒ 屏幕上确实有变化）。
+    //    ★ 不能顺手把包装**外面**的可见对象也带上：那一下用户只想删包里最后一个字，
+    //      连带 `(` 一起消失会很惊悚。
+    if (obj != null) return _Span(wrap.from, wrap.to);
+
+    // ③ 包装**本来就是空的**（外来文档的 `\text{}`）：光删它在屏幕上毫无变化 ⇒
+    //    再带一个紧邻的**可见原子**（左邻 / 右邻；中间不许夹别的可见东西）。
+    final List<VisibleAtom> all = lexVisibleAtoms(tex).toList();
+    if (!forward) {
+      VisibleAtom? prev;
+      for (final VisibleAtom a in all) {
+        if (a.end <= wrap.from) prev = a;
+      }
+      if (prev != null &&
+          prev.end == wrap.from &&
+          tex.substring(prev.start, prev.end).trim().isNotEmpty) {
+        return _Span(prev.start, wrap.to);
+      }
+    } else {
+      VisibleAtom? next;
+      for (final VisibleAtom a in all.reversed) {
+        if (a.start >= wrap.to) next = a;
+      }
+      if (next != null &&
+          next.start == wrap.to &&
+          tex.substring(next.start, next.end).trim().isNotEmpty) {
+        return _Span(wrap.from, next.end);
+      }
+    }
+    return _Span(wrap.from, wrap.to);
+  }
+  return null;
+}
+
+/// font-only 包装的**整条区间** `[`\` 起点, `}` 之后)`（不是 font-only 区域 ⇒ null）。
+({int from, int to})? _fontOnlyWrapperSpan(String tex, TexRegion reg) {
+  if (!_isFontOnlyRegion(reg)) return null;
+  final String name = reg.path.last.command;
+  for (var i = reg.start - 1; i >= 0; i--) {
+    if (tex[i] != r'\') continue;
+    final Match? m = RegExp(r'^\\([A-Za-z]+)\s*\{').firstMatch(tex.substring(i));
+    if (m == null || m.group(1) != name) continue;
+    final int open = i + m.group(0)!.indexOf('{');
+    final int close = matchBrace(tex, open);
+    if (close >= 0 && close + 1 >= reg.end) {
+      return (from: i, to: close + 1);
+    }
+  }
+  return null;
+}
+
 /// `Backspace`：段内相对偏移 [rel] 处往前删（外层包装见 [_guardCommandGlue]）。
 SmartEdit smartBackspace(CaretSiteTable t, int rel) =>
     _guardCommandGlue(t.tex, _backspaceCore(t, _snapInput(t, rel)));
@@ -508,12 +607,26 @@ SmartEdit _backspaceCore(CaretSiteTable t, int rel) {
   final TexRegion? reg = innermostRegionAt(t, s.offset);
 
   // §4.2 区域首 → **只跳不删**（空槽里、裸组里、`\frac{a}{b}` 的 `}{` 之间…）
-  if (reg != null && s.offset == reg.start && idx > 0) {
+  //   ★★ 2026-10-25（用户拍板）：**只换字体的包装（`\text{…}` 一族）不算墙**。
+  //   它们的参数在同一条基线上、自己不画任何东西（见 `math_nav._kFontOnlyCommands`），
+  //   当墙的话会出现"按一下什么都不发生"——空 `\text{}` 宽度为零，跳完光标还在**同一像素**上
+  //   （用户原话："卡一下"）。⇒ 落回 §4.0 通则：删左边那一个**可见对象**。
+  //   ★ 可见容器（`\frac` 有分数线 / `\sqrt` 有根号 / 环境有括号）**照旧只跳**。
+  if (reg != null &&
+      s.offset == reg.start &&
+      idx > 0 &&
+      !_isFontOnlyRegion(reg)) {
     return SmartEdit.move(t.sites[idx - 1].offset);
   }
 
   // §4.0 通则：与光标**同层**、紧邻左侧的那一个可见对象
   final _Span? obj = _objectLeftOf(t, s.offset);
+  // ★★ 2026-10-25（用户拍板）：**只换字体的包装（`\text{…}`）删空了就别留幽灵** ——
+  //   这一下若把它里面最后一点可见内容删掉，同一次按键就把整条包装一起回收；
+  //   万一它本来就是空的，就再往左带一个**可见原子**（否则屏幕上毫无变化 = 死按）。
+  //   ★ 判据与理由见 [_absorbFontOnlyWrapper]；可见容器（`\frac`/`\sqrt`/环境）不受影响。
+  final _Span? wrap = _absorbFontOnlyWrapper(t, reg, obj, forward: false);
+  if (wrap != null) return SmartEdit.remove(wrap.start, wrap.end, wrap.start);
   if (obj == null) return SmartEdit.none; // 同层左边什么都没有
   // ★★★ 2026-10-24 **安全网**（用户实测"每次必坏"）：要删的那一项若是**纯语法**
   //   （定界符 `|` / 花括号 / `^` `_` / `\left` `\right` 这类），而光标左边紧贴着一个
@@ -625,14 +738,22 @@ SmartEdit _deleteCore(CaretSiteTable t, int rel) {
   final TexRegion? reg = innermostRegionAt(t, s.offset);
 
   // §4.2 区域末 → **只跳不删**（槽间跨越：`\frac{a}{b}` 的分子末 → 跳到分母首）
-  if (reg != null && s.offset == reg.end && idx >= 0 && idx + 1 < t.sites.length) {
+  //   ★★ 2026-10-25：同"区域首"那条 —— 只换字体的包装不算墙，落回 §4.0 删右边的可见对象。
+  if (reg != null &&
+      s.offset == reg.end &&
+      idx >= 0 &&
+      idx + 1 < t.sites.length &&
+      !_isFontOnlyRegion(reg)) {
     return SmartEdit.move(t.sites[idx + 1].offset);
   }
 
   // §4.0 通则：与光标**同层**、紧邻右侧的那一个可见对象
-  final _Span? obj = _objectRightOf(t, s.offset);
-  if (obj == null) return SmartEdit.none;
-  return SmartEdit.remove(obj.start, obj.end, obj.start);
+  final _Span? objR = _objectRightOf(t, s.offset);
+  // ★★ 2026-10-25：镜像 —— 只换字体的包装删空了别留幽灵（见 [_absorbFontOnlyWrapper]）。
+  final _Span? wrapR = _absorbFontOnlyWrapper(t, reg, objR, forward: true);
+  if (wrapR != null) return SmartEdit.remove(wrapR.start, wrapR.end, wrapR.start);
+  if (objR == null) return SmartEdit.none;
+  return SmartEdit.remove(objR.start, objR.end, objR.start);
 }
 
 // ---------------------------------------------------------------------------
