@@ -143,15 +143,29 @@ if (Test-Path $msix) { Remove-Item $msix -Force }
 if (-not (Test-Path $msix)) { throw "打包失败（makeappx 没产出 $msix）" }
 
 Write-Host '   [5/5] signtool sign' -ForegroundColor DarkGray
+# ★★ 2026-10-25：**默认直接走证书库**（按证书主体找本机 CurrentUser\My 里带私钥的那张）
+#   ⇒ 不需要 pfx、不需要口令、没有任何凭据要保管。
+#   `signtool /sha1 <指纹>` 用的是当前用户证书库里的私钥（本机实测：无口令、无弹窗，签名 Valid）。
+#   只有当证书库里找不到时才退回"pfx + MATHLANG_PFX_PASSWORD"这条老路（给 CI / 别的机器用）。
 $pfx = Join-Path $signing 'mathlang-selfsign.pfx'
-if (-not (Test-Path $pfx)) { throw "缺 pfx：$pfx" }
-# 口令只从环境变量取；不要写死在脚本里（见 signing\README.md）
-$pfxPassword = $env:MATHLANG_PFX_PASSWORD
-if ([string]::IsNullOrEmpty($pfxPassword)) {
-    throw '缺 MATHLANG_PFX_PASSWORD：先在当前会话设置 PFX 口令（见 signing\README.md），不要把口令写进脚本。'
+$storeCert = Get-ChildItem Cert:\CurrentUser\My -ErrorAction SilentlyContinue |
+    Where-Object { $_.Subject -eq 'CN=数语引擎（自签）' -and $_.HasPrivateKey } |
+    Sort-Object NotAfter -Descending | Select-Object -First 1
+if ($storeCert) {
+    Write-Host "        用证书库：$($storeCert.Thumbprint)" -ForegroundColor DarkGray
+    & $signtool sign /fd SHA256 /sha1 $storeCert.Thumbprint /td SHA256 `
+        /tr 'http://timestamp.digicert.com' $msix | Out-Null
+} else {
+    if (-not (Test-Path $pfx)) { throw "证书库里没有签名证书，也没有 pfx：$pfx" }
+    # 口令只从环境变量取；不要写死在脚本里（见 signing\README.md）
+    $pfxPassword = $env:MATHLANG_PFX_PASSWORD
+    if ([string]::IsNullOrEmpty($pfxPassword)) {
+        throw '证书库里没有签名证书；要走 pfx 就得设 MATHLANG_PFX_PASSWORD（见 signing\README.md），不要把口令写进脚本。'
+    }
+    Write-Host '        用 pfx + MATHLANG_PFX_PASSWORD' -ForegroundColor DarkGray
+    & $signtool sign /fd SHA256 /f $pfx /p $pfxPassword /td SHA256 `
+        /tr 'http://timestamp.digicert.com' $msix | Out-Null
 }
-& $signtool sign /fd SHA256 /f $pfx /p $pfxPassword /td SHA256 `
-    /tr 'http://timestamp.digicert.com' $msix | Out-Null
 $sig = Get-AuthenticodeSignature $msix
 Write-Host "        签名：$($sig.Status) · $($sig.SignerCertificate.Subject)" -ForegroundColor DarkGray
 
