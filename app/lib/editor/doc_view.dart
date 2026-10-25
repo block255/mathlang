@@ -1012,14 +1012,8 @@ class DocViewState extends State<DocView> {
         }
         return tex.length;
       }
-    } else {
-      // ★★ 2026-10-19（L18；用户选 **方案 B**：**行内公式左边缘 4 px 命中带**）——
-      //   探针实测（行内公式在**行首**）：点它左缘 **0 px** ⇒ 落进公式**内部**（offset 7）；
-      //   点 −2 … −16 px ⇒ **光标一动不动**（那几像素谁都不认领，见下面 `_onPagePointerDown`）。
-      //   而文字左边是"前一个字之后" ⇒ 公式的左缘也该是"**公式之前**"（**物理边界**，不是 1/3 比例）。
-      //   只改命中层：`dx < 4` ⇒ 段首，**一个像素都不动排版**。
-      if (localPos.dx < kInlineLeftBandPx) return 0;
-    }
+    } // ★★ 2026-10-25：**行内左缘那条 4px 带挪到命中之后**（见下面 `hit` 算完那处）——
+    //   它只该管"**没点到墨迹**"的像素。
 
     // ★★ 2026-10-18 晚（用户："坏文本导致符号之间点不到的问题依然存在，行列式也有"）：
     //   **先试细粒度命中**（点在字形上 ⇒ 叶盒 ↔ 原子，能落到**符号之间**），
@@ -1033,6 +1027,19 @@ class DocViewState extends State<DocView> {
       atoms: renderOrderAtoms(renderTex, displayStyle: displayStyle),
       displayStyle: displayStyle,
     );
+
+    // ★★ 2026-10-25（用户 2026-10-25 追问"左缘带是不是 `\lim` 下面 x 的左边那一块"）：
+    //   **墨迹优先** —— 这条带只对"**没点到字形**"的像素生效。
+    //
+    //   来由（探针 v52 整篇逐字形盒体检抓到的**唯一**一处点不到）：
+    //   `$\lim\limits_{x\to x_0}\frac{1}{f(x)}=0$` 的**下限 x** 画在盒子最左边
+    //   （盒内 x≈3.2 < 4）⇒ 它的左半截被这条带判成"点公式之前"（落下标了，落到段首）。
+    //   而它**明明是一块墨迹**：一像素一个主人 ⇒ 墨迹的主人就是它自己。
+    //
+    //   ★ 带子原本要救的是"公式盒**外面**那几像素"（−4..0，谁都不认领，用户 2026-10-19 报
+    //     "点它左边点不到"）—— 那些像素**没有字形**，照旧归"公式之前"，口径一点没变。
+    if (!displayStyle && localPos.dx < kInlineLeftBandPx && !hit.onGlyph) return 0;
+
     if (hit.onGlyph && hit.offset != null && hit.reliable) {
       final int rel = renderToSourceOffset(renderTex, hit.offset!);
       // ★★★ 2026-10-24（批 8）：**"对象层落点"只对"点在字形盒之外"的点击生效**。

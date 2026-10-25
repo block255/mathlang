@@ -15,6 +15,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mathlang/core/doc_buffer.dart';
 import 'package:mathlang/editor/edit_view.dart';
+import 'package:mathlang/render/leaf_boxes.dart';
 import 'package:mathlang/render/math_caret.dart';
 
 import '../support/math_fonts.dart';
@@ -123,6 +124,58 @@ void main() {
       final int caret = await _tapFromEnd(tester, buf, Offset(r.left + 2, r.center.dy));
       expect(caret, lessThanOrEqualTo(2),
           reason: '公式左缘内侧也是"公式之前"（≤2 = 段首），实际 $caret');
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // ⑰ ★★ 2026-10-25：**左缘带只对空白生效**（墨迹优先）
+  //
+  // 来由（用户 2026-10-25 追问"这个左缘带是 `\lim` 下面 x 的左边那一块是吧"）：
+  // 带子是**贯穿整盒高度的一条 4px 竖带**（只看 `localPos.dx < 4`，不看 y）。
+  // 而 `\lim\limits_{x\to x_0}…` 的**下限 x 恰好画在盒子最左边**（探针实测盒内 x≈3.2）
+  // ⇒ 它的左半截被这条带判成"点公式之前"（落段首），**一块墨迹没有主人**。
+  // 探针 v52（整篇 11 个控件 / 119 个字形盒各点一次）里，这是**唯一**一处点不到的墨迹。
+  //
+  // 口径：**一像素一个主人** —— 点在字形上就是那个字形；带子只救"没有字形"的那几像素
+  // （公式盒**外面** −4..0，用户 2026-10-19 报的"点它左边点不到"）。外面那几像素照旧。
+  // -------------------------------------------------------------------------
+
+  group('⑰ 左缘带只对空白生效（墨迹优先）', () {
+    /// 下限画在盒子最左边的极限（`\lim\limits` 的下限 x 就在最左）
+    const String kLimit = r'$\lim\limits_{x\to x_0}\frac{1}{f(x)}=0$';
+
+    testWidgets(r'★ 点下限那个 x（盒内 x<4）⇒ 必须落进下限，不许被判成"公式之前"',
+        (WidgetTester tester) async {
+      final DocBuffer buf = await _pump(tester, kLimit);
+      await tester.pumpAndSettle();
+      final RenderBox box =
+          find.byType(MathWithCaret).last.evaluate().single.renderObject! as RenderBox;
+      final List<LeafBox> glyphs = scanLeafBoxes(box)
+          .eligible
+          .where((LeafBox b) => b.kind == LeafBoxKind.glyph)
+          .toList();
+      // 最左边那个字形盒 = 画在 `lim` 正下方的下限 `x`
+      final LeafBox leftmost = glyphs.reduce(
+          (LeafBox a, LeafBox b) => a.rect.left <= b.rect.left ? a : b);
+      expect(leftmost.rect.left, lessThan(4),
+          reason: '这条守卫的前提是"下限就画在左缘带里"，实际 left='
+              '${leftmost.rect.left.toStringAsFixed(1)}（若已不在带内，这条要换个式子）');
+      final int caret =
+          await _tapFromEnd(tester, buf, box.localToGlobal(leftmost.rect.center));
+      expect(caret, greaterThanOrEqualTo(2),
+          reason: '点下限「${leftmost.text}」必须落进**下限里**（tex 偏移 ≥2），'
+              '实际 $caret（= 段首，说明还在被左缘带抢走）');
+      expect(caret, lessThan(buf.buf.length),
+          reason: '也不许落到公式之后，实际 $caret');
+    });
+
+    testWidgets('★ 对照：公式盒**外面** −2px（没有墨迹）⇒ 仍然是"公式之前"',
+        (WidgetTester tester) async {
+      final DocBuffer buf = await _pump(tester, kLimit);
+      final Rect r = _mathRect(tester);
+      final int caret = await _tapFromEnd(tester, buf, Offset(r.left - 2, r.center.dy));
+      expect(caret, 0,
+          reason: '盒外左侧没有墨迹 ⇒ 带子照旧生效（公式之前 = 0），实际 $caret');
     });
   });
 }
