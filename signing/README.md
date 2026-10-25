@@ -9,8 +9,17 @@
 > 2. **PFX 口令已轮换**：用新随机口令重新导出了 `mathlang-selfsign.pfx`——**同一把私钥 / 同一张证书**，
 >    指纹仍是 `93FAAFAD89470D121BD77321FB96104A29254BFA` ⇒ 已发布的 exe / msix 签名照旧有效、
 >    已装用户**不用重新信任**；**旧口令 `mathlang-selfsign` 已失效**；
-> 3. 新口令只存**密码管理器**（本机、仓库外）。打包 msix 时临时注入环境变量，
->    **不要**写回脚本、文档或任何被跟踪的文件；
+> 3. **轮换用的那串新口令没有保存在任何地方**（按 `AGENTS.md`：口令不入文件、不回显）⇒ 目录里这份
+>    `mathlang-selfsign.pfx` 目前**口令未知 / 不可用**。打包 msix 前先用证书库重导一份
+>    （私钥还在 `Cert:\CurrentUser\My`，随时可导；口令由你自己用 `Read-Host` 定，别写进任何文件）：
+>
+>    ```powershell
+>    $pwd = Read-Host -AsSecureString 'PFX 口令'
+>    $cert = Get-ChildItem Cert:\CurrentUser\My |
+>        Where-Object { $_.Subject -eq 'CN=数语引擎（自签）' -and $_.HasPrivateKey } | Select-Object -First 1
+>    Export-PfxCertificate -Cert $cert -FilePath signing\mathlang-selfsign.pfx -Password $pwd -Force
+>    ```
+>
 > 4. **历史不重写**（私钥从未入库 ⇒ 旧口令单独没有价值；重写要改 100+ 提交 SHA + 重建 tag + 重传资产）。
 >
 > 验证：`flutter analyze` 零告警 · 全量 1615 通过 · 用新口令重跑 `scripts\pack_msix.ps1`，
