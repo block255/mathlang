@@ -191,4 +191,50 @@ void main() {
           reason: '盒#$i "${b.text}"：${hit.pairing?.reason}');
     }
   });
+
+  // -------------------------------------------------------------------------
+  // 五、④ 的收口：**带 `\text{…}` 空格的块里**，分式的分子/分母也必须点得到
+  //
+  // ★ 用户 2026-10-25 的话："④ 似乎在前一批被一起修掉了" —— 复核成立：
+  //   他报"④ 分式子位点点不到"的现场，是 `0 < |x-x_0| < \delta \text{ 时 } |\frac{1}{f(x)}| < \varepsilon`
+  //   那一块里的**分式**；而那一块因为空格盒整体配对失败 ⇒ 分式当然也点不到。
+  //   单独拿出来测 `\frac{1}{M}`（配对本来就完整）永远测不出来 —— 这就是前一天
+  //   "④ 不是配对"的判断为什么对不上现场：**判据对了，场景取窄了**。
+  // -------------------------------------------------------------------------
+
+  testWidgets(r'★ ④：`\text{ 时 }` 块里的分式，分子/分母每个原子都要点得到',
+      (WidgetTester tester) async {
+    const String tex =
+        r'0 < |x-x_0| < \delta \text{ 时 } |\frac{1}{f(x)}| < \varepsilon';
+    final _Rig r = await _pump(tester, tex, display: true);
+    final List<VisibleAtom> atoms =
+        renderOrderAtoms(r.renderTex, displayStyle: true);
+    // 那个分式的源码范围 `\frac{1}{f(x)}`
+    final int frac = r.renderTex.indexOf(r'\frac');
+    expect(frac, greaterThanOrEqualTo(0));
+    final int open1 = r.renderTex.indexOf('{', frac);
+    final int close1 = matchBrace(r.renderTex, open1);
+    final int open2 = close1 + 1;
+    final int close2 = matchBrace(r.renderTex, open2);
+    // 落在分式里的每一个原子：点它所在组的**外框中心** ⇒ 必须可靠，且落点在这一组里
+    var checked = 0;
+    for (final PairGroup g in r.plan.groups) {
+      if (g.srcStart <= frac || g.srcEnd > close2) continue;
+      checked++;
+      final MathHit hit = hitTestMathTex(
+        root: r.root,
+        localPos: g.hull(r.scan.eligible).center,
+        tex: r.renderTex,
+        atoms: atoms,
+        displayStyle: true,
+      );
+      expect(hit.reliable, isTrue,
+          reason: '分式里的 ${g.atom.kind}[${g.srcStart},${g.srcEnd}) 点不到'
+              '（${hit.pairing?.reason}）');
+      expect(hit.offset, anyOf(g.srcStart, g.srcEnd),
+          reason: '分式里 ${g.atom.kind} 的落点应在 [$g] 内，实际 ${hit.offset}');
+    }
+    expect(checked, greaterThanOrEqualTo(3),
+        reason: '分式里至少要检查到 1 / f / x 三个原子（实际只查到 $checked 个）');
+  });
 }
