@@ -535,60 +535,75 @@ CursorInjection injectCursor(String tex, int relOffset) {
   }
 
   // ★ 文本模式内：`\cursor` **不被接受**（实测 `\text{\cursor{}中文}` 等 6 种写法全部 ParseException）。
-  //   做法：把这个 `\text{...}` **拆成两半**，光标落在两半之间（那里是数学模式）——
+  //   做法：把这个文本组 **拆成两半**，光标落在两半之间（那里是数学模式）——
   //   `\text{中}\textcolor{...}{\rule{0pt}{0pt}}\text{文}`，实测可解析、锚点就在「中」「文」之间。
+  //   ★★ 2026-10-25：**不再只认 `\text`** —— `\textbf` / `\textit` / `\mbox` … 一样是文本模式，
+  //   以前对它们走的是"一般情况"，把 `\rule` 锚点注进文本模式 ⇒ `[公式不完整]`
+  //   （全域守卫抓到 `\textbf{粗}` 就这么炸的）。现在按各自的命令名拆。
   final String before = tex.substring(g.contentStart, rel);
   final String after = tex.substring(rel, g.contentEnd);
+  final String cmd = '\\${g.command}';
   final StringBuffer sb = StringBuffer()..write(tex.substring(0, g.groupStart));
-  if (before.isNotEmpty) sb.write('\\text{$before}');
+  if (before.isNotEmpty) sb.write('$cmd{$before}');
   sb.write(cursor);
-  if (after.isNotEmpty) sb.write('\\text{$after}');
+  if (after.isNotEmpty) sb.write('$cmd{$after}');
   if (g.next < tex.length) sb.write(tex.substring(g.next)); // 收尾的 `}`
   return CursorInjection(sb.toString(), rel);
 }
 
-/// 一个 `\text{...}` 组的位置信息
+/// **文本模式**的命令名：KaTeX 在这些命令的参数里按**文本模式**解析。
+///
+/// ★★ 2026-10-25（用户实测，截图原文 `KaTeX Parse Error: Can't use function '\rule'
+///   in text mode`）：在 `(\text{旁注：} …)` 里把内容**删空** ⇒ `\text{}` ⇒
+///   空槽垫（`\textcolor{#FFFFFF}{M\rule{0.3em}{0pt}}`）被注进**文本模式** ⇒ 整块 `[公式不完整]`。
+///   探针 v60 实测（都包在 `\text{…}` 里试）：`\rule` ✗ · `\square` ✗ ·
+///   `\phantom{0}` ✓ · `\hspace{0.6em}` ✓ · `\ ` ✓ · `\quad` ✓。
+///   ⇒ 口径：**文本模式里不注垫子 / 光标要拆组注到数学模式**（见 [injectCursor] 与
+///     `slot_marks.injectSlotMarks`）。
+const Set<String> kTextModeCommands = <String>{
+  'text', 'textrm', 'textnormal', 'textup', 'textit', 'textbf', 'textsf',
+  'texttt', 'mbox', 'hbox',
+};
+
+/// 一个**文本模式组**（`\text{...}` / `\textbf{...}` …）的位置信息
 class _TextGroup {
-  const _TextGroup(this.groupStart, this.contentStart, this.contentEnd, this.next);
-  final int groupStart; // `\text` 的反斜杠
+  const _TextGroup(
+      this.command, this.groupStart, this.contentStart, this.contentEnd, this.next);
+  final String command; // `text` / `textbf` …
+  final int groupStart; // 命令的反斜杠
   final int contentStart; // `{` 之后
   final int contentEnd; // `}` 的位置（未闭合 = tex.length）
   final int next; // 闭合 `}` 之后（未闭合 = tex.length）
 }
 
-/// 偏移是否落在某个 `\text{...}` 的内容里
+/// 偏移是否落在某个**文本模式组**的内容里
 _TextGroup? _textGroupAt(String tex, int offset) {
-  var i = 0;
-  while (i + 5 <= tex.length) {
-    if (!tex.startsWith(r'\text', i)) {
-      i++;
-      continue;
+  for (var i = 0; i + 1 < tex.length; i++) {
+    if (tex[i] != r'\') continue;
+    var j = i + 1;
+    while (j < tex.length && _isLetter(tex.codeUnitAt(j))) {
+      j++;
     }
-    final int after = i + 5;
-    if (after < tex.length && _isLetter(tex.codeUnitAt(after))) {
-      i = after; // `\textrm` / `\textstyle` 之类，不是 `\text{`
-      continue;
-    }
-    var k = after;
+    final String name = tex.substring(i + 1, j);
+    if (!kTextModeCommands.contains(name)) continue;
+    var k = j;
     while (k < tex.length && tex[k] == ' ') {
       k++;
     }
-    if (k >= tex.length || tex[k] != '{') {
-      i = after;
-      continue;
-    }
+    if (k >= tex.length || tex[k] != '{') continue;
     final int close = _matchBrace(tex, k);
     final int contentStart = k + 1;
     final int contentEnd = close < 0 ? tex.length : close;
     if (offset >= contentStart && offset <= contentEnd) {
       return _TextGroup(
+        name,
         i,
         contentStart,
         contentEnd,
         close < 0 ? tex.length : close + 1,
       );
     }
-    i = close < 0 ? tex.length : close + 1;
+    i = close < 0 ? tex.length : close; // 跳过这一组
   }
   return null;
 }

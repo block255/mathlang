@@ -130,7 +130,8 @@ SlotMarkResult injectSlotMarks(String tex, {required int caretRel}) {
   final List<_Ins> ins = <_Ins>[
     // ① 空槽占位（可选槽只在光标进入该结构时才画，见 [_shouldDrawEmptySlot]）
     for (final SlotSpan s in t.slots)
-      if (s.isEmpty && _shouldDrawEmptySlot(t, tex, s, caretRel, cur, scopes))
+      if (s.isEmpty && !_inTextModeAt(tex, s.start) &&
+          _shouldDrawEmptySlot(t, tex, s, caretRel, cur, scopes))
         _Ins(
           s.start,
           (cur != null && s.start == cur.start && s.end == cur.end)
@@ -145,6 +146,7 @@ SlotMarkResult injectSlotMarks(String tex, {required int caretRel}) {
     //     改成"**trim 后为空**"。
     for (final SlotSpan s in t.slots)
       if (s.isEnvCell &&
+          !_inTextModeAt(tex, s.start) &&
           tex.substring(s.start, s.end).trim().isEmpty)
         // ★★★ 2026-10-24（D3 续）：`shiftAt: false` —— **光标正好在这格起点时不往后挪**。
         //
@@ -162,7 +164,8 @@ SlotMarkResult injectSlotMarks(String tex, {required int caretRel}) {
       if (s.path.isNotEmpty &&
           s.path.last.argIndex == 0 &&
           kTailCommands.contains(s.path.last.command) &&
-          !s.isEmpty)
+          !s.isEmpty &&
+          !_inTextModeAt(tex, s.end))
         _Ins(s.end, kStructTailTex, shiftAt: false),
   ]..sort((_Ins a, _Ins b) => b.at.compareTo(a.at));
 
@@ -175,8 +178,30 @@ SlotMarkResult injectSlotMarks(String tex, {required int caretRel}) {
   return SlotMarkResult(out, rel);
 }
 
+
+/// [pos] 是否落在某个**文本模式参数**内部（`\text{…}` / `\textbf{…}` …，含裸组嵌套）。
+bool _inTextModeAt(String tex, int pos) {
+  final int p = pos.clamp(0, tex.length);
+  var depth = 0;
+  for (var i = p - 1; i >= 0; i--) {
+    final String c = tex[i];
+    if (c == '}') {
+      depth++;
+      continue;
+    }
+    if (c != '{') continue;
+    if (depth > 0) {
+      depth--;
+      continue;
+    }
+    final Match? m = RegExp(r'\\([A-Za-z]+)\s*$').firstMatch(tex.substring(0, i));
+    if (m == null) continue; // 裸组（没有命令名）⇒ 继续往外找
+    return kTextModeCommands.contains(m.group(1));
+  }
+  return false;
+}
+
 /// ★★ §4.8 **三类槽**（2026-10-15 用户拍板）：这个**空槽**的占位该不该画？
-///
 /// · **必填槽**（分式的分子分母 · 被开方数 · 函数算子的内容）⇒ **恒可见**（§6.1）
 /// · **可选槽** ⇒ **只在光标进入该结构时才画**（"不打扰"）：
 ///     - **算子的上下限 / 底数**（`\sum_{}^{}`、`\int_a^b`、`\log_{}`）—— 不定积分、纯求和号都不必填
