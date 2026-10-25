@@ -29,8 +29,16 @@ signing/*
 !signing/.gitkeep
 !signing/README.md
 
+# 纵深防御：即使 signing/ 被误放开，这些私钥/口令文件也不入库
+*.pfx
+*.p12
+*.jks
+*.keystore
+key.properties
+
 # ── 杂项 ──
 *.tmp
 *.bak
 Thumbs.db
 desktop.ini
+.vscode

@@ -73,6 +73,9 @@ powershell -ExecutionPolicy Bypass -File scripts\pack_release.ps1  # 绿色版 z
 powershell -ExecutionPolicy Bypass -File scripts\pack_msix.ps1     # MSIX + 一键安装 zip
 ```
 
+> `pack_msix.ps1` 需要环境变量 `MATHLANG_PFX_PASSWORD`（见 [`signing/README.md`](signing/README.md)）。
+> 开发/提交/文档规则见 [`CONTRIBUTING.md`](CONTRIBUTING.md)。
+
 ## 键盘
 
 - **写作**：`Enter` 新段落 · `Shift+Enter` 段内换行 · `Ctrl+Z/Shift+Z` 撤销重做 ·
@@ -85,14 +88,17 @@ powershell -ExecutionPolicy Bypass -File scripts\pack_msix.ps1     # MSIX + 一�
 
 - `app/` —— Flutter 工程（`lib/` 源码 · `test/` 测试）
 - `docs/images/` —— README 配图
-- `notes/` —— 设计文档 / 交接快照 / 开发日志（这个项目最贵的资产）
+- `notes/` —— 设计文档 / 交接快照 / 开发日志（这个项目最贵的资产；入口见 [`notes/README.md`](notes/README.md)）
+- `CONTRIBUTING.md` / `AGENTS.md` —— 开发与提交规则 · AI 协作约束
 - `scripts/` —— 构建、打包、签名、热重载脚本
 - `signing/` —— 签名材料（密钥不入库）
 - `test_data/` —— 测试数据（含个人作业样本，不入库）
 - `dist/` —— 发布产物（不入库）
 
-设计文档在 [`notes/design/`](notes/design/)，逐批开发记录在 [`notes/handover/`](notes/handover/)，
-踩坑经验在 [`notes/dev_log/`](notes/dev_log/)，待办与已收口清单在 [`notes/后优化清单.md`](notes/后优化清单.md)。
+文档入口与权威顺序见 [`notes/README.md`](notes/README.md)：设计规格在 [`notes/design/`](notes/design/)，
+逐批记录在 [`notes/handover/`](notes/handover/)，踩坑经验在 [`notes/dev_log/`](notes/dev_log/)，
+待办在 [`notes/后优化清单.md`](notes/后优化清单.md)。
+开发/提交/文档规则见 [`CONTRIBUTING.md`](CONTRIBUTING.md)；AI 协作约定见 [`AGENTS.md`](AGENTS.md)。
 
 ## 状态
 

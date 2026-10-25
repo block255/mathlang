@@ -51,7 +51,7 @@ void main() {
   });
 
   testWidgets('② 普通字母后面插字母 ⇒ 不加分隔符（不能滥加）', (WidgetTester tester) async {
-    final DocBuffer buf = await _pump(tester, r'甲$ab$', 4); //  与 $ 之间
+    final DocBuffer buf = await _pump(tester, r'甲$ab$', 4); // b 与 $ 之间
     tester.testTextInput.enterText('c');
     await tester.pumpAndSettle();
     expect(buf.buf, r'甲$abc$', reason: '普通连写不该被插空格：${buf.buf}');

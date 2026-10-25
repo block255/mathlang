@@ -1,0 +1,30 @@
+#!/bin/sh
+# 校验提交标题：type(scope): subject
+# 启用：git config core.hooksPath .githooks
+# 说明：只阻塞类型/格式；标题过长只提示（中文字符数按 locale 可能不准）。
+
+msg_file="$1"
+subject=$(grep -v '^#' "$msg_file" | sed '/^[[:space:]]*$/d' | head -n 1 | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+
+case "$subject" in
+  Merge\ *|Revert\ *|fixup!\ *|squash!\ *) exit 0 ;;
+esac
+
+if ! printf '%s\n' "$subject" | grep -Eq '^(feat|fix|docs|test|refactor|chore|build|ci|revert)(\([a-z0-9_./-]+\))?: .+'; then
+  echo "提交标题不符合格式：type(scope): subject" >&2
+  echo "允许的 type: feat fix docs test refactor chore build ci revert" >&2
+  echo "示例: fix(render): 删除时不再把命令名劈开" >&2
+  echo "（标题不要用批次号/时间；过程写进正文）" >&2
+  exit 1
+fi
+
+len=$(printf '%s' "$subject" | wc -m | tr -d ' ')
+if [ "$len" -gt 72 ]; then
+  echo "提示：标题 $len 字符，建议 ≤72（不阻塞提交）" >&2
+fi
+
+case "$subject" in
+  *.|*。) echo "提示：标题不要以句号结尾（不阻塞提交）" >&2 ;;
+esac
+
+exit 0

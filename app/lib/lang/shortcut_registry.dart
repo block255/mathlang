@@ -3,9 +3,10 @@
 // 规格：《快捷键系统.md》§二（默认绑定）· §3.1（浏览器独占键）· §四（持久化草案）。
 //
 // ★★ 本文件存在的**唯一理由**：让设置页"说实话"。
-//   规格里有 39 条默认绑定；2026-10-17 代码里真正接上的只有 17 条，b2-② 之后 23 条。
-//   ★ **2026-10-18（S4-c）**：整套 `Ctrl+Alt+*` / `Ctrl+↑↓` / `Ctrl+1..3` / `Ctrl+Shift+7..9` /
-//     `Ctrl+Enter` / `Alt+=` 全部接线 ⇒ **只剩 `sourceView`（S5）未接入**。
+//   当前默认登记表 **48 条，全部 wired**（由 `test/lang/shortcut_registry_test.dart` 钉住）；
+//   2026-10-17 刚接线时只有 17 条，b2-② 之后 23 条，S4-c 起逐批补到 48 条。历史数字看 git，不要写回注释。
+//   ★ **2026-10-18（S4-c）起**：`Ctrl+Alt+*` / `Ctrl+↑↓` / `Ctrl+1..3` / `Ctrl+Shift+7..9` /
+//     `Ctrl+Enter` 陆续接通；2026-10-25 对账：48 条全部 wired，未接入项为 0。
 //   接线方式由外壳 `editor_page.dart` 的 `_actionForKey` 统一匹配本表（**用户改键即刻生效**）
 //   ⇒ "已接入"不再是一句声明，而是"真的按这张表匹配"的事实。
 //   ⇒ 每条都带 [ShortcutStatus]，未接入的**可以改键**（存偏好），但界面上必须写明白。
@@ -168,8 +169,8 @@ const List<String> kBrowserOwnedKeys = <String>[
   'Ctrl+Tab', // 切标签
 ];
 
-/// 默认登记表（**46 条，全部 `wired`**；顺序 = 设置页里的显示顺序）
-/// ★ 2026-10-21 对账：注释原写"39 条"，实际 46（45 → 46 是 `sourceView` 转只读浮层那批补进来的）。
+/// 默认登记表（**48 条，全部 `wired`**；顺序 = 设置页里的显示顺序）
+/// ★ 2026-10-25 对账：以 `test/lang/shortcut_registry_test.dart` 的 48 条断言为准；历史注释里的 39/46 已过期。
 const List<ShortcutAction> kShortcutActions = <ShortcutAction>[
   // ---------------- 结构类 ----------------
   ShortcutAction(id: 'newblock', name: '新块', group: '结构类', combo: 'Enter', status: ShortcutStatus.wired),
@@ -392,7 +393,7 @@ class ShortcutSettings {
     );
   }
 
-  /// 统计（设置页顶部那行"已接入 17 / 共 39"）
+  /// 统计（设置页顶部那行"已接入 wiredCount / 共 total"）
   static int get total => kShortcutActions.length;
   static int get wiredCount =>
       kShortcutActions.where((ShortcutAction a) => a.wired).length;

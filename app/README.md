@@ -1,17 +1,19 @@
-# mathlang
+# mathlang（Flutter 工程）
 
-A new Flutter project.
+数语引擎的 Flutter 客户端。用户文档、构建/发布说明与贡献规则在仓库根：
 
-## Getting Started
+- [`README.md`](../README.md) —— 产品定位、安装、构建
+- [`CONTRIBUTING.md`](../CONTRIBUTING.md) —— 提交格式、测试、文档、发布
+- [`AGENTS.md`](../AGENTS.md) —— AI agent 的额外约束
+- [`notes/README.md`](../notes/README.md) —— 文档索引与权威顺序
 
-This project is a starting point for a Flutter application.
+常用命令：
 
-A few resources to get you started if this is your first Flutter project:
+```powershell
+flutter pub get
+flutter analyze
+flutter test
+flutter run -d windows
+```
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
-
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+应用入口是 `lib/main.dart`；分层与测试约定见 `CONTRIBUTING.md` §3/§4。

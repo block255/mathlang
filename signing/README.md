@@ -1,5 +1,7 @@
 # signing\ —— 本项目专属签名密钥（**永不入版本库**）
 
+> ⚠️ **2026-10-25 安全修正**：旧版本文档与 `scripts/pack_msix.ps1` 曾把 PFX 口令以明文写入仓库（现已移除，改为 `MATHLANG_PFX_PASSWORD` 环境变量）。该口令应视为**已泄露**；下一次发布前必须**更换 PFX 口令或重新生成证书**，新口令只存密码管理器/凭据管理器。历史提交里仍能查到旧口令，删文件不能消除泄露。
+
 本目录按工作区约定放在 `app\` 的**同级**（`app\android\app\build.gradle.kts` 里写的是
 `rootProject.file("../../signing")`，**不写绝对路径** → 位置错了不会报错，只会**静默回落到 debug 签名**）。
 
@@ -18,7 +20,8 @@
 3. **发布前必须验签**：APK 时间戳 ≥ 源码、含 `libflutter.so`、签名主体是 `mathlang`
    （防止 debug 签名冒充正式包）。
 
-> 现状：**本目录为空**。正式版阶段（S8）再生成，生成前先跑一次
+> 现状：仓库里的 `signing/` **只保留本 README + .gitkeep**；`.jks` / `.pfx` / `key.properties` 都在本机、被
+> `.gitignore` 拦掉。Android 正式版阶段（S8）再生成密钥库，生成前先跑一次
 > `flutter doctor --android-licenses` 并移植流水账的 `build_release.ps1`。
 
 ### Windows 自签证书（2026-10-19，U4）
@@ -31,7 +34,7 @@ Windows 11（build 26200）对**未签名 exe** 一律弹「已保护你的电�
 | 证书主体 | `CN=数语引擎（自签）` |
 | 指纹 | `93FAAFAD89470D121BD77321FB96104A29254BFA` |
 | 有效期 | 到 2036-10-19（10 年；签名**带公网时间戳**，过期后已签的 exe 仍有效） |
-| 私钥 | `mathlang-selfsign.pfx`（口令 `mathlang-selfsign`，**本目录已被 .gitignore 拦掉**） |
+| 私钥 | `mathlang-selfsign.pfx`（口令由 `MATHLANG_PFX_PASSWORD` 提供；**本目录已被 .gitignore 拦掉**） |
 | 公钥 | `数语引擎-自签证书.cer`（随发布包分发） |
 | 受信任位置 | `当前用户\受信任的根证书颁发机构`（**不需要管理员**） |
 | 签名方式 | PowerShell `Set-AuthenticodeSignature`（本机没装 Windows SDK 的 signtool） |
@@ -42,14 +45,30 @@ Windows 11（build 26200）对**未签名 exe** 一律弹「已保护你的电�
 $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=数语引擎（自签）' `
   -KeyUsage DigitalSignature -KeyExportPolicy Exportable -NotAfter (Get-Date).AddYears(10) `
   -CertStoreLocation Cert:\CurrentUser\My -TextExtension @('2.5.29.37={text}1.3.6.1.5.5.7.3.3')
-$pwd = ConvertTo-SecureString 'mathlang-selfsign' -Force -AsPlainText
-Export-PfxCertificate   -Cert $cert -FilePath .\mathlang-selfsign.pfx -Password $pwd
+# 口令只从密码管理器取；这里交互输入，绝不写进脚本/仓库
+$pfxPwd = Read-Host -AsSecureString 'PFX 口令'
+Export-PfxCertificate   -Cert $cert -FilePath .\mathlang-selfsign.pfx -Password $pfxPwd
 Export-Certificate      -Cert $cert -FilePath .\数语引擎-自签证书.cer
 # 装进受信任根（会弹一次"是否信任"，点"是"）
 Import-Certificate -CertStoreLocation Cert:\CurrentUser\Root -FilePath .\数语引擎-自签证书.cer
 ```
 
-**发布流程**：`scripts\build_exe.ps1`（自动签名）→ `scripts\pack_release.ps1`（改名 + 打包）。
+**口令存放（2026-10-25 起）**
+
+- PFX 口令用密码管理器生成/保存，**不要**用 `setx` 持久化明文。
+- 本地打包只在当前 PowerShell 会话里设置，结束就删除：
+
+  ```powershell
+  $env:MATHLANG_PFX_PASSWORD = Read-Host 'PFX 口令'
+  powershell -ExecutionPolicy Bypass -File scripts\pack_msix.ps1
+  Remove-Item Env:MATHLANG_PFX_PASSWORD
+  ```
+
+- `scripts\pack_msix.ps1` 缺这个变量会直接报错退出；不要把口令写回脚本或文档。
+- 如果 PFX 曾离开本机，或旧口令已被提交过：**重新生成证书**（并接受已装用户需要重新信任一次），不要只改口令。
+
+**发布流程**：`scripts\build_exe.ps1`（自动签名）→ `scripts\pack_release.ps1`（改名 + 打包）→
+`scripts\pack_msix.ps1`（MSIX + 安装包，需要 `MATHLANG_PFX_PASSWORD`）。
 发布包里 `启动数语引擎.cmd` 会先 `certutil -user -store Root <指纹>` 查证书，没装就
 `certutil -user -addstore Root 证书.cer`（系统弹一次"是"）再启动 ⇒ 首次打开不再被拦。
 

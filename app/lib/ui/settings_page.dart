@@ -122,7 +122,7 @@ class SettingsOverlay extends StatefulWidget {
   /// ★ U6：桌面上有没有「数语引擎」快捷方式（MSIX 装完由应用自己建）
   final bool desktopShortcutExists;
 
-  /// ★ U6：	rue = 建/重建，alse = 删除
+  /// ★ U6：true = 建/重建，false = 删除
   final void Function(bool create)? onDesktopShortcut;
 
   @override

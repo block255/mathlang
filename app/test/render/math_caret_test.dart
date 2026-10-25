@@ -281,7 +281,7 @@ void main() {
 
     testWidgets('★ 分式**分母**里的光标：整体待在分母那一格里，**没有越过分数线**',
         (WidgetTester tester) async {
-      // `\frac{a}{b}` 的项表：0-4 命令 / 5 { / 6  / 7 } / 8 { / 9  ⇒ 分母内容起点 = 9
+      // `\frac{a}{b}` 的项表：0-4 命令 / 5 { / 6 a / 7 } / 8 { / 9 b ⇒ 分母内容起点 = 9
       await _pump(tester, renderMathTex(r'\frac{a}{b}', caretRel: 9), caret: true);
       final Rect bar = barOf(tester);
       final List<Rect> gl = glyphsOf(tester);

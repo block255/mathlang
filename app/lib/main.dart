@@ -1,7 +1,7 @@
 // ============================================================
-//  数语引擎（mathlang）· S1-A 实验台入口
-//  三块内容：★问 0 流内数学映射（A 组主战场）/ S1 渲染验证取证 / B 组 appflowy_editor
-//  判定矩阵：notes/design/技术选型与风险.md 第 9.3 节
+//  数语引擎（mathlang）· 应用入口
+//  桌面/移动：直接进编辑器（EditorPage）；Web：保留开发实验台（ExperimentHome）。
+//  设计依据：notes/design/整体设计.md；文档索引：notes/README.md。
 // ============================================================
 import 'package:flutter/foundation.dart' show kIsWeb, kReleaseMode;
 import 'package:flutter/semantics.dart';

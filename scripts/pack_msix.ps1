@@ -145,7 +145,12 @@ if (-not (Test-Path $msix)) { throw "打包失败（makeappx 没产出 $msix）"
 Write-Host '   [5/5] signtool sign' -ForegroundColor DarkGray
 $pfx = Join-Path $signing 'mathlang-selfsign.pfx'
 if (-not (Test-Path $pfx)) { throw "缺 pfx：$pfx" }
-& $signtool sign /fd SHA256 /f $pfx /p 'mathlang-selfsign' /td SHA256 `
+# 口令只从环境变量取；不要写死在脚本里（见 signing\README.md）
+$pfxPassword = $env:MATHLANG_PFX_PASSWORD
+if ([string]::IsNullOrEmpty($pfxPassword)) {
+    throw '缺 MATHLANG_PFX_PASSWORD：先在当前会话设置 PFX 口令（见 signing\README.md），不要把口令写进脚本。'
+}
+& $signtool sign /fd SHA256 /f $pfx /p $pfxPassword /td SHA256 `
     /tr 'http://timestamp.digicert.com' $msix | Out-Null
 $sig = Get-AuthenticodeSignature $msix
 Write-Host "        签名：$($sig.Status) · $($sig.SignerCertificate.Subject)" -ForegroundColor DarkGray
