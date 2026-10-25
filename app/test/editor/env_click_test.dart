@@ -272,7 +272,7 @@ void main() {
       final Rect a = r.boxes.firstWhere((LeafBox b) => b.text == 'a').rect;
       final Rect b = r.boxes.firstWhere((LeafBox leaf) => leaf.text == 'b').rect;
       await _leftClick(tester, r.root, Offset((a.right + b.left) / 2, a.center.dy));
-      // ★ 字母  /  也出现在环境名 \begin{pmatrix} 里 ⇒ 必须取**最后一个**
+      // ★ 字母 a / b 也出现在环境名 \begin{pmatrix} 里 ⇒ 必须取**最后一个**
       final int cellStart =
           buf.buf.indexOf(r'\begin{pmatrix}') + r'\begin{pmatrix}'.length;
       final int firstAmp = buf.buf.indexOf('&', cellStart);

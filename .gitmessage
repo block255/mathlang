@@ -1,0 +1,12 @@
+# type(scope): 一句话（≤72 字符，句末不加句号）
+#
+# 现象：
+# 根因：
+# 修法：
+# 验证：（测试名 / 命令 / 改前红→改后绿）
+#
+# Refs: <notes/... 或 commit>
+# AI-Assisted: DeepSeek/DSH    # AI 主导时保留；否则删除
+#
+# type: feat|fix|docs|test|refactor|chore|build|ci|revert
+# scope: render/editor/io/lang/ui/docs/release（模块名，不要用批次号/时间）
