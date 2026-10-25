@@ -204,20 +204,33 @@ echo ============================================
 echo    数语引擎  $Version   （Windows 64 位）
 echo ============================================
 echo.
-echo 第一次安装需要信任一次本软件的自签证书，系统会弹管理员授权，请点 [是]。
+echo 第一次安装需要让系统信任本软件的自签证书（只影响这台电脑、只信任这一把）。
 echo.
-certutil -user -store TrustedPeople %THUMB% >nul 2>&1
-if errorlevel 1 (
-  powershell -NoProfile -Command "Start-Process certutil -Verb RunAs -Wait -ArgumentList '-addstore','-f','TrustedPeople','\"%HERE%证书-数语引擎.cer\"'"
-)
+rem ── ① 先试"当前用户"信任：不需要管理员，系统最多问一次"是否信任" ──
+rem    ★ 2026-10-25 修：原来这步"查 user 存储、写 machine 存储"，且失败被静默吞掉，
+rem      证书没装上时脚本照样继续装包 ⇒ Add-AppxPackage 报 0x800B0109（根证书不受信任）。
+rem      现在：两个存储都装、都 -f 覆盖、失败不再静默；装不上就明确报出来。
+certutil -user -addstore -f Root "%HERE%证书-数语引擎.cer" >nul 2>&1
+certutil -user -addstore -f TrustedPeople "%HERE%证书-数语引擎.cer" >nul 2>&1
 echo 正在安装…
+powershell -NoProfile -Command "Add-AppxPackage -Path '%HERE%数语引擎.msix' -ForceApplicationShutdown"
+if not errorlevel 1 goto ok
+echo.
+rem ── ② 当前用户不够 ⇒ 用管理员装到"本机"受信任存储（MSIX 校验更认这个）──
+echo   当前用户的信任还不够，需要管理员把证书装到"本机"存储。
+echo   系统会弹一次管理员授权，请点 [是]。
+powershell -NoProfile -Command "Start-Process certutil -Verb RunAs -Wait -ArgumentList '-addstore','-f','Root','\"%HERE%证书-数语引擎.cer\"'"
+powershell -NoProfile -Command "Start-Process certutil -Verb RunAs -Wait -ArgumentList '-addstore','-f','TrustedPeople','\"%HERE%证书-数语引擎.cer\"'"
+echo 正在重试安装…
 powershell -NoProfile -Command "Add-AppxPackage -Path '%HERE%数语引擎.msix' -ForceApplicationShutdown"
 if errorlevel 1 (
   echo.
-  echo   [失败] 安装没成功。请把这句话连同上面的报错一起截图。
+  echo   [失败] 还是没装上。请把这句话连同上面的报错一起截图。
+  echo   临时办法：改用绿色版（portable 包），双击「启动数语引擎.cmd」就能直接运行。
   pause
   exit /b 1
 )
+:ok
 echo 装好了，正在打开…
 powershell -NoProfile -Command "`$p=(Get-AppxPackage MathLang.Editor).PackageFamilyName; Start-Process ('shell:AppsFolder\'+`$p+'!App')"
 echo.
