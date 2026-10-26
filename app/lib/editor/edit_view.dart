@@ -1415,6 +1415,9 @@ class EditViewState extends State<EditView> {
       case PasteApply.mathTex:
         // 已经是 tex（或用户就是想插文字）⇒ 直接走插入守门人，不包裹
         _commitText(d.payload);
+        // ★ 批 37：这条路上也会"替用户动手脚"了（剥掉载荷内部成对的 `$`）
+        //   ⇒ 说明必须在 `_commitText` **之后**补（`_mutate` 会把上一条说明清掉）。
+        if (d.note != null) _note(d.note);
         return;
       case PasteApply.pushOut:
         _breakUndoGroup();

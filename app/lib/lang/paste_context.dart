@@ -1,4 +1,4 @@
-// 数语引擎 · **粘贴的语境归一**（纯 Dart，2026-10-23 公测反馈 A1 / F2）
+// 数语引擎 · **粘贴的语境归一**（纯 Dart，2026-10-23 公测反馈 A1 / F2；2026-10-26 批 37 改口径）
 //
 // 一句话模型（`notes\design\剪贴板与跨语境粘贴.md` §一）：
 //   **复制 = 产出「自洽片段」；粘贴 = 把片段归一成目标语境。**
@@ -6,11 +6,23 @@
 // 于是 `$` / `$$` 属于**语境的属性**：
 //   · 粘进**文字流** ⇒ 原样（片段自带 `$…$` 就是一个行内公式）；
 //   · 粘进**数学里**（行内 / 行间 / 任何结构槽：分子 / 根号 / 上下标 / 矩阵格 / 极限后面）
-//     ⇒ **剥掉外层定界符**，只插 tex（否则就成了嵌套 `$`）；
+//     ⇒ **归一成 tex**：剥外层定界符，**内部成对的 `$…$` 也剥**（tex 里不许有 `$`）；
 //   · 多行载荷进**行间块** ⇒ **整块内容替换**（仍是一块 —— 用户报的 F2 就是这条）；
 //   · 多行载荷进**行内公式** ⇒ **提升**成新的行间块放到本行之后（行内不许换行）。
+//
+// ★★ 2026-10-26（批 37，用户实测 A2）**改掉了"混合文本推出去"这条**：
+//   改前（2026-10-23 R6）：载荷里含 `$` 的"文字+公式"混排 ⇒ 拆不动 ⇒ 推到公式之后 + 说明。
+//   改后：**归一成 tex 之后就地插**。依据（用户拍板 + 已实测）：
+//     · 文字本来就能待在数学区里 —— 10-23 决定 2 实测 `x+中文+y` 与 `x+\text{中文}+y` 逐像素同尺寸
+//       （138.06×20.0），所以当初要挡的**只有 `$`**；
+//     · 而 `$` 可以剥掉（同一份规格 §一 就写着"片段进入公式 ⇒ 剥掉定界符"），
+//       没有理由连文字一起推出去；
+//     · 实测后果：在空行间块里粘「即 $\forall…$」⇒ 载荷被推到 `$$` 之后**紧贴着粘上去**
+//       ⇒ 那一行以 `$$` 开头却没有收尾 ⇒ 块模型找不到闭合 ⇒ 下面整片「公式不完整」。
+//   ⇒ 现在只有**落单**的 `$`（配不成对）才推出去，而且落点必须是**块所在行的下一行行首**。
 
 import '../render/math_nav.dart';
+import 'math_spans.dart';
 
 /// 粘贴该怎么落地
 enum PasteApply {
@@ -84,7 +96,16 @@ PasteDecision decidePaste({
 
   final bool multi = payload.contains('\n');
   if (multi) {
-    final String inner = (_stripFences(payload) ?? payload).trim();
+    final String innerRaw = (_stripFences(payload) ?? payload).trim();
+    final _Texified? tex = _texify(innerRaw);
+    if (tex == null) {
+      // 落单的 `$` 配不成对 ⇒ 不猜（塞进 tex 必炸）⇒ 当普通文本推到块之后
+      return _pushOut(doc, r, payload);
+    }
+    final String inner = tex.tex;
+    final String note = tex.stripped == 0
+        ? '已把这一整块换成粘贴内容'
+        : '已把这一整块换成粘贴内容（剥掉 ${tex.stripped} 处 `\$…\$` 定界符）';
     if (r.isDisplay) {
       // 行间块里粘多行 ⇒ **整块内容替换**（一个块仍然是一个块）
       return PasteDecision(
@@ -93,7 +114,7 @@ PasteDecision decidePaste({
         replaceFrom: r.contentStart,
         replaceTo: r.contentEnd,
         at: r.contentStart + inner.length,
-        note: '已把这一整块换成粘贴内容',
+        note: note,
       );
     }
     // 行内公式里放不下多行 ⇒ 提升成新的行间块，放到**本行之后**（不劈开公式）
@@ -109,17 +130,84 @@ PasteDecision decidePaste({
   if (one != null) {
     return PasteDecision(apply: PasteApply.mathTex, payload: one);
   }
-  if (payload.contains(r'$')) {
-    // 文字 + 公式混合：拆不动，推到公式之后（不硬塞进 tex）
+  // ★★ 批 37：混合文本 ⇒ **归一成 tex**（剥掉内部成对的 `$`）后就地插。
+  //   ★ 文字照样能待在 tex 里（10-23 决定 2），所以这里不再有"推出去"这一档。
+  final _Texified? tex = _texify(payload);
+  if (tex != null) {
     return PasteDecision(
-      apply: PasteApply.pushOut,
-      payload: payload,
-      at: r.closeEnd,
-      note: '含公式的混合文本放不进公式里，已放到公式之后',
+      apply: PasteApply.mathTex,
+      payload: tex.tex,
+      note: tex.stripped == 0
+          ? null
+          : '已剥掉 ${tex.stripped} 处 `\$…\$` 定界符（数学里不能有 `\$`）',
     );
   }
-  // 纯 tex / 纯文字 ⇒ **原样插**（用户 2026-10-23 拍板：与"公式内打中文"同口径）
-  return PasteDecision(apply: PasteApply.mathTex, payload: payload);
+  // 落单的 `$` ⇒ 兜底
+  return _pushOut(doc, r, payload);
+}
+
+/// 兜底：**落单的 `$`** 拆不动 ⇒ 推到公式之后。
+///
+/// ★★ 批 37：落点必须是**块所在行的下一行行首**。
+///   原来给的是 `r.closeEnd`（紧贴收尾围栏那一格）—— 文字粘上去会变成 `$$即 …`，
+///   而块模型要求围栏**整行**是 `$$` ⇒ 找不到闭合 ⇒ 一路吞到下一个 `$$`
+///   ⇒ 用户看到「公式不完整」占满下面一整片（2026-10-26 实测）。
+PasteDecision _pushOut(String doc, MathRegion r, String payload) {
+  const String note = '载荷里有落单的 `\$`，放不进公式里，已放到公式之后';
+  final int lineEnd = _lineEndOf(doc, r.closeEnd);
+  if (lineEnd >= doc.length) {
+    // 块就是文末那一行 ⇒ 落到文末，并在载荷前补一个换行
+    return PasteDecision(
+      apply: PasteApply.pushOut,
+      payload: '\n$payload',
+      at: doc.length,
+      note: note,
+    );
+  }
+  return PasteDecision(
+    apply: PasteApply.pushOut,
+    payload: payload,
+    at: lineEnd + 1,
+    note: note,
+  );
+}
+
+/// 「归一成 tex」的结果：[stripped] = 剥掉了几处定界符。
+class _Texified {
+  const _Texified(this.tex, this.stripped);
+
+  final String tex;
+  final int stripped;
+}
+
+/// **归一成 tex**：把载荷里**成对**的 `$…$` / `$$…$$` 剥掉（tex 里不许出现 `$`）。
+///
+/// 返回 `null` = 有**落单**的 `$`（配不成对）⇒ 调用方走兜底（推到块之后 + 说明）。
+///
+/// ★ `\$`（转义）不算定界符 —— 与 `math_spans.scanMathSpans` 同一套判据。
+_Texified? _texify(String s) {
+  final List<MathSpan> spans = scanMathSpans(s);
+  var total = 0;
+  for (var i = 0; i < s.length; i++) {
+    if (s.codeUnitAt(i) != 0x24) continue; // `$`
+    if (i > 0 && s.codeUnitAt(i - 1) == 0x5C) continue; // `\$`
+    total++;
+  }
+  var consumed = 0;
+  for (final MathSpan sp in spans) {
+    consumed += sp.display ? 4 : 2; // `$$…$$` 两个围栏 / `$…$` 一对
+  }
+  if (consumed != total) return null;
+  if (spans.isEmpty) return _Texified(s, 0);
+  final StringBuffer sb = StringBuffer();
+  var i = 0;
+  for (final MathSpan sp in spans) {
+    sb.write(s.substring(i, sp.start));
+    sb.write(sp.tex);
+    i = sp.end;
+  }
+  sb.write(s.substring(i));
+  return _Texified(sb.toString(), spans.length);
 }
 
 int _lineEndOf(String doc, int i) {

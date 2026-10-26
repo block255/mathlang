@@ -491,7 +491,9 @@ SmartWrapPlan planSmartWrap(String source) {
       if (!_touchesDollar(source, r.start, r.end)) r,
   ];
 
-  // ④ ★★ 行间块升级（B'）：**整行只有这一个式子**且含"显示倾向"的证据 ⇒ `$$…$$`
+  // ④ ★★ 行间块升级（B'）：**整行只有这一个式子**，且
+  //     · 这一行在源文里**自成一段**（上下是空行 / 文首 / 文末）⇒ 行间 —— ★ 批 37（结构判据）；
+  //     · 或者含"显示倾向"的证据（大算符 / 分式 / 关系符）⇒ 行间。
   final List<WrapRun> settled = <WrapRun>[];
   for (final WrapRun r in safe) {
     final int lineStart =
@@ -503,10 +505,29 @@ SmartWrapPlan planSmartWrap(String source) {
     settled.add(WrapRun(
       r.start,
       r.end,
-      display: wholeLine && _wantsDisplayBlock(source.substring(r.start, r.end)),
+      display: wholeLine &&
+          (_aloneInParagraph(source, lineStart, lineEnd) ||
+              _wantsDisplayBlock(source.substring(r.start, r.end))),
     ));
   }
   return SmartWrapPlan(List<WrapRun>.unmodifiable(settled));
+}
+
+/// 这一行是不是**自成一段**（上一行是空行/文首，下一行是空行/文末）。
+///
+/// ★★ 2026-10-26（批 37，用户 20261026 反馈 A1 决定 B）：**结构判据**，不是"看起来像推导"。
+/// 依据（用户原话）：「不管是 AI 抄写的还是我手打的，审美上都没有理由出现一（段/行）就一个裸符号」
+/// ⇒ 源文里**独立成段**的式子就说明排版意图是"单独一段"，与它里面写了什么无关。
+/// 实测：DeepSeek 抄写稿里 `|\sin\sqrt{x} - \sin\sqrt{x_0}|` 这种"只有函数、没有关系符"的行，
+/// 旧判据（只看内容证据）判成行内 ⇒ 用户手工改回行间（3 处差异里占 2 处）。
+bool _aloneInParagraph(String source, int lineStart, int lineEnd) {
+  final String before = lineStart == 0 ? '' : source.substring(0, lineStart - 1);
+  final int pnl = before.lastIndexOf('\n');
+  final String prevLine = pnl < 0 ? before : before.substring(pnl + 1);
+  final String after = lineEnd >= source.length ? '' : source.substring(lineEnd + 1);
+  final int nnl = after.indexOf('\n');
+  final String nextLine = nnl < 0 ? after : after.substring(0, nnl);
+  return prevLine.trim().isEmpty && nextLine.trim().isEmpty;
 }
 
 /// 这些命令/符号一出现，就说明"这一行是**推导**，不是行内的小记号" ⇒ 该用行间块。
@@ -519,9 +540,22 @@ const Set<String> _kDisplayCommands = <String>{
   'frac', 'dfrac', 'lim', 'limsup', 'liminf', 'left',
 };
 
+/// ★★ 2026-10-26（批 37）：**用命令写的关系符**同样算"显示倾向"。
+///
+/// 实测缺口（用户 20261026 反馈 A1）：`\le |\sqrt{x} - \sqrt{x_0}|` 与 `≤ |x-y|`
+/// 是**同一语义**，但字面 op 表里只有 `≤`，于是写法不同判得也不同 ⇒
+/// 那份 DeepSeek 抄写稿 3 处「行间段变行内段」里有一处就是它。
+const Set<String> _kDisplayRelations = <String>{
+  'le', 'leq', 'ge', 'geq', 'ne', 'neq', 'approx', 'equiv', 'sim', 'simeq',
+  'to', 'rightarrow', 'Rightarrow', 'leftarrow', 'Leftarrow', 'implies', 'iff',
+};
+
 bool _wantsDisplayBlock(String seg) {
   for (final Match m in RegExp(r'\\([A-Za-z]+)').allMatches(seg)) {
-    if (_kDisplayCommands.contains(m.group(1))) return true;
+    final String? name = m.group(1);
+    if (_kDisplayCommands.contains(name) || _kDisplayRelations.contains(name)) {
+      return true;
+    }
   }
   for (final String op in <String>['=', '<', '>', '≤', '≥', '≈', '→', '⇒']) {
     if (seg.contains(op)) return true;

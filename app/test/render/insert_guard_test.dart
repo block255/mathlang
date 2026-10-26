@@ -182,4 +182,99 @@ void main() {
       }
     });
   });
+
+  // ★★ 2026-10-26（批 37，用户 20261026 反馈 B1）：**块级载荷不许劈开"行首标记 + 内容"**。
+  //
+  // 改前现场（探针实测，`doc = '上一段\n### T2\n正文'`）：
+  //   行首+1 ⇒ `#` / 页 / `## T2`（标题 3 级变 2 级）
+  //   行首+3 ⇒ `###` / 页 / ` T2`（`###` 没空格 ⇒ 不是标题）
+  //   行首+4 ⇒ `### ` / 页 / `T2`  ← 用户点"标题文字最前面"就是这个落点（`### ` 不可见）
+  //   行首+5 ⇒ `### T` / 页 / `2`（标题与正文各切一半）
+  // 口径（用户 2026-10-26 拍板）：落点在**带行首标记的块行内部** ⇒ 吸到行首，整行连标记一起搬；
+  //   **纯段落不吸**（段落中间插分页 = 正常分段）。
+  group('★ B1：块级载荷落在标题/列表/引用行内部 ⇒ 吸到行首', () {
+    const String pb = '\n<!-- pagebreak -->\n';
+    const String heading = '上一段\n### T2\n正文';
+    final int lineStart = heading.indexOf('###');
+    final int lineEnd = lineStart + '### T2'.length;
+
+    test('★ 用户那一格（`### ` 之后）⇒ 落点吸到行首，标题整行走', () {
+      final InsertPlan p = planInsert(heading, lineStart + 4, pb);
+      expect(p.offset, lineStart);
+      final String out = heading.replaceRange(p.offset, p.offset, p.padText(pb));
+      expect(out.split('\n').contains('### T2'), isTrue, reason: '标记必须与内容在同一行');
+      expect(out.contains('### \n'), isFalse, reason: '不许留下一个空标题');
+    });
+
+    test('★ 全域：标题行内每个落点 ⇒ `### T2` 永远还是完好的一行', () {
+      for (var at = lineStart + 1; at < lineEnd; at++) {
+        final InsertPlan p = planInsert(heading, at, pb);
+        final String out = heading.replaceRange(p.offset, p.offset, p.padText(pb));
+        expect(out.split('\n').contains('### T2'), isTrue,
+            reason: '@$at ⇒ ${out.replaceAll('\n', r'\n')}');
+      }
+    });
+
+    test('两端（行首 / 行尾）**不吸**：那里本来就是块边界', () {
+      expect(planInsert(heading, lineStart, pb).offset, lineStart);
+      expect(planInsert(heading, lineEnd, pb).offset, lineEnd);
+    });
+
+    test('★ 纯段落**不吸**：段落中间插分页 = 正常分段', () {
+      const String para = '第一行的文字\n第二行的文字';
+      final int mid = para.indexOf('第二行') + 1;
+      expect(planInsert(para, mid, pb).offset, mid);
+    });
+
+    test('列表行 / 引用行同样吸到行首', () {
+      for (final String doc in <String>['前\n- 一条内容\n后', '前\n> 引用内容\n后']) {
+        final int ls = doc.indexOf('前\n') + 2;
+        expect(planInsert(doc, ls + 3, pb).offset, ls, reason: doc);
+      }
+    });
+
+    test('非块级载荷（不带换行）**不吸** —— 在标题里打字是正常编辑', () {
+      expect(planInsert(heading, lineStart + 4, '甲').offset, lineStart + 4);
+    });
+  });
+
+  // ★★ 2026-10-26（批 37，用户 20261026 反馈 A2）：**载荷贴在围栏行上会把围栏吃掉**。
+  //
+  // 现场：在空行间块里粘「即 $\forall…$」⇒ 载荷被推出去、落点 = 收尾 `$$` 之后那一格
+  // ⇒ 文档变成 `$$即 $\forall…$` ⇒ 那一行**以 `$$` 开头却没有 `$$` 收尾** ⇒
+  // 块模型找不到闭合 ⇒ 一路吞到下一个 `$$` ⇒ 用户看到「公式不完整」占满下面一片。
+  // 判据（全域）：落点 × 载荷，插入之后**原来那个块必须一字不变**。
+  group(r'★ A2：贴在收尾 `$$` 后面的载荷 ⇒ 补前换行，别把围栏吃掉', () {
+    const String doc = '\$\$\nx\n\$\$\n尾段';
+    const String block = '\$\$\nx\n\$\$';
+    final int closeEnd = doc.indexOf('\$\$\n', 2) + 2; // 收尾 `$$` 之后那一格
+
+    test('★ 以文字开头的载荷（旧 bug 的那一种）⇒ 落到下一行', () {
+      const String payload = r'即 $\forall \varepsilon > 0$';
+      final InsertPlan p = planInsert(doc, closeEnd, payload);
+      final String out = doc.replaceRange(p.offset, p.offset, p.padText(payload));
+      expect(out.contains(block), isTrue,
+          reason: '块必须一字不变：${out.replaceAll('\n', r'\n')}');
+      expect(out.split('\n')[2], '\$\$', reason: r'收尾围栏那一行必须还是纯 `$$`');
+    });
+
+    test(r'★ 全域：任何落点 × 含 `$` 的载荷 ⇒ 两个围栏行都还是纯 `$$`', () {
+      for (final String payload in <String>[
+        r'即 $x$',
+        r'$x$ 之后',
+        r'价格 $5',
+        'a\nb',
+      ]) {
+        for (var at = 0; at <= doc.length; at++) {
+          final InsertPlan p = planInsert(doc, at, payload);
+          final String out =
+              doc.replaceRange(p.offset, p.offset, p.padText(payload));
+          final int fences =
+              out.split('\n').where((String l) => l.trim() == '\$\$').length;
+          expect(fences, 2,
+              reason: 'payload="$payload" @$at ⇒ ${out.replaceAll('\n', r'\n')}');
+        }
+      }
+    });
+  });
 }

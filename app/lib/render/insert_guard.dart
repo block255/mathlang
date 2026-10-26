@@ -232,6 +232,29 @@ InsertPlan _settle(String src, InsertPlan p, String text) {
     }
   }
 
+  // ★★ 规则 ⑦（2026-10-26 批 37，用户 20261026 反馈 B1）：**块级载荷不许劈开"行首标记 + 内容"**。
+  //
+  // 改前现场（探针实测，`doc = '上一段\n### T2\n正文'`，分页符载荷落在标题行不同位置）：
+  //   行首+1 ⇒ `#` / 页 / `## T2`（标题 3 级变 2 级）
+  //   行首+3 ⇒ `###` / 页 / ` T2`（`###` 没空格 ⇒ 不是标题）
+  //   行首+4 ⇒ `### ` / 页 / `T2`  ← 用户点"标题文字最前面"就是这个落点（`### ` 不可见）
+  //   行首+5 ⇒ `### T` / 页 / `2`（标题与正文各切一半）
+  // 口径（用户 2026-10-26 拍板"区别对待"）：
+  //   · 落点在**带行首标记的块行内部**（标题 / 列表 / 引用）⇒ **吸到行首**，整行连标记一起搬；
+  //   · **纯段落不吸** —— 段落中间插分页就是"从这儿分段"，劈开是对的；
+  //   · 两端（行首行尾）本来就是块边界 ⇒ 不吸（否则"在第 1 行末尾按分页"会把第 1 行搬下去）。
+  // ★ 只对**块级载荷**（`\n` + 首行是整行语法）生效 —— 在标题里打字、`Shift+Enter` 硬换行都不许搬。
+  if (_isBlockLevelPayload(text)) {
+    final int ls = _lineStartOf(src, at);
+    final int nlIdx = src.indexOf('\n', ls);
+    final int le = nlIdx < 0 ? src.length : nlIdx;
+    if (at > ls && at < le && _hasLeadingBlockMarker(src.substring(ls, le))) {
+      at = ls;
+      moved = true;
+      why = '块级载荷落在「带行首标记的行」内部（会把标记与内容劈开）⇒ 吸到行首，整行一起走';
+    }
+  }
+
   // ★★ 规则 ⑥（2026-10-20 T-A 实测 F7，用户可见）：**落点在分页符行里 ⇒ 挪到该行之后**。
   //   `<!-- pagebreak -->` 只有"**整行正好是标记**"才算分页符；在它里面插任何字符
   //   （哪怕只是一个 `$`）都会让那一行退化成普通段落 ⇒ 页面上**直接露出 HTML 注释编码**。
@@ -297,10 +320,20 @@ InsertPadding padForRange(String src, int start, int end, String text) {
   final String lastLine = text.substring(text.lastIndexOf('\n') + 1);
   final bool leftDollar = s > 0 && src[s - 1] == r'$';
   final bool rightDollar = e < src.length && src[e] == r'$';
+  // ★★ ★★★ 2026-10-26（批 37，用户 20261026 反馈 A2）：**落点在围栏行内部 ⇒ 任何载荷都得先换行**。
+  //   现场：在空行间块里粘「即 $\forall…$」⇒ 载荷被推到收尾 `$$` 之后那一格，
+  //   于是文档变成 `$$即 …` —— 那一行**以 `$$` 开头却没有收尾** ⇒
+  //   块模型要"整行 `$$`"才算围栏 ⇒ 找不到闭合 ⇒ 一路吞到下一个 `$$` ⇒
+  //   用户看到下面一整片「公式不完整」。
+  //   原来只有"载荷两端是 `$`"（规则⑤）才会挪，以**文字**开头的载荷正好从缝里漏过去。
+  final bool atFenceLine =
+      s > 0 && src[s - 1] != '\n' && _isFenceLine(_lineAt(src, s));
   final bool prefix = s > 0 &&
       src[s - 1] != '\n' &&
       !text.startsWith('\n') &&
-      ((leftDollar && text.startsWith(r'$')) || _isBlockSyntaxLine(firstLine));
+      ((leftDollar && text.startsWith(r'$')) ||
+          _isBlockSyntaxLine(firstLine) ||
+          atFenceLine);
   // ★★ 规则 ⑥（2026-10-17 b2-② 手验抓到的真缺陷）：**落点正好在"整行语法行"的行首**。
   //   例：`# 例 1 一元二次方程` 的光标在 0 ⇒ 插 `$\frac{}{}$` 会粘成
   //   `$\frac{}{}$# 例 1 …` ⇒ `#` 不再在行首 ⇒ **整行标题退化成正文**（用户实测截图）。
@@ -332,6 +365,26 @@ bool _isBlockSyntaxLine(String line) {
 
 bool _isFenceLine(String line) =>
     BlockMarkers.isMathFence(line) || BlockMarkers.isFence(line);
+
+/// 这是不是**块级载荷**（自己就是一整行/一整块）：含换行，且**去掉首尾空白后的第一行**是整行语法。
+///
+/// ★ 为什么不能只看"含换行"：`'  \n'`（`Shift+Enter` 的块内硬换行）也含换行，
+///   但那是"把这一行断开"的编辑动作，**不是**块级插入 ⇒ 不许被搬到行首（规则 ⑦）。
+bool _isBlockLevelPayload(String text) {
+  if (!text.contains('\n')) return false;
+  final String t = text.trim();
+  if (t.isEmpty) return false;
+  return _isBlockSyntaxLine(t.split('\n').first);
+}
+
+/// 这一行有没有**行首标记**（标题 / 列表 / 引用）—— 有标记的行被劈开就会丢块属性。
+bool _hasLeadingBlockMarker(String line) {
+  final String l = line.trimLeft();
+  if (l.isEmpty) return false;
+  return BlockMarkers.headingLevel(l) > 0 ||
+      BlockMarkers.listMarker(l) != null ||
+      l.startsWith('>');
+}
 
 /// 位置 [o] 之后那一行（`o` 之后的第一个 `\n` 之前）；文末返回空串。
 String _nextLineAt(String src, int o) {

@@ -141,6 +141,19 @@ void main() {
       expect(r.doc.contains(r'$\frac{a}{b}$'), isTrue);
       expect(_mathFencesBalanced(r.doc), isTrue);
     });
+
+    // ★★ 2026-10-26（批 37，用户 20261026 反馈 B1）：**标题不许被分页符劈开**。
+    //   实测路径：`### T2` 的光标点"标题文字最前面"= `### ` 之后（那 4 个字符不可见）
+    //   ⇒ 改前得到 `### ` / `<!-- pagebreak -->` / `T2` ⇒ 标题属性留在上一页、T2 落成正文。
+    test('★ 光标在标题文字最前面（`### ` 之后）⇒ 标题整行走，T2 仍是标题 3', () {
+      const String doc = '上一段\n### T2\n正文';
+      final int caret = doc.indexOf('###') + 4;
+      final r = run(doc, caret, BlockOp.pagebreak);
+      expect(r.doc.split('\n').contains('### T2'), isTrue,
+          reason: '标题行必须完好：${r.doc.replaceAll('\n', r'\n')}');
+      expect(typeAt(r.doc, r.doc.indexOf('### T2') + 4), BlockType.heading3);
+      expect(typeAt(r.doc, r.doc.indexOf('T2')), BlockType.heading3);
+    });
   });
 
   group('★ 全域不变量：任何偏移 × 任何操作都不许拆坏 `\$`', () {

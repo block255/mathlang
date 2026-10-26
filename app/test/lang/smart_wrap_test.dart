@@ -82,14 +82,77 @@ void main() {
       expect(applySmartWrap(src, p), r'比如 $a_n = (-1)^n$ 有界');
     });
 
-    test('整行只有一个裸符号（没有显示证据）⇒ 行内', () {
+    test('★★ 批 37（改口径）：整行一个裸符号 + **自成一段** ⇒ 行间', () {
+      // 改前（2026-10-17 B'）：`a_n` 没有"显示证据" ⇒ 一律行内。
+      // 改后（2026-10-26 用户拍板 B）：判据换成**结构**判据 —— 这一行在源文里自成一段
+      // （上下是空行 / 文首 / 文末）就说明排版意图是"独立一段"，与它里面写了什么无关。
+      // 用户原话：「不管是 AI 抄写的还是我手打的，审美上都没有理由出现一（段/行）就一个裸符号」。
       const String src = r'a_n';
-      expect(applySmartWrap(src, planSmartWrap(src)), r'$a_n$');
+      expect(applySmartWrap(src, planSmartWrap(src)), _display('a_n'));
+    });
+
+    test('★ 但整行式子**不自成一段**（上下紧邻非空行）⇒ 照旧按内容证据判行内', () {
+      const String src = '甲\nx^2\n乙';
+      expect(applySmartWrap(src, planSmartWrap(src)), '甲\n\$x^2\$\n乙');
     });
 
     test('缩进的整行式子也算"整行"（缩进留在块外面）', () {
       const String src = '  x = 1  ';
       expect(applySmartWrap(src, planSmartWrap(src)), '  ${_display('x = 1')}  ');
+    });
+  });
+
+  // ★★ 2026-10-26（批 37，用户 20261026 反馈 A1）：**命令写的关系符也算显示倾向**。
+  //
+  // 实测缺口：`\le |\sqrt{x} - \sqrt{x_0}|` 与 `≤ |x-y|` 是**同一语义**，
+  // 但 `_wantsDisplayBlock` 只认字面 `≤`，于是只有后者被判行间 ⇒ 用户粘 AI 抄写稿时
+  // 三处「行间段变成了行内段」里有一处就是这个。
+  group(r'★ 批 37：`\le \ge \ne \to …` 与字面 `≤ ≥ ≠ →` 同待遇', () {
+    test(r'`\le |\sqrt{x}-\sqrt{x_0}|` 整行 ⇒ 行间', () {
+      const String src = r'\le |\sqrt{x} - \sqrt{x_0}|';
+      expect(applySmartWrap(src, planSmartWrap(src)),
+          _display(r'\le |\sqrt{x} - \sqrt{x_0}|'));
+    });
+
+    test(r'`\ge` / `\ne` / `\to` / `\Rightarrow` / `\approx` 同样', () {
+      for (final String src in <String>[
+        r'\ge |x|',
+        r'a \ne b',
+        r'x \to 0',
+        r'A \Rightarrow B',
+        r'x \approx 1.414',
+      ]) {
+        expect(applySmartWrap(src, planSmartWrap(src)), _display(src),
+            reason: '$src 应判行间');
+      }
+    });
+
+    test(r'★ 不许误伤：夹在文字里的同一段 ⇒ 仍是行内', () {
+      const String src = r'当 \le x 时有界';
+      expect(applySmartWrap(src, planSmartWrap(src)), r'当 $\le x$ 时有界');
+    });
+  });
+
+  // ★★ 2026-10-26（批 37）：**自成一段 ⇒ 行间**（结构判据）。
+  group('★ 批 37（B）：自成一段 ⇒ 行间，与里面写了什么无关', () {
+    test('上下都是空行的整行式子 ⇒ 行间（这一行没有任何"显示证据"）', () {
+      const String src = r'''前文
+
+|\sin\sqrt{x} - \sin\sqrt{x_0}|
+
+后文''';
+      expect(applySmartWrap(src, planSmartWrap(src)),
+          '前文\n\n${_display(r'|\sin\sqrt{x} - \sin\sqrt{x_0}|')}\n\n后文');
+    });
+
+    test('文首 / 文末也算自成一段', () {
+      const String src = r'|\sin x|';
+      expect(applySmartWrap(src, planSmartWrap(src)), _display(r'|\sin x|'));
+    });
+
+    test('★ 不许误伤：列表行里的式子 ⇒ 不升格（`- ` 标记还在）', () {
+      const String src = '- 求极限 x^2';
+      expect(applySmartWrap(src, planSmartWrap(src)), r'- 求极限 $x^2$');
     });
   });
 

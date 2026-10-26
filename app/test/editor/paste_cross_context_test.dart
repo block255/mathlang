@@ -3,7 +3,9 @@
 // 验证三件事：
 //   ① 粘 `$…$` 进行内公式 ⇒ 缓冲区里**不会**出现嵌套 `$`；
 //   ② 多行推导粘进空行间块 ⇒ 仍然**只有一对** `$$`（用户报的 F2：粘完散架 + `[公式不完整]`）；
-//   ③ 兜底情况在状态栏**说一句话**（不许"粘了但好像没反应"）。
+//   ③ 兜底/归一情况在状态栏**说一句话**（不许"粘了但好像没反应"）。
+//      ★ 批 37（2026-10-26）：混合文本改成"归一成 tex 就地插"，所以 ③ 现在守的是
+//        "剥掉内部 `$` ⇒ 落在公式里 + 有说明"。
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -70,19 +72,24 @@ void main() {
     expect(buf.buf.contains(r'=f(x+x_0-x_0)-f(x_0)'), isTrue, reason: buf.buf);
   });
 
-  testWidgets('③ 混合文本粘进公式 ⇒ 推到公式之后，状态栏有说明',
+  // ★★ 2026-10-26（批 37，用户 20261026 反馈 A2）**改口径**：
+  //   改前（2026-10-23 R6）：混合文本"拆不动" ⇒ 整段推到公式之后。
+  //   改后：剥掉内部成对的 `$` 归一成 tex ⇒ **就地在公式里插**（文字本来就能待在数学区里）。
+  testWidgets('③ 混合文本粘进公式 ⇒ 归一成 tex 就地插，状态栏有说明',
       (WidgetTester tester) async {
     const String doc = r'前 $x+y$ 后';
     final DocBuffer buf = await _pump(tester, doc, doc.indexOf('x'));
     _state(tester).pasteText(r'见 $a$ 式');
     await tester.pumpAndSettle();
 
-    // 原公式仍然完整、粘进来的东西在它之后
-    expect(buf.buf.contains(r'$x+y$'), isTrue, reason: buf.buf);
-    final int close = buf.buf.indexOf(r'$', buf.buf.indexOf(r'$x+y$') + 1) + 1;
-    expect(buf.buf.substring(close).contains('见'), isTrue,
-        reason: '混合文本必须落在公式之后：${buf.buf}');
+    expect(_count(buf.buf, r'$'), 2, reason: r'tex 里不许出现 `$`：${buf.buf}');
+    expect(buf.buf.contains('见 a 式'), isTrue, reason: buf.buf);
+    final int open = buf.buf.indexOf(r'$');
+    final int close = buf.buf.indexOf(r'$', open + 1);
+    final int at = buf.buf.indexOf('见');
+    expect(at > open && at < close, isTrue,
+        reason: '剥掉定界符之后应当落在**公式里面**：${buf.buf}');
     expect(find.byKey(const Key('paste-note')), findsOneWidget,
-        reason: '我们替用户挪了位置 ⇒ 状态栏必须说一句');
+        reason: '我们替用户剥了定界符 ⇒ 状态栏必须说一句');
   });
 }
