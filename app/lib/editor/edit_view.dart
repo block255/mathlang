@@ -332,7 +332,46 @@ class EditViewState extends State<EditView> {
       le++;
     }
     final bool lineBlank = s.substring(ls, le).trim().isEmpty;
-    return lineBlank ? '\n' : '\n\n';
+    if (!lineBlank) return '\n\n';
+    // ★★★ 批 42（2026-10-26，用户拍板 **甲**，并明确**只针对两种页尾**）：
+    //   **① 最后一页的文末空行；② 分页后原页的页尾空行（后面紧跟分页符）** ⇒ **封顶一行**：
+    //   Enter 落在这两种空行上时**不再加**（返回空载荷 ⇒ 一次编辑都不产生）。
+    //   为什么只封这两种：它们**不占行盒**（`blank_runs.blankRunFrom` 已把"文末那个位置"
+    //   排除在"真有行盒的空行"之外）⇒ 加了也**看不见**，只留下"按了像没反应"
+    //   和"回来要按同样多次 Delete"（用户实测）。也与"点文末那片白"的幂等同口径。
+    //   ★ 页面**中间**的空行（两段正文之间）**照旧**"按 Enter 接着长"（§11.46 原样不动）。
+    if (_isPageTailBlankLine(c)) return '';
+    return '\n';
+  }
+
+  /// 光标所在那一行是不是**"页尾空行"**（文末 / 分页符之前那一串空行）。
+  ///
+  /// 判据：从这一行**往后**逐行看 —— 全是空行，直到**文末**或**分页符行**。
+  ///   · 到文末 ⇒ 最后一页的文末空行；
+  ///   · 先碰到分页符行 ⇒ 分页后原页的页尾空行；
+  ///   · 先碰到有字的行 ⇒ 页面中间的空行（**不算**，照旧能长）。
+  ///
+  /// ★ 还要"**已经真的有那一行**"才封顶：
+  ///   · 文末那种：文档必须以 `\n\n` 结尾（`甲\n` 的末尾**没有**空行 ⇒ 第一下 Enter 还要让它长出来）；
+  ///   · 分页符那种：光标既然站在空行上，那行就已经存在 ⇒ 直接封顶。
+  bool _isPageTailBlankLine(int caret) {
+    final String s = _buf.buf;
+    var le = caret.clamp(0, s.length);
+    while (le < s.length && s[le] != '\n') {
+      le++;
+    }
+    var o = le < s.length ? le + 1 : s.length;
+    while (o < s.length) {
+      final int nl = s.indexOf('\n', o);
+      final int end = nl < 0 ? s.length : nl;
+      final String line = s.substring(o, end);
+      if (BlockMarkers.isPageBreak(line)) return true; // ① 页尾（分页符之前）
+      if (line.trim().isNotEmpty) return false;        // 页面中间的空行
+      if (nl < 0) break;
+      o = nl + 1;
+    }
+    // ② 文末：只有"已经有一行空行"才封顶
+    return s.endsWith('\n\n');
   }
 
   /// 平台（含 IME 提交）的一段文本 → **一次**编辑写进缓冲区。

@@ -185,11 +185,14 @@ void main() {
     testWidgets('★★ 空行上按 Enter ⇒ 只补一个 `\\n`（真空段落再长一行）',
         (WidgetTester tester) async {
       // `甲\n\n`：光标在 3 = 空行行首（正是"Enter 一次"之后的落点）
+      // ★★ 批 42（2026-10-26 用户拍板 **甲**）：这一格是**最后一页的文末空行** ⇒ **封顶一行**。
+      //   改前这里会再加一个 `\n`（`甲\n\n\n`）—— 而尾部空行**不占行盒**，加了也看不见，
+      //   只留下"按了像没反应 / 回来要按同样多次 Delete"。
       final DocBuffer buf = await _pumpEditView(tester, '甲\n\n', caret: 3);
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pumpAndSettle();
-      expect(buf.buf, '甲\n\n\n', reason: '在空行上按 Enter = 再加一行空行，不是又开一段');
-      expect(buf.caret, 4);
+      expect(buf.buf, '甲\n\n', reason: '文末空行封顶一行：再按 Enter 不再加');
+      expect(buf.caret, 3);
     });
 
     testWidgets('★ 连按两次 Enter（从正文出发）⇒ `甲\\n\\n\\n`（段距 + 一行空行）',
@@ -199,7 +202,8 @@ void main() {
       await tester.pumpAndSettle();
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pumpAndSettle();
-      expect(buf.buf, '甲\n\n\n');
+      // ★★ 批 42（甲）：第二下 Enter 落在**文末空行**上 ⇒ 封顶，不再加（改前是 `甲\n\n\n`）。
+      expect(buf.buf, '甲\n\n');
     });
   });
 }
