@@ -52,7 +52,9 @@ void main() {
     await tester.tap(_blankSlot);
     await tester.pumpAndSettle();
     expect(buf.buf, '甲\n\n', reason: '已有一行空行 ⇒ 不再插入');
-    expect(buf.caret, 3);
+    // ★ 批 43：落点从"文末（EOF=3）"改成**那个空行的行首（2）** ——
+    //   用户报的就是"点下部空白光标只能落在文末而不是空行"。
+    expect(buf.caret, 2);
   });
 
   testWidgets('★ 文末只有一个换行 ⇒ 补一个（不补成两行）', (WidgetTester tester) async {

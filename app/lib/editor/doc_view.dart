@@ -2085,7 +2085,7 @@ class DocViewState extends State<DocView> {
       children.add(_BlankSlot(
         id: 'blank@$tail',
         height: free,
-        offset: tail,
+        offset: seamTap,
         // ★★ 2026-10-17 用户实测："enter 和点空白都能到空行了，但光标显示不出来"：
         //   插入 `\n\n` 之后缓冲区是 `…\n\n`，**光标落在 after + 1**（末尾那行空行的行首），
         //   而空行的**起点**是 `after` ⇒ 原来 `_caret == after` 永远不成立 ⇒ 一根竖条都不画。
@@ -2103,7 +2103,15 @@ class DocViewState extends State<DocView> {
         caretWidth: 1.5,
         caretColor: const Color(kCaretColorValue),
         topAligned: true,
-        onTap: (int at, Offset global) => _onTailBlankTap(),
+        // ★ 批 43：点它落在**第一个真实可落位置**（空行首 / 分页符行首）；
+        //   只有"文末还没有那一行空行"时才走"补一行"的老行为。
+        onTap: (int at, Offset global) => _onTailBlankTap(
+            (after >= 0 && after < widget.buffer.buf.length)
+                ? after
+                : (seamTap > (prevUnit?.acceptTo ?? -1) &&
+                        seamTap < widget.buffer.buf.length
+                    ? seamTap
+                    : null)),
         onBox: (String id, RenderBox box) => _blankBoxes[id] = box,
       ));
     } else if (isLastPage && _units.isEmpty) {
@@ -2218,18 +2226,28 @@ class DocViewState extends State<DocView> {
     if (next >= buf.length) return at;
     final int nl = buf.indexOf('\n', next);
     final String line = buf.substring(next, nl < 0 ? buf.length : nl);
-    return BlockMarkers.isPageBreak(line) ? next : at;
+    if (BlockMarkers.isPageBreak(line)) return next; // 分页符行首
+    if (line.trim().isEmpty) return next;            // ★ 批 43：空行首（用户要的落点）
+    return at;
   }
 
   /// 点"文末那片空白" = **在文末起一行空行**（⑥ 甲；与 `Enter` 同一条路、同样会改文档）。
   ///
   /// 幂等：文末已经是一行空行（`…\n\n`）就只把光标放上去；末尾只有一个换行 ⇒ 补一个；
   /// 没有换行 ⇒ 补两个。一次插入 = 一步编辑（`Ctrl+Z` 可一步回退）。
-  void _onTailBlankTap() {
+  void _onTailBlankTap([int? at]) {
     final DocBuffer b = widget.buffer;
     final String s = b.buf;
     if (s.isEmpty) {
       b.setCaret(0);
+      return;
+    }
+    // ★★ 批 43（2026-10-26，用户："点下部空白光标只能落在文末而不是空行"）：
+    //   槽已经有"第一个可落位置"（空行首 / 分页符行首）时 ⇒ **只把光标放上去，不改文档**。
+    //   原来这里无条件走"补空行"，于是文末夹着分页符时 `tail` 退化成 `buf.length`
+    //   ⇒ 点一下永远落到文末。
+    if (at != null && at >= 0 && at < s.length) {
+      b.setCaret(at);
       return;
     }
     final String add =
