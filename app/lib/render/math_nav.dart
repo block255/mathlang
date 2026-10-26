@@ -529,17 +529,6 @@ int? verticalStopAt(String source, int offset, {required bool up}) {
 /// 行间围栏的定界符（`$$`）
 const String _kMathFence = r'$$';
 
-/// 删完之后交界处那一行是不是**分页符的残片**（含 `pagebreak` / `<!--` / `-->`，
-/// 但已经不是"整行正好是标记"）。
-///
-/// ★ 2026-10-26（批 39）：分页符是**结构**，不是文字 —— 残片一出现在正文里，
-///   页面上就直接印出 `<!-- pagebreak -->`（用户实测截图）。所以宁可拒绝这一下删除。
-bool _isMarkerFragment(String line) {
-  final String t = line.trim();
-  if (t.isEmpty) return false;
-  if (BlockMarkers.isPageBreak(t)) return false; // 完好
-  return t.contains('pagebreak') || t.contains('<!--') || t.contains('-->');
-}
 
 /// 删掉 `[from,to)` 之后，**交界处那一行**的行间围栏会不会被弄坏？
 ///
@@ -572,13 +561,7 @@ bool _fenceBrokenByDelete(String source, int from, int to) {
   final String right = source.substring(to, le);
   final String merged = left + right;
 
-  // ④ ★★★ 2026-10-26（批 39，用户截图 `…141348_ugbj.png`）：**分页符行同族**。
-  //   `BlockMarkers.isPageBreak` 要求"**整行正好是** `<!-- pagebreak -->`"；
-  //   把它的换行吃掉、把邻居粘上来、或删掉它自己的一个字符
-  //   ⇒ 那一行退化成普通段落 ⇒ **页面上直接露出 `<!-- pagebreak -->` 这行编码**。
-  //   ★ 所以这一条**不看 onlyNewlines**：删字符一样能毁掉它（实测 `Delete` 删掉 `<`）。
-  if (_isMarkerFragment(merged)) return true;
-
+  // （分页符的事在 `smartEditAt` 入口按"结果里有没有残片"统一处理，见那里的注释。）
   if (!onlyNewlines) return false;
 
   // ① 围栏在行中间（前缀有非空白内容）
@@ -637,7 +620,59 @@ SmartEdit? _paragraphBreakDelete(String source, int o, {required bool forward}) 
 ///
 /// 不在数学段里 → 字节级；在段里 → 交给 [smartBackspace] / [smartDelete]，
 /// 段内已无可删时处理**公式首/公式尾的边界语义**（§3.3）。
+///
+/// ★★★ 批 41（2026-10-26，用户 20261026 实测）：**分页符是原子对象**。
+/// 正常行为（不需要用户选，编辑器都是这样）：
+///   · 这次删除**不会**造出"分页符残片" ⇒ **照旧删**（空行、普通换行、字符都随便删）；
+///   · 这次删除**会**把 `<!-- pagebreak -->` 粘成 `甲<!-- pagebreak -->` / `!-- pagebreak -->`
+///     ⇒ 改成**删掉整个分页符行**（一次删干净 ≈ 取消这一页的分页）。
+/// 为什么不是"拒绝"：拒绝让删除键变**死按**（用户实证："怎么按也回不到文末"）。
+/// 为什么不是"碰到标记就删"：那样**删它上面的空行**也会把分页符带走
+///   （探针实测 `Delete @7` 在标记上一行的空行里，分页符照样被删）——用户本意完全不是这个。
+/// ⇒ 判据落在**这次编辑的结果**上（结果里有没有残片），不在"离标记多近"上。
 SmartEdit smartEditAt(String source, int offset, {required bool forward}) {
+  final int o = offset.clamp(0, source.length);
+  final SmartEdit raw = _smartEditCore(source, o, forward: forward);
+  if (raw.isNone || !raw.deletes) return raw;
+  if (!_wouldLeaveBareMarker(source, raw.from!, raw.to!)) return raw;
+  return _deleteMarkerLineTouchedBy(source, raw.from!, raw.to!) ?? SmartEdit.none;
+}
+
+/// 删掉 `[from,to)` 之后，文档里会不会出现"含 pagebreak 但已不是完好整行标记"的行？
+bool _wouldLeaveBareMarker(String src, int from, int to) {
+  final String out = src.replaceRange(from, to, '');
+  for (final String line in out.split('\n')) {
+    if (!line.contains('pagebreak')) continue;
+    if (!BlockMarkers.isPageBreak(line)) return true;
+  }
+  return false;
+}
+
+/// 删掉**被 `[from,to)` 牵连到的那个分页符行**（含行尾换行），并给出落点光标。
+///
+/// "牵连到" = 那一行的字符区间与 `[from,to)` 相交，或 `[from,to)` 正好是它左右两侧的换行之一
+/// （那两种换行一动，标记就会和邻居粘成一行）。
+SmartEdit? _deleteMarkerLineTouchedBy(String src, int from, int to) {
+  var ls = 0;
+  while (ls <= src.length) {
+    int le = src.indexOf('\n', ls);
+    if (le < 0) le = src.length;
+    if (BlockMarkers.isPageBreak(src.substring(ls, le))) {
+      final bool touches = from <= le && to >= ls - 1;
+      if (touches) {
+        final int delTo = le < src.length ? le + 1 : le;
+        final int caret = (ls > 0 ? ls - 1 : 0).clamp(0, src.length);
+        return SmartEdit.remove(ls, delTo, caret);
+      }
+    }
+    if (le >= src.length) break;
+    ls = le + 1;
+  }
+  return null;
+}
+
+/// 删除的**原有判据**（结构感知删除本体；分页符的事已在入口处理完）。
+SmartEdit _smartEditCore(String source, int offset, {required bool forward}) {
   final int o = offset.clamp(0, source.length);
 
   // ★★★ 2026-10-18 晚（用户实测）：**段落边界是一个对象**。

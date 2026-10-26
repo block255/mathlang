@@ -1,21 +1,27 @@
-// 批 39（2026-10-26）：**删除不许把分页符行弄坏**。
+// 批 41（2026-10-26）：**分页符是原子对象** —— 删除侧的三条口径。
 //
-// 用户手测截图（`…141348_ugbj.png`）：在末页空行上连按几下删除之后，页面上**直接露出了
-// `<!-- pagebreak -->` 这行编码**（还配着两根光标条）。根因：`BlockMarkers.isPageBreak`
-// 要求"**整行正好是** `<!-- pagebreak -->`"——把它的换行吃掉、或把邻居粘上来，
-// 那一行就退化成普通段落，编码当场画在纸上。
+// 用户实测背景：他在末页文末下面的空行里连按删除（**本意不是删分页符**），
+// 结果页面上直接印出了 `<!-- pagebreak -->` 这行编码。
 //
-// `render/math_nav.dart` 的 `_fenceBrokenByDelete` 早就为 `$$` / ```` ``` ```` 做了这件事
-// （批 32：三类坏法），**分页符当时没算进去** —— 这是同族第四类。
+// 正常行为（不需要用户选）：
+//   ① 这次删除**不会**造出"分页符残片" ⇒ **照旧删**（空行/普通换行/字符都随便删）；
+//   ② 这次删除**会**把 `<!-- pagebreak -->` 粘成 `甲<!-- pagebreak -->` / `!-- pagebreak -->`
+//      ⇒ 改成删掉**整个分页符行**（一次删干净 ≈ 取消这一页的分页）；
+//   ③ **绝不允许**出现残片；也**绝不许殃及**：删标记上/下的空行时，分页符必须还在。
 //
-// 判据（全域）：任何偏移 × 两个方向，删完之后**不许出现"含 pagebreak 但不是分页符行"的行**。
+// ★ 曾经的两种错法（都做过，留作反面教材）：
+//   · 「拒绝」⇒ 删除键变死按（用户："怎么按也回不到文末"）；
+//   · 「碰到标记就整行删」⇒ 删它上面一行的空行也把分页符带走（探针 `Delete @7`）。
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mathlang/core/block.dart';
 import 'package:mathlang/render/math_nav.dart';
 import 'package:mathlang/render/smart_delete.dart';
 
-/// 删完之后页面上会不会露出编码
+String _apply(String doc, SmartEdit e) =>
+    e.isNone ? doc : doc.replaceRange(e.from!, e.to!, '');
+
+/// 结果里不许有"含 pagebreak 但不是完好整行标记"的行
 void _expectNoBareMarker(String doc, String why) {
   for (final String line in doc.split('\n')) {
     if (!line.contains('pagebreak')) continue;
@@ -24,44 +30,93 @@ void _expectNoBareMarker(String doc, String why) {
   }
 }
 
-const String kDoc = '甲\n<!-- pagebreak -->\n乙\n';
+bool _hasMarker(String doc) => doc.split('\n').any(BlockMarkers.isPageBreak);
+
+/// 这次删除的范围离"分页符行"是否至少隔着一整行？
+bool _farFromMarker(String doc, int from, int to) {
+  var ls = 0;
+  while (ls <= doc.length) {
+    int le = doc.indexOf('\n', ls);
+    if (le < 0) le = doc.length;
+    if (BlockMarkers.isPageBreak(doc.substring(ls, le))) {
+      return to < ls - 2 || from > le + 2;
+    }
+    if (le >= doc.length) break;
+    ls = le + 1;
+  }
+  return false;
+}
 
 void main() {
-  group('★ 分页符行不许被删除弄坏（否则页面上露出 `<!-- pagebreak -->`）', () {
-    test('★ 退格吃掉分页符行**后面**那个换行 ⇒ 必须拒绝（改前：`<!-- pagebreak -->乙`）', () {
-      final int nl = kDoc.indexOf('-->') + 3; // 分页符行末尾 = 那个换行
-      final SmartEdit e = smartEditAt(kDoc, nl + 1, forward: false);
-      final String out = e.isNone
-          ? kDoc
-          : kDoc.replaceRange(e.from!, e.to!, '');
-      _expectNoBareMarker(out, '退格 @${nl + 1}');
+  group('★ 不许殃及：删标记上/下的空行，分页符必须还在', () {
+    // ★ 这里要分清两件事（探针实测过）：
+    //   · 光标在标记**上面那一行**（空行）按 Delete ⇒ 段落边界一删，`bb` 就与标记行合并
+    //     ⇒ 不可能既保留分页符又合并段落 ⇒ **删掉分页符是对的**（Word 也是这个行为）；
+    //     唯一不许出的是"残片"和"正文被误删"。
+    //   · 光标在标记**下面那一行**按 Delete ⇒ 动的是它下面的空行，与标记无关
+    //     ⇒ **分页符必须原样留着**（这才是"不许殃及"）。
+    test('★ 删标记上一行的空行 ⇒ 等于删掉这个分页符（常规行为），但正文与残片都得干净', () {
+      const String doc = 'aa\n\nbb\n\n<!-- pagebreak -->\n';
+      final int blankLine = doc.indexOf('\n\n<!--'); // 标记上一行那个空行的行首
+      expect(doc[blankLine], '\n', reason: '前置：确实是空行');
+      final SmartEdit e = smartEditAt(doc, blankLine, forward: true);
+      final String out = _apply(doc, e);
+      _expectNoBareMarker(out, 'Delete @$blankLine');
+      expect(out.contains('aa'), isTrue, reason: '正文不许被误删：$out');
+      expect(out.contains('bb'), isTrue, reason: '正文不许被误删：$out');
     });
 
-    test('★ Delete 吃掉分页符行后面那个换行 ⇒ 必须拒绝', () {
-      final int nl = kDoc.indexOf('-->') + 3;
-      final SmartEdit e = smartEditAt(kDoc, nl, forward: true);
-      final String out = e.isNone
-          ? kDoc
-          : kDoc.replaceRange(e.from!, e.to!, '');
-      _expectNoBareMarker(out, 'Delete @$nl');
+    test('★ 删标记**下面**那一行的空行 ⇒ 分页符必须原样留着', () {
+      const String doc = 'aa\n\nbb\n\n<!-- pagebreak -->\n\n';
+      final int below = doc.indexOf('-->') + 3; // 标记行末尾那个换行之后
+      expect(doc[below], '\n', reason: '前置：标记下面确实是空行');
+      final SmartEdit e = smartEditAt(doc, below, forward: true);
+      final String out = _apply(doc, e);
+      expect(_hasMarker(out), isTrue,
+          reason: '分页符被顺手删掉了：${out.replaceAll('\n', r'\n')}');
+      _expectNoBareMarker(out, 'Delete @$below');
     });
+  });
 
-    test('★ 退格吃掉分页符行**前面**那个换行、把正文粘上来 ⇒ 必须拒绝', () {
+  group('★ 会毁掉它时 ⇒ 删掉**整个**分页符行（一次删干净）', () {
+    test('★ 退格在标记行首（上一行有字）⇒ 整个分页符行消失，不留残片', () {
       const String doc = '甲\n<!-- pagebreak -->\n乙\n';
       final int start = doc.indexOf('<!--');
       final SmartEdit e = smartEditAt(doc, start, forward: false);
-      final String out = e.isNone
-          ? doc
-          : doc.replaceRange(e.from!, e.to!, '');
+      final String out = _apply(doc, e);
+      expect(_hasMarker(out), isFalse, reason: '这一下应当删掉整行：$out');
       _expectNoBareMarker(out, '退格 @$start');
+      expect(out.contains('甲'), isTrue, reason: '正文字符不许被删：$out');
+      expect(out.contains('乙'), isTrue, reason: '正文字符不许被删：$out');
     });
 
-    test('★★ 全域：每个偏移 × 两个方向 ⇒ 永远不许露出编码', () {
+    test('★ Delete 在标记行尾（下一行有字）⇒ 整个分页符行消失', () {
+      const String doc = '甲\n<!-- pagebreak -->\n乙\n';
+      final int end = doc.indexOf('-->') + 3; // 标记行那个换行
+      final SmartEdit e = smartEditAt(doc, end, forward: true);
+      final String out = _apply(doc, e);
+      expect(_hasMarker(out), isFalse, reason: '这一下应当删掉整行：$out');
+      _expectNoBareMarker(out, 'Delete @$end');
+    });
+
+    test('★ 删标记自己的一个字符（如 `<`）⇒ 也是整行删掉，不许留半截', () {
+      const String doc = '甲\n<!-- pagebreak -->\n乙\n';
+      final int lt = doc.indexOf('<!--');
+      final SmartEdit e = smartEditAt(doc, lt, forward: true);
+      final String out = _apply(doc, e);
+      _expectNoBareMarker(out, 'Delete 标记首字符');
+      expect(_hasMarker(out), isFalse, reason: '删了半截标记就只能整行删：$out');
+    });
+  });
+
+  group('★ 全域：任何偏移 × 两个方向 ⇒ 不许残片，也不许无谓殃及', () {
+    test('★★ 全域断言', () {
       var checked = 0;
       for (final String doc in <String>[
-        kDoc,
+        '甲\n<!-- pagebreak -->\n乙\n',
         '甲\n\n<!-- pagebreak -->\n\n乙\n',
         '甲\n<!-- pagebreak -->\n\n\n',
+        '甲\n\n<!-- pagebreak -->\n',
         '\n<!-- pagebreak -->\n',
       ]) {
         for (var o = 0; o <= doc.length; o++) {
@@ -69,12 +124,17 @@ void main() {
             final SmartEdit e = smartEditAt(doc, o, forward: fwd);
             if (e.isNone) continue;
             checked++;
-            final String out = doc.replaceRange(e.from!, e.to!, '');
+            final String out = _apply(doc, e);
             _expectNoBareMarker(out, '${fwd ? 'Delete' : '退格'} @$o');
+            if (_farFromMarker(doc, e.from!, e.to!)) {
+              expect(_hasMarker(out), isTrue,
+                  reason: '${fwd ? 'Delete' : '退格'} @$o 离标记很远却把分页符删了：'
+                      '${out.replaceAll('\n', r'\n')}');
+            }
           }
         }
       }
-      expect(checked, greaterThan(20), reason: '别空转：至少真的要删这么多次');
+      expect(checked, greaterThan(20), reason: '别空转：至少要真的删过这么多次');
     });
   });
 }
