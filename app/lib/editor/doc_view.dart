@@ -148,32 +148,26 @@ class _BlankSlotState extends State<_BlankSlot> {
       behavior: HitTestBehavior.opaque,
       // ★★ 2026-10-18 晚：有"行表"时按**点在第几行**落点（一个槽可能是好几个空行）；
       //   没有行表（文末槽、旧调用）就照旧落到 `offset`。
-      onTapDown: widget.lineOffsets.isEmpty
-          ? null
-          : (TapDownDetails d) {
-              final RenderBox? box = context.findRenderObject() as RenderBox?;
-              if (box == null || !box.hasSize) {
-                widget.onTap(widget.offset, d.globalPosition);
-                return;
-              }
-              final double dy = box.globalToLocal(d.globalPosition).dy;
-              // ★ 空行的行盒从 `gapBefore` 起算（上面那截是段距，不算"某一行"）
-              final double rel = dy - widget.gapBefore;
-              final int k = rel <= 0
-                  ? 0
-                  : (rel / widget.lineHeight).floor();
-              final int i = k.clamp(0, widget.lineOffsets.length - 1);
-              widget.onTap(widget.lineOffsets[i], d.globalPosition);
-            },
-      onTap: widget.lineOffsets.isEmpty
-          ? () {
-              final RenderBox? box = context.findRenderObject() as RenderBox?;
-              final Offset at = box == null
-                  ? Offset.zero
-                  : box.localToGlobal(box.size.center(Offset.zero));
-              widget.onTap(widget.offset, at);
-            }
-          : null,
+      // ★★★ 批 45（2026-10-26，调试日志实证）：**必须在 `onTapDown`（按下）上报**。
+      //   日志现场：点空行 → 点正文那一击被打成 `[tap] DEDUP丢弃 off=5`。
+      //   根因：`EditView` 的去重标记 `_tapHandledThisPress` 在**指针抬起**（`_endDrag`）复位；
+      //   而槽原来用 `onTap`（抬起**之后**才跑）⇒ 它把标记又置 true 却没有下一次抬起来复位
+      //   ⇒ **下一次按下的第一条上报被吞掉** ⇒ 光标不动（用户："第一下换行无效"）。
+      //   单元（文字/公式）本来就在 `onTapDown` 上报 —— 槽与它们统一。
+      onTapDown: (TapDownDetails d) {
+        final RenderBox? box = context.findRenderObject() as RenderBox?;
+        if (widget.lineOffsets.isEmpty || box == null || !box.hasSize) {
+          widget.onTap(widget.offset, d.globalPosition);
+          return;
+        }
+        final double dy = box.globalToLocal(d.globalPosition).dy;
+        // ★ 空行的行盒从 `gapBefore` 起算（上面那截是段距，不算"某一行"）
+        final double rel = dy - widget.gapBefore;
+        final int k = rel <= 0 ? 0 : (rel / widget.lineHeight).floor();
+        final int i = k.clamp(0, widget.lineOffsets.length - 1);
+        widget.onTap(widget.lineOffsets[i], d.globalPosition);
+      },
+      onTap: null,
       child: MouseRegion(
         cursor: SystemMouseCursors.text,
         child: SizedBox(
@@ -2079,9 +2073,14 @@ class DocViewState extends State<DocView> {
       //     那一格是**单元自己**的：再画一根 = 用户看到的"每打一个字就双光标"
       //     （探针实测：`aa⏎⏎bb⏎⏎cc` 在 EOF 处 175/199 两根，正好差一行）。
       final int seamTap = _seamTapTarget(prevUnit);
+      // ★ 批 46：认领范围与"点击落点"分开算 —— 点击落在**最后一行行尾**（分页符之前），
+      //   但**认领**仍从 `acceptTo + 1` 起（分页符那 19 格与它后面的空行都要有主）；
+      //   只有"后面真的还有字符"才算（否则 `…cc` 打字的文末会与单元叠成两根）。
       final int owned = after >= 0
           ? after
-          : (seamTap > prevUnit.acceptTo ? seamTap : -1);
+          : (prevUnit.acceptTo + 1 < widget.buffer.buf.length
+              ? prevUnit.acceptTo + 1
+              : -1);
       children.add(_BlankSlot(
         id: 'blank@$tail',
         height: free,
@@ -2226,7 +2225,11 @@ class DocViewState extends State<DocView> {
     if (next >= buf.length) return at;
     final int nl = buf.indexOf('\n', next);
     final String line = buf.substring(next, nl < 0 ? buf.length : nl);
-    if (BlockMarkers.isPageBreak(line)) return next; // 分页符行首
+    // ★★ 批 46（2026-10-26，用户实测）：**紧跟着分页符时不许落在分页符行上**。
+    //   落在那儿一打字就被 `insert_guard` 规则⑥ 推到**分页符之后** ⇒ 字跑到下一页、
+    //   还把下一页内容往下顶一行（用户原话）。⇒ 落**这一页最后一行的行尾**，
+    //   打字接在正文后面（分页符之前），Enter 也在分页符之前开新段。
+    if (BlockMarkers.isPageBreak(line)) return at;
     if (line.trim().isEmpty) return next;            // ★ 批 43：空行首（用户要的落点）
     return at;
   }
