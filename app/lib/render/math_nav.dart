@@ -529,6 +529,18 @@ int? verticalStopAt(String source, int offset, {required bool up}) {
 /// 行间围栏的定界符（`$$`）
 const String _kMathFence = r'$$';
 
+/// 删完之后交界处那一行是不是**分页符的残片**（含 `pagebreak` / `<!--` / `-->`，
+/// 但已经不是"整行正好是标记"）。
+///
+/// ★ 2026-10-26（批 39）：分页符是**结构**，不是文字 —— 残片一出现在正文里，
+///   页面上就直接印出 `<!-- pagebreak -->`（用户实测截图）。所以宁可拒绝这一下删除。
+bool _isMarkerFragment(String line) {
+  final String t = line.trim();
+  if (t.isEmpty) return false;
+  if (BlockMarkers.isPageBreak(t)) return false; // 完好
+  return t.contains('pagebreak') || t.contains('<!--') || t.contains('-->');
+}
+
 /// 删掉 `[from,to)` 之后，**交界处那一行**的行间围栏会不会被弄坏？
 ///
 /// ★★ 2026-10-25（用户 2026-10-24 实测"某处连按两下退格 ⇒ 整块源码裸奔"）：
@@ -545,7 +557,7 @@ const String _kMathFence = r'$$';
 bool _fenceBrokenByDelete(String source, int from, int to) {
   if (from < 0 || to > source.length || from >= to) return false;
   final String gone = source.substring(from, to);
-  if (gone.replaceAll('\n', '').isNotEmpty) return false; // 只判"删换行"
+  final bool onlyNewlines = gone.replaceAll('\n', '').isEmpty;
 
   // 交界处那一行 = 左边残行 + 右边残行
   var ls = from;
@@ -559,6 +571,15 @@ bool _fenceBrokenByDelete(String source, int from, int to) {
   final String left = source.substring(ls, from);
   final String right = source.substring(to, le);
   final String merged = left + right;
+
+  // ④ ★★★ 2026-10-26（批 39，用户截图 `…141348_ugbj.png`）：**分页符行同族**。
+  //   `BlockMarkers.isPageBreak` 要求"**整行正好是** `<!-- pagebreak -->`"；
+  //   把它的换行吃掉、把邻居粘上来、或删掉它自己的一个字符
+  //   ⇒ 那一行退化成普通段落 ⇒ **页面上直接露出 `<!-- pagebreak -->` 这行编码**。
+  //   ★ 所以这一条**不看 onlyNewlines**：删字符一样能毁掉它（实测 `Delete` 删掉 `<`）。
+  if (_isMarkerFragment(merged)) return true;
+
+  if (!onlyNewlines) return false;
 
   // ① 围栏在行中间（前缀有非空白内容）
   for (var k = merged.indexOf(_kMathFence);

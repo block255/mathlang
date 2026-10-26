@@ -2126,21 +2126,21 @@ class DocViewState extends State<DocView> {
       // （否则两页各画一根竖条 —— 同一格像素两个主人，平权/一像素一语义都不允许）。
       final int tapAt = _seamTapTarget(prevUnit);
       final int end = _seamEnd(layout, p);
-      // ★★ 2026-10-26 用户手测追加（批 38 回归）：**接缝槽不许再画一根**。
-      //   自然分页时 `tapAt == prevUnit.acceptTo`（= 这一页最后一行的行尾），
-      //   那个位置**已经有主人**：单元自己会画一根（旁边还有空行槽/块边界条）
-      //   ⇒ 实测直接叠成 3 根（用户看到"文末和下面空行各一个光标"）。
-      //   判据：只有**越过了上一单元**（页尾紧跟分页符那种）才由本槽画条；
-      //   自然分页那种 `caretHere` 恒假 —— 槽仍存在，**只负责点击**。
-      final bool ownsCaret = tapAt > prevUnit.acceptTo;
+      // ★★ 2026-10-26 用户手测追加（批 38 回归 + 批 39）：**认领起点 = 上一单元之后那一格**。
+      //   · 不许从 `tapAt` 起算：自然分页时 `tapAt == prevUnit.acceptTo`，那格是**单元自己**的
+      //     （旁边还有空行槽/块边界条）⇒ 直接叠成 3 根（用户看到"文末和下面空行各一个光标"）；
+      //   · 也不许"只在越过 acceptTo 时才画"（上一版）：那样**页尾那几行真空行没人管** ——
+      //     用户在页尾空行上按 Enter，光标就看不见了（他的原话："光标会消失，实际到空行了但不显示"）。
+      //   ⇒ 起算点是 acceptTo + 1，右端是下一页第一个单元的左边界。
+      final int ownedFrom =
+          (prevUnit.acceptTo + 1).clamp(0, widget.buffer.buf.length);
       children.add(_BlankSlot(
         id: 'seam@p$p',
         height: free,
         offset: tapAt,
         caretHere: !widget.hideCaretAndSelection &&
             widget.caretVisible &&
-            ownsCaret &&
-            (_caret ?? -1) >= tapAt &&
+            (_caret ?? -1) >= ownedFrom &&
             (_caret ?? -1) < end,
         caretHeight: textCaretHeight(_s.bodyFontSize),
         caretWidth: 1.5,

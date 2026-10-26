@@ -149,6 +149,22 @@ void main() {
       }
     });
 
+    // ★★ 2026-10-26 用户手测追加（批 39）：页尾那几行**真空行**也要看得见光标。
+    //   用户原话：「第一页的下部空白有点击判定但是点击光标只会落到文末的 c 后面，
+    //   我在 c 后面按 enter，光标会消失（实际上是到空行了但是不显示）」。
+    //   根因：接缝槽上一版只在"越过上一单元"时才画 ⇒ 自然分页时 `tapAt == acceptTo`
+    //   ⇒ 页尾那几行空行整段死；而它们是**真实文档位置**，必须有人认领。
+    testWidgets('★ 页尾的空行（分页符之前那几行）也要看得见光标', (WidgetTester tester) async {
+      const String doc = '甲\n\n乙\n\n\n\n\n<!-- pagebreak -->\n丙\n';
+      final DocBuffer buf = await _mount(tester, doc);
+      final int firstBlank = doc.indexOf('乙') + 2;
+      expect(doc[firstBlank], '\n', reason: '前置：这一格确实是乙下面的第一个空行');
+      for (var off = firstBlank; off <= firstBlank + 2; off++) {
+        expect(await _barsAt(tester, buf, off), greaterThan(0),
+            reason: '页尾空行偏移 $off 没有光标条（用户："光标会消失"）');
+      }
+    });
+
     // ★★ 2026-10-26 用户手测追加（批 38 的回归）：点中间页下部空白会**两根竖条**
     //   —— 一根在"这一页最后一行末尾"（那是接缝槽的落点，由单元自己画），
     //   另一根在下面那片空白的顶上（接缝槽又画了一根）。同一格像素两个主人。
