@@ -63,20 +63,26 @@ Future<int> _barsAt(WidgetTester tester, DocBuffer buf, int off) async {
   return _bars(tester);
 }
 
-/// 所有空行/接缝槽的矩形（按屏幕从上到下排）
-List<Rect> _slotRects(WidgetTester tester) {
-  final List<Rect> out = <Rect>[];
+/// 所有空行/接缝/文末槽的 (id, 矩形)，按屏幕从上到下排
+///
+/// `id` 是内部约定：`seam@p<n>` = 第 n 页的接缝槽；`blank@…` = 空行槽 / 文末槽。
+/// 用 `dynamic` 读私有 widget 的公开字段（测试里读 id 比按几何猜稳）。
+List<(String, Rect)> _slots(WidgetTester tester) {
+  final List<(String, Rect)> out = <(String, Rect)>[];
   final Finder f = find.byWidgetPredicate(
       (Widget w) => w.runtimeType.toString() == '_BlankSlot');
   for (final Element e in f.evaluate()) {
     final RenderObject? ro = e.renderObject;
-    if (ro is RenderBox && ro.hasSize) {
-      out.add(ro.localToGlobal(Offset.zero) & ro.size);
-    }
+    if (ro is! RenderBox || !ro.hasSize) continue;
+    final String id = (e.widget as dynamic).id as String;
+    out.add((id, ro.localToGlobal(Offset.zero) & ro.size));
   }
-  out.sort((Rect a, Rect b) => a.top.compareTo(b.top));
+  out.sort(((String, Rect) a, (String, Rect) b) => a.$2.top.compareTo(b.$2.top));
   return out;
 }
+
+List<Rect> _slotRects(WidgetTester tester) =>
+    <Rect>[for (final (String, Rect) s in _slots(tester)) s.$2];
 
 void main() {
   group('★ 全域：分页符那种文档，每个偏移都要看得见光标', () {
@@ -141,6 +147,39 @@ void main() {
       for (var off = pb; off < pb + '<!-- pagebreak -->'.length; off++) {
         expect(await _barsAt(tester, buf, off), 1, reason: '偏移 $off');
       }
+    });
+
+    // ★★ 2026-10-26 用户手测追加（批 38 的回归）：点中间页下部空白会**两根竖条**
+    //   —— 一根在"这一页最后一行末尾"（那是接缝槽的落点，由单元自己画），
+    //   另一根在下面那片空白的顶上（接缝槽又画了一根）。同一格像素两个主人。
+    testWidgets('★ 点中间页下部空白 ⇒ **不许比落点那格多画一根**（自然分页那种页）',
+        (WidgetTester tester) async {
+      // 造一份"自然溢出"的文档（分页符造出来的页不会踩这个坑：那种页的最后一行后面
+      // 紧跟分页符，落点 > acceptTo）
+      final String doc =
+          '${List<String>.filled(60, '一行文字').join('\n\n')}\n\n---\n\n尾段\n';
+      final DocBuffer buf = await _mount(tester, doc);
+      final (String, Rect)? seam = _slots(tester)
+          .where(((String, Rect) s) => s.$1 == 'seam@p0')
+          .cast<(String, Rect)?>()
+          .firstOrNull;
+      expect(seam, isNotNull, reason: '第 1 页要有接缝槽（id=seam@p0）');
+      await tester.tapAt(seam!.$2.center);
+      await tester.pumpAndSettle();
+      final int afterClick = _bars(tester);
+      final int caret = buf.caret;
+      // ★ 判据：**点页面白不许额外多画一根** —— 落点那格本来有几根（单元 / 块边界条 /
+      //   空行槽），点完还应该只有那几根。改前这里是 3（多出的那根来自接缝槽）。
+      buf.setCaret(0);
+      await tester.pump();
+      await tester.pump();
+      buf.setCaret(caret);
+      await tester.pump();
+      await tester.pump();
+      final int direct = _bars(tester);
+      expect(afterClick, direct,
+          reason: '点页面白 ⇒ $afterClick 根，直接落到同一格 ⇒ $direct 根'
+              '（caret=$caret；改前会多画一根）');
     });
   });
 }

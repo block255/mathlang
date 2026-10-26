@@ -2126,12 +2126,20 @@ class DocViewState extends State<DocView> {
       // （否则两页各画一根竖条 —— 同一格像素两个主人，平权/一像素一语义都不允许）。
       final int tapAt = _seamTapTarget(prevUnit);
       final int end = _seamEnd(layout, p);
+      // ★★ 2026-10-26 用户手测追加（批 38 回归）：**接缝槽不许再画一根**。
+      //   自然分页时 `tapAt == prevUnit.acceptTo`（= 这一页最后一行的行尾），
+      //   那个位置**已经有主人**：单元自己会画一根（旁边还有空行槽/块边界条）
+      //   ⇒ 实测直接叠成 3 根（用户看到"文末和下面空行各一个光标"）。
+      //   判据：只有**越过了上一单元**（页尾紧跟分页符那种）才由本槽画条；
+      //   自然分页那种 `caretHere` 恒假 —— 槽仍存在，**只负责点击**。
+      final bool ownsCaret = tapAt > prevUnit.acceptTo;
       children.add(_BlankSlot(
         id: 'seam@p$p',
         height: free,
         offset: tapAt,
         caretHere: !widget.hideCaretAndSelection &&
             widget.caretVisible &&
+            ownsCaret &&
             (_caret ?? -1) >= tapAt &&
             (_caret ?? -1) < end,
         caretHeight: textCaretHeight(_s.bodyFontSize),
