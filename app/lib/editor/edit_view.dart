@@ -464,6 +464,14 @@ class EditViewState extends State<EditView> {
       }
       if (_buf.caret != plan.offset) _buf.setCaret(plan.offset);
       _buf.replace(_buf.caret, _buf.caret, paddedText, coalesce: coalesce);
+      // ★★★ 批 48（2026-10-26，用户实测"打字后光标挪到下一行，于是一行一个字"）：
+      //   **我们补出来的后缀换行不算用户打的** ⇒ 光标要落在**用户内容末尾**，
+      //   而不是落在那个换行之后。否则：在分页符行首打字 ⇒ 每次补一个 `\n`、
+      //   光标又被送到下一行行首 ⇒ 再打又补一个 ⇒ **一行一个字**（截图实证）。
+      if (plan.padding.suffixNewline) {
+        final int userEnd = from + (plan.padding.prefixNewline ? 1 : 0) + text.length;
+        _buf.setCaret(userEnd.clamp(0, _buf.length));
+      }
     });
     _stampWrapped(autoWrapped, spans: _spansAround(from, to));
   }
