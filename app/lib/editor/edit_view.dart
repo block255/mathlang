@@ -14,7 +14,7 @@
 
 import 'dart:async';
 
-import 'package:flutter/foundation.dart' show listEquals;
+import 'package:flutter/foundation.dart' show kDebugMode, listEquals;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -1248,6 +1248,11 @@ class EditViewState extends State<EditView> {
     focusInput(); // 必须在用户手势里拿焦点，浏览器才肯把 IME 接上
 
     if (_tapHandledThisPress) {
+      // ★ 批 44：临时诊断（`kDebugMode` 才打）—— 用来定位"点空行后点回正文第一下无效"
+      if (kDebugMode) {
+        debugPrint('[tap] DEDUP丢弃 off=$offset src=${source.name}'
+            ' prio=${source.priority} applied=$_tapAppliedPriority');
+      }
       // 同一次按下的后续上报：**只有优先级更高**的才覆盖落点（计数一律不动）
       //   band（页边物理边界）＞ math（字形命中）＞ text（单元宿主的粗落点）
       if (source.priority > _tapAppliedPriority) {
@@ -1270,6 +1275,10 @@ class EditViewState extends State<EditView> {
         now.difference(_lastClickAt!) < const Duration(milliseconds: 400);
     final bool combo = sameSpot && quick;
     _clickCount = combo ? (_clickCount >= 3 ? 1 : _clickCount + 1) : 1;
+    if (kDebugMode) {
+      debugPrint('[tap] off=$offset count=$_clickCount src=${source.name}'
+          ' pos=(${pos.dx.toStringAsFixed(0)},${pos.dy.toStringAsFixed(0)})');
+    }
     _lastClickAt = now;
     _lastClickPos = pos;
 
@@ -1284,6 +1293,11 @@ class EditViewState extends State<EditView> {
 
   /// 把"这一击"落到文档上（**同一次按下可能被调用多次**：公式层会拿更精确的偏移重放一次）。
   void _applyClick(int offset) {
+    if (kDebugMode) {
+      debugPrint('[tap] apply off=$offset count=$_clickCount'
+          ' → ${_clickCount == 2 ? 'word(选词)' : _clickCount >= 3 ? 'unit(选块)' : 'caret'}'
+          ' 当前caret=${_buf.caret}');
+    }
     if (HardwareKeyboard.instance.isShiftPressed) {
       // Shift+点击 = **扩展**（锚点不动）
       _buf.setSelection(_buf.anchor, offset);
