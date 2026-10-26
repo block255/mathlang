@@ -140,7 +140,7 @@ void main() {
           r'$\frac{}{}$');
     });
 
-    test('标记行首 / 行中间 ⇒ 也挪到该行之后', () {
+    test('标记行中间 ⇒ 挪到该行之后；★ **行首不再挪**（批 47：行首插安全，内容留在标记之前）', () {
       for (final int at in <int>[1, 5, 12]) {
         final InsertPlan p = planInsert(pb, at, 'x');
         final String out = pb.replaceRange(p.offset, p.offset, p.padText('x'));
@@ -275,6 +275,39 @@ void main() {
               reason: 'payload="$payload" @$at ⇒ ${out.replaceAll('\n', r'\n')}');
         }
       }
+    });
+  });
+
+  // ★★★ 批 47（2026-10-26，用户实测"在原页页尾空白打字，字跑到下一页"）：
+  //   落在分页符行**行首**时不许挪位 —— 行首插是安全的（补一个后缀换行，
+  //   内容自成一行落在**标记之前**，标记仍独占一行）。
+  group('★ 批 47：分页符行**行首**插入 ⇒ 内容留在本页（标记之前）', () {
+    const String doc = '甲\n<!-- pagebreak -->\n乙\n';
+    final int pbStart = doc.indexOf('<!--');
+
+    test('★ 行首插一个字符 ⇒ 落点不动，字符在标记**之前**，标记完好', () {
+      final InsertPlan p = planInsert(doc, pbStart, 'x');
+      expect(p.offset, pbStart, reason: '行首不许被挪走');
+      final String out = doc.replaceRange(p.offset, p.offset, p.padText('x'));
+      expect(out.indexOf('x'), lessThan(out.indexOf('<!--')),
+          reason: '字符必须在分页符之前：${out.replaceAll('\n', r'\n')}');
+      expect(out.split('\n').contains('<!-- pagebreak -->'), isTrue,
+          reason: '标记必须完好：${out.replaceAll('\n', r'\n')}');
+    });
+
+    test('★ 行首插 `\\n\\n`（Enter）⇒ 新段在标记之前，标记完好', () {
+      final InsertPlan p = planInsert(doc, pbStart, '\n\n');
+      final String out = doc.replaceRange(p.offset, p.offset, p.padText('\n\n'));
+      expect(out.split('\n').contains('<!-- pagebreak -->'), isTrue,
+          reason: out.replaceAll('\n', r'\n'));
+      expect(out.indexOf('<!--'), greaterThan(pbStart),
+          reason: '标记应当被推到内容之后（内容在它之前）：${out.replaceAll('\n', r'\n')}');
+    });
+
+    test('★ 行内插（非行首）⇒ 仍然挪到该行之后（老口径不许退化）', () {
+      final InsertPlan p = planInsert(doc, pbStart + 3, 'x');
+      expect(p.moved, isTrue);
+      expect(p.offset, greaterThan(pbStart + '<!-- pagebreak -->'.length));
     });
   });
 }

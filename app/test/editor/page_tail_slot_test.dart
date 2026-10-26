@@ -123,10 +123,10 @@ void main() {
       await tester.tapAt(slots.first.center);
       await tester.pumpAndSettle();
       expect(buf.buf, before, reason: '中间页点空白**不许改文档**（否则会重排/翻页）');
-      // ★ 批 46：落点改成**这一页最后一行的行尾**（分页符紧跟在后面时）——
-      //   落在分页符行上的话，一打字就被推到分页符**之后**（字跑到下一页）。
-      expect(buf.caret, kSeam.indexOf('<!--') - 1,
-          reason: '应当落在最后一行行尾（分页符之前）；实际落在 ${buf.caret}');
+      // ★ 批 47：落点回到**分页符行首**（= 那片空白对应的真实位置）；
+      //   "打字跑到下一页"由插入侧规则⑥ 的行首例外解决，不再靠挪落点。
+      expect(buf.caret, kSeam.indexOf('<!--'),
+          reason: '应当落在分页符行首；实际落在 ${buf.caret}');
     });
 
     testWidgets('★ 点末页那片白 ⇒ 仍然"起一行空行"（既有口径不许被我改坏）',

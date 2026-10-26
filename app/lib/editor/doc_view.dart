@@ -2225,11 +2225,12 @@ class DocViewState extends State<DocView> {
     if (next >= buf.length) return at;
     final int nl = buf.indexOf('\n', next);
     final String line = buf.substring(next, nl < 0 ? buf.length : nl);
-    // ★★ 批 46（2026-10-26，用户实测）：**紧跟着分页符时不许落在分页符行上**。
-    //   落在那儿一打字就被 `insert_guard` 规则⑥ 推到**分页符之后** ⇒ 字跑到下一页、
-    //   还把下一页内容往下顶一行（用户原话）。⇒ 落**这一页最后一行的行尾**，
-    //   打字接在正文后面（分页符之前），Enter 也在分页符之前开新段。
-    if (BlockMarkers.isPageBreak(line)) return at;
+    // ★★★ 批 47（2026-10-26，用户纠正）：落点**就是分页符行首** —— 那片空白对应的真实位置。
+    //   批 46 曾把这里改成"最后一行行尾"，等于把 批 43 的目标（点空白落空白）改回去了，
+    //   用户当场指出。真正该修的是**插入侧**：`insert_guard` 规则⑥ 原来把"行首插入"
+    //   也挪到标记之后 ⇒ 字跑到下一页。现在规则⑥ 对行首不再挪位 ⇒ 落在这一格打字，
+    //   内容补后缀换行后落在**标记之前**（本页）。
+    if (BlockMarkers.isPageBreak(line)) return next;
     if (line.trim().isEmpty) return next;            // ★ 批 43：空行首（用户要的落点）
     return at;
   }

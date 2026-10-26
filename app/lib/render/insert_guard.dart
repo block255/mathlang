@@ -262,7 +262,13 @@ InsertPlan _settle(String src, InsertPlan p, String text) {
   //   接着从符号面板插一个符号 ⇒ 文档变成 `<!-- pagebreak -->$\frac{}{}$`
   //   ⇒ 用户看到一行 `<!-- pagebreak -->` 连同一个公式盒子。
   bool forcePrefixNewline = false;
-  if (BlockMarkers.isPageBreak(_lineAt(src, at))) {
+  // ★★★ 批 47（2026-10-26，用户实测"在原页页尾空白打字，字跑到下一页"）：
+  //   **落在分页符行行首**时不许挪位 —— 行首插是安全的：`padForRange` 的
+  //   `atSyntaxLineStart` 会补一个后缀换行 ⇒ 内容自成一行落在**标记之前**，
+  //   标记仍独占一行。原来一刀切"落在这行就挪到行之后"，于是打字/Enter 全跑到下一页。
+  final bool atPageBreakLineStart = BlockMarkers.isPageBreak(_lineAt(src, at)) &&
+      at == _lineStartOf(src, at);
+  if (!atPageBreakLineStart && BlockMarkers.isPageBreak(_lineAt(src, at))) {
     final int nl = src.indexOf('\n', _lineStartOf(src, at));
     if (nl >= 0) {
       at = nl + 1;
@@ -279,10 +285,26 @@ InsertPlan _settle(String src, InsertPlan p, String text) {
 
   // ★★ 规则 ④⑤：把载荷边界补成行边界（口径 =「D 保守」，用户 2026-10-17 拍板）
   final InsertPadding basePad = padForRange(src, at, at, text);
+  // ★★★ 批 47：落在分页符行**行首**、载荷又不以换行结尾 ⇒ 必须补一个**后缀换行**。
+  //   否则载荷与标记粘成一行（探针：`x` ⇒ `x<!-- pagebreak -->` ⇒ 编码会印在页面上）。
+  //   `padForRange` 的 `risky` 门把单字符载荷拦掉了（`x` 既不含 `\n` 也不含 `$`），
+  //   所以这里单独补；多字符载荷它已经补过（`a\nb` ⇒ 后补 `\n`），不重复。
+  final bool needPbSuffix = at == _lineStartOf(src, at) &&
+      BlockMarkers.isPageBreak(_lineAt(src, at)) &&
+      text.isNotEmpty &&
+      !text.endsWith('\n');
   final InsertPadding pad = forcePrefixNewline
       ? InsertPadding(
-          prefixNewline: true, suffixNewline: basePad.suffixNewline)
-      : basePad;
+          prefixNewline: true,
+          suffixNewline: basePad.suffixNewline || needPbSuffix)
+      : InsertPadding(
+          prefixNewline: basePad.prefixNewline,
+          suffixNewline: basePad.suffixNewline || needPbSuffix);
+  if (needPbSuffix && !basePad.any) {
+    moved = true;
+    why = '落点在分页符行首、载荷不以换行结尾 ⇒ 补一个换行，'
+        '让内容自成一行落在**标记之前**（否则会与标记粘成一行）';
+  }
   if (pad.any) {
     moved = true;
     why = '${why ?? '载荷边界会造出坏行（整行语法/围栏行/`\$` 粘连）'}'
