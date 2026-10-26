@@ -2071,7 +2071,17 @@ class DocViewState extends State<DocView> {
       //   实测现场：文末是 `…$$⏎<!-- pagebreak -->⏎⏎…`（用户在文末插了分页符），
       //   `_blankOffsetAfter` 返回 -1（下一行是分页符，不是空行）⇒ 改前 caretHere 永假
       //   ⇒ 用户"按 Enter 到下一个空行却看不见光标"（打字照旧能进，位置是真的）。
-      final int owned = (prevUnit.acceptTo + 1).clamp(0, widget.buffer.buf.length);
+      // ★★★ 批 40（2026-10-26，用户：「每一次打完字符都有双光标」）：**认领只能在
+      //   "上一单元之后还有位置"时成立** ——
+      //     ① 文末真有那一行空行（`after >= 0`，2026-10-17 的旧口径）；或
+      //     ② 文末紧跟**分页符行**（那 19 格确实没人认领，批 38 要解决的就是它）。
+      //   ★ 否则（文档以正文结尾、**连尾换行都没有** —— 那正是"打字中"的缓冲区形态）
+      //     那一格是**单元自己**的：再画一根 = 用户看到的"每打一个字就双光标"
+      //     （探针实测：`aa⏎⏎bb⏎⏎cc` 在 EOF 处 175/199 两根，正好差一行）。
+      final int seamTap = _seamTapTarget(prevUnit);
+      final int owned = after >= 0
+          ? after
+          : (seamTap > prevUnit.acceptTo ? seamTap : -1);
       children.add(_BlankSlot(
         id: 'blank@$tail',
         height: free,
@@ -2085,6 +2095,7 @@ class DocViewState extends State<DocView> {
         //   差的就是这一截**段距**（新段落在上一段底下再让开 `gapBefore`）。
         caretHere: !widget.hideCaretAndSelection &&
             widget.caretVisible &&
+            owned >= 0 &&
             (_caret ?? -1) >= owned,
         // 文末的空行 = 下一个段落的行首 ⇒ 从段距处起画
         caretDy: after >= 0 ? _gapBefore(BlockType.paragraph) : null,
