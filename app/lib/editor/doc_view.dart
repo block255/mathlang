@@ -2043,17 +2043,35 @@ class DocViewState extends State<DocView> {
       }
     }
 
-    // ★★ ⑥ 丙 · **文末那片空白 = 一行空行**（2026-10-17 用户拍板 **甲**）：
-    //   「添加空行有两条途径：Enter、点下方空白」—— 两条**都会改文档**（和 Enter 一样）：
-    //   点一下就在文末起一行空行、光标落在那儿；已经有一行就不再加（**幂等**）。
-    //   槽的高度取**这一页剩下的正文高度** ⇒ 那片空白**整片**都能点；
-    //   竖条**贴顶**画在最后一行下面。
-    //   ★ 只有**文末真的有那一行空行**时才画竖条（否则会和最后一行字尾的光标叠成两根）。
-    if (p == layout.pageCount - 1 && prevUnit != null) {
+    // ★★★ 批 38（2026-10-26，用户 20261026 实测）：
+    //   **每一页底部的剩余白都要能点、能看见光标**。探针实测（改前）：
+    //     `甲\n<!-- pagebreak -->\n`     ⇒ 偏移 2..21 **一根光标条都没有**（分页符那 19 格全死）；
+    //     `甲\n<!-- pagebreak -->\n\n\n` ⇒ 全部 0（末页槽要求 `after >= 0`，而分页符行不是空行）；
+    //     对照 `甲\n\n\n`                ⇒ 2..4 各 1 根（正常）。
+    //   两个根因：① 分页符块不产单元（`_buildUnits` 直接 `continue`）⇒ 那 19 格没有命中盒、没有主；
+    //            ② 末页槽的 `caretHere` 要求 `after >= 0`（上一单元后面必须是**空行**）
+    //               ⇒ 上一单元后面跟的是**分页符行**时永远不画。
+    //   口径（用户 2026-10-26 拍板 **甲-1**）：
+    //     · **末页**那片白 = "文末那片空白"：点它 = 起一行空行（既有口径，本次只放宽成立条件）；
+    //     · **非末页**那片白 = **接缝带**：点它**只落光标、不改文档**（⇒ 不重排、不翻页）；
+    //     · 接缝带里的位置（含分页符那 19 格）由该槽认领光标条。
+    final bool isLastPage = p == layout.pageCount - 1;
+    final double free = (_m.bodyHeight - bottom)
+        .clamp(textCaretHeight(_s.bodyFontSize), _m.bodyHeight);
+
+    if (isLastPage && prevUnit != null) {
+      // ★★ ⑥ 丙 · **文末那片空白 = 一行空行**（2026-10-17 用户拍板 **甲**）：
+      //   「添加空行有两条途径：Enter、点下方空白」—— 两条**都会改文档**（和 Enter 一样）：
+      //   点一下就在文末起一行空行、光标落在那儿；已经有一行就不再加（**幂等**）。
+      //   槽的高度取**这一页剩下的正文高度** ⇒ 那片空白**整片**都能点；
+      //   竖条**贴顶**画在最后一行下面。
       final int after = _blankOffsetAfter(prevUnit);
       final int tail = after >= 0 ? after : widget.buffer.buf.length;
-      final double free = (_m.bodyHeight - bottom)
-          .clamp(textCaretHeight(_s.bodyFontSize), _m.bodyHeight);
+      // ★★ 批 38：**认领范围**从"上一单元之后那一格"起 —— 不再要求后面是空行。
+      //   实测现场：文末是 `…$$⏎<!-- pagebreak -->⏎⏎…`（用户在文末插了分页符），
+      //   `_blankOffsetAfter` 返回 -1（下一行是分页符，不是空行）⇒ 改前 caretHere 永假
+      //   ⇒ 用户"按 Enter 到下一个空行却看不见光标"（打字照旧能进，位置是真的）。
+      final int owned = (prevUnit.acceptTo + 1).clamp(0, widget.buffer.buf.length);
       children.add(_BlankSlot(
         id: 'blank@$tail',
         height: free,
@@ -2067,8 +2085,7 @@ class DocViewState extends State<DocView> {
         //   差的就是这一截**段距**（新段落在上一段底下再让开 `gapBefore`）。
         caretHere: !widget.hideCaretAndSelection &&
             widget.caretVisible &&
-            after >= 0 &&
-            (_caret ?? -1) >= after,
+            (_caret ?? -1) >= owned,
         // 文末的空行 = 下一个段落的行首 ⇒ 从段距处起画
         caretDy: after >= 0 ? _gapBefore(BlockType.paragraph) : null,
         caretHeight: textCaretHeight(_s.bodyFontSize),
@@ -2078,7 +2095,7 @@ class DocViewState extends State<DocView> {
         onTap: (int at, Offset global) => _onTailBlankTap(),
         onBox: (String id, RenderBox box) => _blankBoxes[id] = box,
       ));
-    } else if (p == layout.pageCount - 1 && _units.isEmpty) {
+    } else if (isLastPage && _units.isEmpty) {
       // ★★ 2026-10-18 晚（用户报「**新建文档点不出光标**」）·
       //   根因不是光标没画，而是**整页一个可点单元都没有**：
       //   `BlockIndex.parse('')` 里空行全被 R1 跳过 ⇒ `blocks = []` ⇒ `flowUnits = []`
@@ -2100,6 +2117,30 @@ class DocViewState extends State<DocView> {
         caretColor: const Color(kCaretColorValue),
         topAligned: true,
         onTap: (int at, Offset global) => widget.onTapOffset?.call(at, global, TapSource.text),
+        onBox: (String id, RenderBox box) => _blankBoxes[id] = box,
+      ));
+    } else if (!isLastPage && prevUnit != null && _pageHasUnit(layout, p + 1)) {
+      // ★★ 批 38 新增：**接缝带**（非末页的剩余白）。
+      //
+      // 为什么"下一页有单元"才建：末页**没有单元**时，那段接缝归末页的文末槽认领
+      // （否则两页各画一根竖条 —— 同一格像素两个主人，平权/一像素一语义都不允许）。
+      final int tapAt = _seamTapTarget(prevUnit);
+      final int end = _seamEnd(layout, p);
+      children.add(_BlankSlot(
+        id: 'seam@p$p',
+        height: free,
+        offset: tapAt,
+        caretHere: !widget.hideCaretAndSelection &&
+            widget.caretVisible &&
+            (_caret ?? -1) >= tapAt &&
+            (_caret ?? -1) < end,
+        caretHeight: textCaretHeight(_s.bodyFontSize),
+        caretWidth: 1.5,
+        caretColor: const Color(kCaretColorValue),
+        topAligned: true,
+        // ★ 只落光标：**不改文档**（改了会重排/翻页，而"点页面白"不该有这种后果）
+        onTap: (int at, Offset global) =>
+            widget.onTapOffset?.call(at, global, TapSource.text),
         onBox: (String id, RenderBox box) => _blankBoxes[id] = box,
       ));
     }
@@ -2124,7 +2165,44 @@ class DocViewState extends State<DocView> {
     );
   }
 
-  /// ★★ 点"文末那片空白" = **在文末起一行空行**（⑥ 甲；与 `Enter` 同一条路、同样会改文档）。
+  /// 第 [p] 页有没有单元（没有 ⇒ 那是"分页符之后什么都没有"的空页）
+  bool _pageHasUnit(PageLayout layout, int p) {
+    if (p < 0 || p >= layout.pages.length) return false;
+    for (final PageSlot s in layout.pages[p]) {
+      if (_unitById[s.item.id] != null) return true;
+    }
+    return false;
+  }
+
+  /// 接缝带的**右端（不含）**：下一页第一个单元的左边界（没有下一页 ⇒ 文末）。
+  int _seamEnd(PageLayout layout, int p) {
+    final int len = widget.buffer.buf.length;
+    if (p + 1 >= layout.pages.length) return len;
+    for (final PageSlot s in layout.pages[p + 1]) {
+      final _Unit? u = _unitById[s.item.id];
+      if (u == null) continue;
+      return u.acceptFrom.clamp(0, len);
+    }
+    return len;
+  }
+
+  /// 接缝带的**落点**：上一页最后一行之后那一格。
+  ///
+  /// · 下一行是**分页符** ⇒ 落在分页符行首（那 19 格在批 38 之前**没有任何主人** ——
+  ///   分页符块不产单元、也不认领源码，实测整行是光标死区）；
+  /// · 否则 ⇒ 落在"这一页最后一格"（`acceptTo`，最后一行的行尾），点了就停在页尾。
+  int _seamTapTarget(_Unit prev) {
+    final String buf = widget.buffer.buf;
+    final int at = prev.acceptTo.clamp(0, buf.length);
+    if (at >= buf.length || buf[at] != '\n') return at;
+    final int next = at + 1;
+    if (next >= buf.length) return at;
+    final int nl = buf.indexOf('\n', next);
+    final String line = buf.substring(next, nl < 0 ? buf.length : nl);
+    return BlockMarkers.isPageBreak(line) ? next : at;
+  }
+
+  /// 点"文末那片空白" = **在文末起一行空行**（⑥ 甲；与 `Enter` 同一条路、同样会改文档）。
   ///
   /// 幂等：文末已经是一行空行（`…\n\n`）就只把光标放上去；末尾只有一个换行 ⇒ 补一个；
   /// 没有换行 ⇒ 补两个。一次插入 = 一步编辑（`Ctrl+Z` 可一步回退）。
