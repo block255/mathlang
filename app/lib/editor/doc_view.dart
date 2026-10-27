@@ -2268,13 +2268,14 @@ class DocViewState extends State<DocView> {
         height: free,
         offset: tapAt,
         lineOffsets: seamRun,
-        gapBefore: _gapBefore(BlockType.paragraph),
+        gapBefore: 0,
         lineHeight: _blankLineHeight,
         caretHere: !widget.hideCaretAndSelection &&
             widget.caretVisible &&
             (_caret ?? -1) >= ownedFrom &&
             (_caret ?? -1) < end,
-        caretDy: _gapBefore(BlockType.paragraph) + seamK * _blankLineHeight,
+        // ★ 2026-10-27（统一行高）：一行 = 一个正文行距，**不再叠段距**（否则第一下多 11px）
+        caretDy: seamK * _blankLineHeight,
         caretHeight: textCaretHeight(_s.bodyFontSize),
         caretWidth: 1.5,
         caretColor: const Color(kCaretColorValue),
