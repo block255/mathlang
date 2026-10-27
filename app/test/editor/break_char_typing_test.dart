@@ -46,7 +46,7 @@ void main() {
     //          甲$\alpha\beta$
     final DocBuffer buf = await _pump(tester, r'甲$\alpha\beta$', 8);
     await _type(tester, '任');
-    expect(buf.buf, r'甲$\alpha$任$\beta$', reason: '实际=${buf.buf}');
+    expect(buf.buf, '${r'甲$\alpha$任$\beta$'}\n', reason: '实际=${buf.buf}');
     expect(buf.caret, r'甲$\alpha$任'.length, reason: '光标停在汉字之后（围栏外）');
     expect(inlineDoubleDollarLines(buf.buf), isEmpty, reason: r'不许造出行内 `$$`');
   });
@@ -70,7 +70,7 @@ void main() {
     final String doc = r'甲$\alpha$';
     final DocBuffer buf = await _pump(tester, doc, 2); // 内容首 = `$` 之后
     await _type(tester, '任');
-    expect(buf.buf, r'甲任$\alpha$', reason: '实际=${buf.buf}');
+    expect(buf.buf, '${r'甲任$\alpha$'}\n', reason: '实际=${buf.buf}');
     expect(inlineDoubleDollarLines(buf.buf), isEmpty);
   });
 

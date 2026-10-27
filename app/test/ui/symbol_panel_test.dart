@@ -49,7 +49,7 @@ void main() {
     await tester.tap(find.byKey(const Key('symbol-frac')));
     await tester.pumpAndSettle();
 
-    expect(buf.buf, r'a$\frac{}{}$bc', reason: '★ 自动建壳（用户不写编码）');
+    expect(buf.buf, '${r'a$\frac{}{}$bc'}\n', reason: '★ 自动建壳（用户不写编码）');
     // 光标在分子的空槽里：`a$\frac{` 之后
     expect(buf.caret, 1 + 1 + 6, reason: r'应为 a + $ + \frac{ ⇒ 8'); // `$\frac{` 共 7 字符
     expect(buf.buf.substring(buf.caret - 1, buf.caret), '{',
@@ -70,7 +70,7 @@ void main() {
     final DocBuffer buf = tester
         .widget<EditView>(find.byType(EditView))
         .buffer;
-    expect(buf.buf, r'a$\frac{+}{}$bc',
+    expect(buf.buf, '${r'a$\frac{+}{}$bc'}\n',
         reason: '第二个符号必须落进**分子的当前槽**');
     expect(_edits(tester), 2, reason: '两次点击 = 两次编辑');
   });
@@ -81,7 +81,7 @@ void main() {
         await _pump(tester, doc: r'文字$x$尾巴', caret: 5);
     await tester.tap(find.byKey(const Key('symbol-plus')));
     await tester.pumpAndSettle();
-    expect(buf.buf, r'文字$x+$尾巴',
+    expect(buf.buf, '${r'文字$x+$尾巴'}\n',
         reason: '★ 紧邻数学段 ⇒ 并入（同权：数学是这一行的对象）');
   });
 

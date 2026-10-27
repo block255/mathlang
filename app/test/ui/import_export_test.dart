@@ -89,7 +89,7 @@ void main() {
       await st.importDocument();
       await tester.pump();
 
-      expect(buf.buf, '# 原样\n\n\$y^2\$');
+      expect(buf.buf, '# 原样\n\n\$y^2\$\n');
       expect(st.docFile.title, '别人的笔记');
       expect(st.docFile.hasFile, isFalse,
           reason: '★ 导入 = 新文档；保存时要另存为，不能覆盖源文件');

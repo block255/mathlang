@@ -83,7 +83,7 @@ void main() {
     await tester.pumpAndSettle();
     tester.testTextInput.updateEditingValue(_v('答'));
     await tester.pump();
-    expect(buf.buf, '答', reason: '新建文档点一下就该能写第一个字');
+    expect(buf.buf, '答\n', reason: '新建文档点一下就该能写第一个字');
     expect(buf.caret, 1);
   });
 }

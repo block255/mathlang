@@ -162,7 +162,7 @@ void main() {
         doc: '这里是注入的空文档', // 会被暂存覆盖（因为"没人动过"）
       );
 
-      expect(buf.buf, r'恢复的正文 $x$');
+      expect(buf.buf, '${r'恢复的正文 $x$'}\n');
       expect(buf.caret, 3);
       expect(st.title, '作业辅导1');
       expect(st.docFile.path, r'D:\docs\a.md');

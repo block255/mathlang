@@ -41,14 +41,14 @@ void main() {
     // $x$ 的 x 在 1..2
     final DocBuffer buf = await _mount(tester, r'$x$', 2);
     await _type(tester, '^');
-    expect(buf.buf, r'$x^{}$', reason: '基座 = x，不能被抽掉');
+    expect(buf.buf, '${r'$x^{}$'}\n', reason: '基座 = x，不能被抽掉');
     expect(buf.caret, 4, reason: '光标落在 { } 里');
   });
 
   testWidgets('公式里打 _ ⇒ 下标同源', (WidgetTester tester) async {
     final DocBuffer buf = await _mount(tester, r'$x$', 2);
     await _type(tester, '_');
-    expect(buf.buf, r'$x_{}$');
+    expect(buf.buf, '${r'$x_{}$'}\n');
     expect(buf.caret, 4);
   });
 
@@ -56,7 +56,7 @@ void main() {
       (WidgetTester tester) async {
     final DocBuffer buf = await _mount(tester, 'a', 1);
     await _type(tester, '^');
-    expect(buf.buf, r'$a^{}$', reason: '正文里的基座要被包进行内公式');
+    expect(buf.buf, '${r'$a^{}$'}\n', reason: '正文里的基座要被包进行内公式');
     expect(buf.caret, 4);
   });
 
@@ -65,6 +65,6 @@ void main() {
     const String doc = r'$\alpha$';
     final DocBuffer buf = await _mount(tester, doc, doc.length - 1);
     await _type(tester, '^');
-    expect(buf.buf, r'$\alpha^{}$', reason: '不能切成 al/pha 两半');
+    expect(buf.buf, '${r'$\alpha^{}$'}\n', reason: '不能切成 al/pha 两半');
   });
 }

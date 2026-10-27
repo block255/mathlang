@@ -77,40 +77,40 @@ void main() {
     testWidgets('Ctrl+1 ⇒ 行首变 `# `（再按一次回正文）', (WidgetTester tester) async {
       final (_, DocBuffer buf) = await _pump(tester);
       await _combo(tester, kCtrl, LogicalKeyboardKey.digit1);
-      expect(buf.buf, '# 甲乙丙');
+      expect(buf.buf, '# 甲乙丙\n');
 
       await _combo(tester, kCtrl, LogicalKeyboardKey.digit1);
-      expect(buf.buf, '甲乙丙');
+      expect(buf.buf, '甲乙丙\n');
     });
 
     testWidgets('Ctrl+2 / Ctrl+3 各自对应级别', (WidgetTester tester) async {
       final (_, DocBuffer buf) = await _pump(tester);
       await _combo(tester, kCtrl, LogicalKeyboardKey.digit2);
-      expect(buf.buf, '## 甲乙丙');
+      expect(buf.buf, '## 甲乙丙\n');
       await _combo(tester, kCtrl, LogicalKeyboardKey.digit3);
-      expect(buf.buf, '### 甲乙丙');
+      expect(buf.buf, '### 甲乙丙\n');
     });
 
     testWidgets('Ctrl+Shift+8 ⇒ 无序列表', (WidgetTester tester) async {
       final (_, DocBuffer buf) = await _pump(tester);
       await _combo(tester, kCtrlShift, LogicalKeyboardKey.digit8);
-      expect(buf.buf, '- 甲乙丙');
+      expect(buf.buf, '- 甲乙丙\n');
     });
 
     testWidgets('Ctrl+Shift+7 ⇒ 有序列表；Ctrl+Shift+9 ⇒ 引用',
         (WidgetTester tester) async {
       final (_, DocBuffer buf) = await _pump(tester);
       await _combo(tester, kCtrlShift, LogicalKeyboardKey.digit7);
-      expect(buf.buf, '1. 甲乙丙');
+      expect(buf.buf, '1. 甲乙丙\n');
       await _combo(tester, kCtrlShift, LogicalKeyboardKey.digit9);
-      expect(buf.buf, '> 甲乙丙');
+      expect(buf.buf, '> 甲乙丙\n');
     });
 
     testWidgets('Ctrl+Alt+C ⇒ 代码块（围栏独占一行）',
         (WidgetTester tester) async {
       final (_, DocBuffer buf) = await _pump(tester, atEnd: true);
       await _combo(tester, kCtrlAlt, LogicalKeyboardKey.keyC);
-      expect(buf.buf, '```\n甲乙丙\n```');
+      expect(buf.buf, '```\n甲乙丙\n```\n');
     });
 
     testWidgets('Ctrl+Enter ⇒ 插入分页符（自成一行）',
@@ -127,21 +127,21 @@ void main() {
         (WidgetTester tester) async {
       final (_, DocBuffer buf) = await _pump(tester, atEnd: true);
       await _combo(tester, kCtrlAlt, LogicalKeyboardKey.keyF);
-      expect(buf.buf, r'甲乙丙$\frac{}{}$');
+      expect(buf.buf, '${r'甲乙丙$\frac{}{}$'}\n');
       expect(buf.caret, 10, reason: '模板插入后光标要在分子空槽里（3 + 7）');
     });
 
     testWidgets('Ctrl+Alt+R ⇒ 根号', (WidgetTester tester) async {
       final (_, DocBuffer buf) = await _pump(tester, atEnd: true);
       await _combo(tester, kCtrlAlt, LogicalKeyboardKey.keyR);
-      expect(buf.buf, r'甲乙丙$\sqrt{}$');
+      expect(buf.buf, '${r'甲乙丙$\sqrt{}$'}\n');
     });
 
     testWidgets('Ctrl+Alt+S ⇒ 求和（符号库的 tex，原样）',
         (WidgetTester tester) async {
       final (_, DocBuffer buf) = await _pump(tester, atEnd: true);
       await _combo(tester, kCtrlAlt, LogicalKeyboardKey.keyS);
-      expect(buf.buf, r'甲乙丙$\sum_{}^{}$');
+      expect(buf.buf, '${r'甲乙丙$\sum_{}^{}$'}\n');
     });
 
     testWidgets('★ `Alt+=` 已撤掉 ⇒ 什么都不发生（不造空公式壳）',
@@ -185,13 +185,13 @@ void main() {
       await tester.pump();
 
       await _combo(tester, kCtrlAlt, LogicalKeyboardKey.keyQ);
-      expect(buf.buf, r'甲乙丙$\frac{}{}$', reason: '改了键就该按新键生效');
+      expect(buf.buf, '${r'甲乙丙$\frac{}{}$'}\n', reason: '改了键就该按新键生效');
 
       buf.loadDocument('甲乙丙');
       buf.setCaret(0);
       await tester.pump();
       await _combo(tester, kCtrlAlt, LogicalKeyboardKey.keyF);
-      expect(buf.buf, '甲乙丙', reason: '旧键已经不再绑这条动作');
+      expect(buf.buf, '甲乙丙\n', reason: '旧键已经不再绑这条动作');
     });
 
     testWidgets('★ 停用之后：按键不做事', (WidgetTester tester) async {

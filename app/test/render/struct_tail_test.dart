@@ -280,7 +280,7 @@ void main() {
       await tester.sendKeyEvent(LogicalKeyboardKey.backspace);
       await tester.pump();
 
-      expect(buf.buf, '尾',
+      expect(buf.buf, '尾\n',
           reason: '★ 点横线末端 + ⌫ 应当删掉**整个结构**（«删空留壳»只针对子位点，整段删完不留壳）；实际：${buf.buf}');
     });
   });
@@ -310,7 +310,7 @@ void main() {
       await tester.sendKeyEvent(LogicalKeyboardKey.backspace);
       await tester.pump();
 
-      expect(buf.buf, '尾',
+      expect(buf.buf, '尾\n',
           reason: '★ 点横线末端 + ⌫ 应当删掉**整个根号**（结构层，不留空壳）；实际：${buf.buf}');
     });
 
@@ -327,7 +327,7 @@ void main() {
       await tester.sendKeyEvent(LogicalKeyboardKey.backspace);
       await tester.pump();
 
-      expect(buf.buf, r'$\sqrt{}$尾',
+      expect(buf.buf, '${r'$\sqrt{}$尾'}\n',
           reason: '★ 点式子右缘 + ⌫ 应当只删内容（内容层），根号留着');
     });
   });

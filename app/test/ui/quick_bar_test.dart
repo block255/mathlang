@@ -219,7 +219,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('quick-slot-0')));
       await tester.pumpAndSettle();
-      expect(buf.buf, r'a$+$bc', reason: r'紧邻文字 ⇒ 自动建壳 `$+$`');
+      expect(buf.buf, '${r'a$+$bc'}\n', reason: r'紧邻文字 ⇒ 自动建壳 `$+$`');
       expect(tester.state<EditViewState>(find.byType(EditView)).edits, 1);
       expect(st.assignSlot, isNull, reason: '插入模式不该顺带进赋值模式');
     });

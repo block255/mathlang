@@ -83,9 +83,10 @@ void main() {
           contains(
               r'\begin{pmatrix} A & B &\\ C & D &\\&&\end{pmatrix}'),
           reason: '3×3：旧内容**左上对齐**保留，新格留空（实际：${buf.buf}）');
-      // 一步撤销 ⇒ 完全回到原样
+      // 一步撤销 ⇒ 完全回到原样（= 归一之后的原文：非空文档带一个行终止符）
       expect(buf.undo(), isTrue);
-      expect(buf.buf, before, reason: '改尺寸只算**一次**编辑，一步就该撤销');
+      expect(buf.buf, normalizeDocumentText(before),
+          reason: '改尺寸只算**一次**编辑，一步就该撤销');
     });
 
     testWidgets('★ 行列式：**只有一栏尺寸**，改阶数 ⇒ 方阵', (WidgetTester tester) async {

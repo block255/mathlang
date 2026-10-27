@@ -91,7 +91,7 @@ void main() {
       await tester.sendKeyEvent(LogicalKeyboardKey.backspace);
       await tester.pump();
 
-      expect(buf.buf, r'设 $\frac{a}{b}\sqrt{2}$ 为常数',
+      expect(buf.buf, '${r'设 $\frac{a}{b}\sqrt{2}$ 为常数'}\n',
           reason: '★ 只该删掉 `=`；实际：${buf.buf}');
     });
 
@@ -107,7 +107,7 @@ void main() {
       await tester.sendKeyEvent(LogicalKeyboardKey.backspace);
       await tester.pump();
 
-      expect(buf.buf, r'设 $\frac{a}{b}=$ 为常数',
+      expect(buf.buf, '${r'设 $\frac{a}{b}=$ 为常数'}\n',
           reason: '★ 只该删掉根号；实际：${buf.buf}');
     });
   });

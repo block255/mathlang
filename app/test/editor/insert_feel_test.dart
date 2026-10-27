@@ -33,27 +33,28 @@ void main() {
     final DocBuffer buf = await _pump(tester, '甲乙丙', 1);
     await tester.sendKeyEvent(LogicalKeyboardKey.space);
     await tester.pumpAndSettle();
-    expect(buf.buf, '甲 乙丙', reason: '文本段里是普通空格：${buf.buf}');
+    expect(buf.buf, '甲 乙丙\n', reason: '文本段里是普通空格：${buf.buf}');
   });
 
   testWidgets(r'① 数学段里按空格 ⇒ `\ `（控制空格），不是裸空格', (WidgetTester tester) async {
     final DocBuffer buf = await _pump(tester, r'甲$x+y$', 4);
     await tester.sendKeyEvent(LogicalKeyboardKey.space);
     await tester.pumpAndSettle();
-    expect(buf.buf, r'甲$x+\ y$', reason: '数学段里按空格要变成控制空格（插在光标处 = + 之后）：${buf.buf}');
+    expect(buf.buf, '${r'甲$x+\ y$'}\n',
+        reason: '数学段里按空格要变成控制空格（插在光标处 = + 之后）：${buf.buf}');
   });
 
   testWidgets(r'② 控制词末尾插字母 ⇒ 自动补分隔符', (WidgetTester tester) async {
     final DocBuffer buf = await _pump(tester, r'甲$\sin$', 6);
     tester.testTextInput.enterText('x');
     await tester.pumpAndSettle();
-    expect(buf.buf, r'甲$\sin x$', reason: '控制词与字母之间必须自动补分隔：${buf.buf}');
+    expect(buf.buf, '${r'甲$\sin x$'}\n', reason: '控制词与字母之间必须自动补分隔：${buf.buf}');
   });
 
   testWidgets('② 普通字母后面插字母 ⇒ 不加分隔符（不能滥加）', (WidgetTester tester) async {
     final DocBuffer buf = await _pump(tester, r'甲$ab$', 4); // b 与 $ 之间
     tester.testTextInput.enterText('c');
     await tester.pumpAndSettle();
-    expect(buf.buf, r'甲$abc$', reason: '普通连写不该被插空格：${buf.buf}');
+    expect(buf.buf, '${r'甲$abc$'}\n', reason: '普通连写不该被插空格：${buf.buf}');
   });
 }

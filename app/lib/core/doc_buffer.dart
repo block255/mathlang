@@ -10,7 +10,8 @@ import 'text_normalize.dart';
 ///
 /// 逆操作 = 在 `[start, start + inserted.length)` 把 [inserted] 换回 [removed]。
 class Edit {
-  const Edit(this.start, this.end, this.removed, this.inserted);
+  const Edit(this.start, this.end, this.removed, this.inserted,
+      {this.eol = false});
 
   final int start;
   final int end;
@@ -18,14 +19,35 @@ class Edit {
   /// 编辑前的原内容（= 当时 buf.substring(start, end)）
   final String removed;
 
-  /// 编辑后的新内容
+  /// 编辑后的新内容（★ **不含**补出来的行终止符 —— 那是 [eol] 的事）
   final String inserted;
+
+  /// ★★★ 2026-10-27（只读基准 4）：这次编辑**补了文末的行终止符**。
+  ///
+  /// 为什么需要：光标是一个整数偏移，而"文末行末"和"下一行行首"只有在
+  /// **文末行有行终止符**时才是两个不同的整数。没有它，那一行只能靠"把光标画在
+  /// 上一行的行末、却宣称它在下一行"来假装 —— 一打字就露馅（字接在上一行末尾）。
+  /// 所以：**非空文档永远以 `\n` 收尾**，补出来的那个 `\n` 记在这次编辑里（撤销才精确），
+  /// 但**光标停在它前面**（= 用户打的那个字之后）。
+  final bool eol;
 
   int get delta => inserted.length - removed.length;
 
   @override
   String toString() =>
-      'Edit($start..$end, -${removed.length}, +${inserted.length})';
+      'Edit($start..$end, -${removed.length}, +${inserted.length}'
+      '${eol ? ", eol" : ""})';
+}
+
+/// **进门的唯一归一**：换行归一（CRLF ⇒ LF）+ **非空文档以 `\n` 收尾**。
+///
+/// ★★★ 2026-10-27（只读基准 4 的地基）：光标是一个整数偏移，"文末行末"与"文末下一行行首"
+/// 只有在**文末行有行终止符**时才是两个不同的整数。所以凡是从外面进来的正文
+/// （打开文件 / 恢复暂存 / 导入）都走这一条 —— **连"上次保存的快照"也要走**，
+/// 否则归一之后缓冲区与快照差一个 `\n`，外壳会以为文档一直是"脏"的（实测：自动保存死循环）。
+String normalizeDocumentText(String text) {
+  final String s = normalizeNewlines(text);
+  return (s.isNotEmpty && !s.endsWith('\n')) ? '$s\n' : s;
 }
 
 /// L0：一条 md 字符串就是文档的**全部**真相；块 / 页都是它的派生视图。
@@ -93,6 +115,14 @@ class DocBuffer {
 
   // ---------- 编辑 ----------
 
+  /// 归一：**非空文档补行终止符**。
+  ///
+  /// ★ 这**不是一次编辑** —— 不进撤销栈、不动光标（"文档该以换行收尾"是格式约定，
+  /// 不是用户写的一笔）。所有编辑进门时都会走一遍，所以调用方不必操心。
+  void ensureDocumentEol() {
+    if (_buf.isNotEmpty && !_buf.endsWith('\n')) _buf = '$_buf\n';
+  }
+
   /// 把 `[start, end)` 换成 [inserted]；光标落到插入内容之后。
   ///
   /// ★★ [coalesce]（S4-e-①，2026-10-18）：**连续打字合并成一步撤销**。
@@ -116,8 +146,38 @@ class DocBuffer {
   void deleteBackward() {
     if (hasSelection) {
       replace(selectionStart, selectionEnd, '');
-    } else if (_caret > 0) {
-      replace(_caret - 1, _caret, '');
+      return;
+    }
+    if (_caret <= 0) return;
+    // ★★★ 2026-10-27（只读基准 3 最后一句）：
+    //   「如果是在文末的下一行这个空行，点退格仅回到文末那一行末尾，
+    //     因为我们要确保文末下一行这个空行永远能承接光标」。
+    //   判据：光标在文末、末尾是 `\n`，而**末尾连续换行符不超过 2 个** ——
+    //   那说明光标站的就是"文末下一行这个空行"（行表里只有它一行，见 `doc_view._rowsAfter`）。
+    //   ⇒ 退格**不删那个换行符**（删了行就没了），只把光标退回文末那一行的行末 ——
+    //     一个字都不改，也不进撤销栈。
+    //   ★ `甲⏎⏎⏎`（3 个换行）不命中：那说明中间已经多出**用户造出来的空行**，该删（基准 3 第二句）。
+    if (_caret == _buf.length && _buf.endsWith('\n')) {
+      var m = 0;
+      while (m < _buf.length && _buf[_buf.length - 1 - m] == '\n') {
+        m++;
+      }
+      // `m < _buf.length` ⇒ 文末**真有内容行**（整篇都是空行的文档照常删）
+      if (m < _buf.length && m <= 2) {
+        _setCaretRaw(_buf.length - m); // = 文末那一行的行末
+        _notify();
+        return;
+      }
+    }
+    final bool wasNewline = _buf[_caret - 1] == '\n';
+    replace(_caret - 1, _caret, '');
+    // ★★★ 2026-10-28（只读基准 2 / 3）：删掉的是**换行符**时，光标要落到
+    //   **上一行的边界**上，而不是留在被删掉的那一格：
+    //     · 上一行有字 ⇒ 它的**行末**（"按退格回到 A-B，并且光标回到 A 行末"）；
+    //     · 上一行是空行 ⇒ 那个空行的行首（行首==行末，同一格）。
+    //   判据：删完之后光标**前面紧跟着的还是换行符** ⇒ 说明光标还在换行串里，退一格。
+    if (wasNewline && _caret > 0 && _buf[_caret - 1] == '\n') {
+      _setCaretRaw(_caret - 1);
     }
   }
 
@@ -223,7 +283,7 @@ class DocBuffer {
     // 列表标记 / 分页符 都按**整行**判定 —— 行尾那个 `\r` 会让判据**静默失效**
     // （实测用户那份抄写稿 CRLF，3 个 `---` 一个都没认成分隔线）。
     // 在缓冲区里存 LF 也顺手消掉"看不见的 `\r` 占偏移、污染字符数/光标"这条老账。
-    _buf = normalizeNewlines(text);
+    _buf = normalizeDocumentText(text);
     _caret = 0;
     _anchor = 0;
     _undoStack.clear();
@@ -234,11 +294,20 @@ class DocBuffer {
 
   bool _replaceInternal(int start, int end, String inserted,
       {bool coalesce = false}) {
+    // ★ 进门先把"缺行终止符的遗留缓冲区"补上（老文件 / 测试里手搭的缓冲区）。
+    //   必须在**取 removed 之前**做 —— 这样这次编辑是按归一后的文本记账的，
+    //   "这次编辑碰到末尾了 ⇒ 顺手补终止符"那条判断（`eol`）也才成立。
+    ensureDocumentEol();
     final s = start.clamp(0, _buf.length);
     final e = end.clamp(s, _buf.length);
     final removed = _buf.substring(s, e);
     if (removed.isEmpty && inserted.isEmpty) return false;
-    final edit = Edit(s, e, removed, inserted);
+    // ★★★ 2026-10-27：**非空文档永远以 `\n` 收尾**（只读基准 4 的地基）。
+    //   判据只看"改完之后是什么样"：只要结果少了行终止符、而且这次编辑碰到了末尾，就补一个。
+    //   补出来的那个 `\n` 由 `Edit.eol` 表达（撤销才精确），光标停在它前面。
+    final String after = _buf.replaceRange(s, e, inserted);
+    final bool eol = after.isNotEmpty && !after.endsWith('\n') && e == _buf.length;
+    final edit = Edit(s, e, removed, inserted, eol: eol);
     _applyForward(edit);
     // ★ 撤销分组：能并就并进栈顶那一条（栈长度不变 ⇒ Ctrl+Z 一步回一大段）
     final Edit? merged =
@@ -253,6 +322,9 @@ class DocBuffer {
   }
 
   /// 两条 Edit 能不能并成一条（并规则见 [replace] 的注释）
+  ///
+  /// ★ 2026-10-28：`inserted` 里**不含**补出来的行终止符（那是 [Edit.eol]），
+  /// 所以这里的比较全按"用户真写进去的内容"算 —— 连续退格/打字**不会**因为那个 `\n` 断组。
   static Edit? _tryMerge(Edit top, Edit next) {
     // ① 连续打字：上一条插进去的东西末尾正好是这次插入的位置
     if (top.inserted.isNotEmpty &&
@@ -261,7 +333,9 @@ class DocBuffer {
         next.removed.isEmpty &&
         next.start == top.start + top.inserted.length &&
         next.end == next.start) {
-      return Edit(top.start, top.end, top.removed, top.inserted + next.inserted);
+      return Edit(top.start, top.end, top.removed,
+          '${top.inserted}${next.inserted}',
+          eol: top.eol || next.eol);
     }
     // ② 连续退格：这次删的范围正好紧贴在上一条的左端
     if (top.removed.isNotEmpty &&
@@ -269,17 +343,24 @@ class DocBuffer {
         top.inserted.isEmpty &&
         next.inserted.isEmpty &&
         next.end == top.start) {
-      return Edit(next.start, top.end, next.removed + top.removed, '');
+      return Edit(next.start, top.end, '${next.removed}${top.removed}', '',
+          eol: top.eol || next.eol);
     }
     return null;
   }
 
   void _applyForward(Edit e) {
     _buf = _buf.replaceRange(e.start, e.end, e.inserted);
+    // ★ 补出来的行终止符挂在**文末**；光标停在它前面（否则每打一个字就跳到下一行）
+    if (e.eol) _buf = '$_buf\n';
     _setCaretRaw(e.start + e.inserted.length);
   }
 
   void _applyBackward(Edit e) {
+    // ★ 补出来的 `\n` 一定在末尾（用它之后的编辑都已撤销），先摘掉它再还原这一段
+    if (e.eol && _buf.endsWith('\n')) {
+      _buf = _buf.substring(0, _buf.length - 1);
+    }
     _buf = _buf.replaceRange(e.start, e.start + e.inserted.length, e.removed);
     _setCaretRaw(e.start + e.removed.length);
   }

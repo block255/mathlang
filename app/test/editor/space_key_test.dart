@@ -38,7 +38,8 @@ void main() {
     final int before = buf.caret;
     await tester.sendKeyEvent(LogicalKeyboardKey.space);
     await tester.pumpAndSettle();
-    expect(buf.buf.length, 4, reason: '空格必须真的插进缓冲区（改前：一个字符都没多）');
+    // ★ 2026-10-28：非空文档以 `\n` 收尾 ⇒ 3 个字 + 1 个空格 + 1 个行终止符 = 5
+    expect(buf.buf.length, 5, reason: '空格必须真的插进缓冲区（改前：一个字符都没多）');
     expect(buf.buf.contains(' '), isTrue, reason: '插的必须是普通空格');
     expect(buf.caret, before + 1, reason: '光标要跟着走一格');
   });
@@ -56,6 +57,8 @@ void main() {
     final DocBuffer buf = await _pump(tester, '甲乙丙');
     await tester.sendKeyEvent(LogicalKeyboardKey.space);
     await tester.pumpAndSettle();
-    expect(buf.buf.contains('\n'), isFalse, reason: '空格不许变成换行');
+    // ★ 缓冲区的 `\n` 只该有那个行终止符：空格没有被换成换行
+    expect('\n'.allMatches(buf.buf).length, 1,
+        reason: '空格不许变成换行（缓冲区里只该有行终止符那一个）：${buf.buf}');
   });
 }

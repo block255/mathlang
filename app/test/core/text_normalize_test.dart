@@ -30,7 +30,8 @@ void main() {
     test('`DocBuffer.loadDocument` 之后缓冲区里没有 `\\r`', () {
       final DocBuffer buf = DocBuffer('')..loadDocument('甲\r\n乙\r\n\r\n丙');
       expect(buf.buf.contains('\r'), isFalse);
-      expect(buf.buf, '甲\n乙\n\n丙');
+      // ★ 2026-10-28：非空文档一律以 `\n` 收尾（`DocBuffer` 的不变量）
+      expect(buf.buf, '甲\n乙\n\n丙\n');
     });
 
     test('★ 旧账：CRLF 文档现在也能认出 `---` 分隔线', () {

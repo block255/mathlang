@@ -64,13 +64,13 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('block-type-heading2')));
       await tester.pumpAndSettle();
-      expect(buf.buf, '## 甲乙丙\n丁', reason: '选标题 2 ⇒ 行首 `## `');
+      expect(buf.buf, '## 甲乙丙\n丁\n', reason: '选标题 2 ⇒ 行首 `## `');
 
       await tester.tap(find.byKey(const Key('block-type-menu')));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('block-type-paragraph')));
       await tester.pumpAndSettle();
-      expect(buf.buf, '甲乙丙\n丁', reason: '选正文 ⇒ 标记消失，文字一个字不动');
+      expect(buf.buf, '甲乙丙\n丁\n', reason: '选正文 ⇒ 标记消失，文字一个字不动');
     });
 
     // ★★ 2026-10-20（T-A 实测 F1）：光标在**行间公式块内部**时整个下拉禁用。

@@ -603,11 +603,23 @@ SmartEdit? _paragraphBreakDelete(String source, int o, {required bool forward}) 
   final bool onBlankLine =
       atLineStart && (o >= source.length || source[o] == '\n');
   final int n = onBlankLine ? 1 : (k == 2 ? 2 : 1);
+  // ★★★ 2026-10-28（只读基准 2）：站在空行上退格、把这一行收掉之后，光标要落到
+  //   **上一行的边界**上（「按退格回到 A-B，并且光标回到 A 行末」），不能停在
+  //   那个已经被收成"段距"的位置上（它在屏幕上是空的，接着打字会显得矮一截）。
+  //   判据：收掉之后光标前面紧挨着的**就是**上一行内容末尾那个换行符
+  //   （`source[o-2] == '\n'` 且再往前不是换行 ⇒ 只剩一个空行 ⇒ 它是"段距"不是行）。
+  final bool backToPrevLine = !forward &&
+      n == 1 &&
+      onBlankLine &&
+      o - 3 >= 0 &&
+      source[o - 2] == '\n' &&
+      source[o - 3] != '\n';
+  final int caretBack = backToPrevLine ? o - 2 : (o - n);
   final SmartEdit full = forward
       ? (o + n > source.length
           ? SmartEdit.none
           : SmartEdit.remove(o, o + n, o))
-      : SmartEdit.remove(o - n, o, o - n);
+      : SmartEdit.remove(o - n, o, caretBack);
   if (!full.isNone && !_fenceBrokenByDelete(source, full.from!, full.to!)) {
     return full;
   }

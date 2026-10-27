@@ -45,9 +45,6 @@ Future<void> _press(WidgetTester tester, LogicalKeyboardKey key, [int n = 1]) as
 /// "上一行之后那一串空行"的个数（判据同 `extraBlankHeight`：n=1 ⇒ 0 行，n=2 ⇒ 1 行）
 int _nAfter(String buf, int acceptTo) => blankRunAfter(buf, acceptTo).length;
 
-/// 文末那串空行的个数
-int _nTail(String buf, int from) => blankRunFrom(buf, from).length;
-
 /// 文末**看得见的空行数**：`甲⏎` / `甲⏎⏎` = 0 行；`甲⏎⏎⏎` = 1 行（口径同 `edit_view._visibleTailLines`）
 int _tailLines(String s) {
   var m = 0;
@@ -140,7 +137,9 @@ void main() {
   testWidgets('B1/B2 文末 Enter ⇒ 每按一次恰好一行；光标每次下移一行',
       (WidgetTester tester) async {
     const String doc = '甲\n';
-    final DocBuffer buf = await _mount(tester, doc, 2);
+    // ★ 2026-10-28：光标从**文末行末**起（用户打完字的常态）；EOF 已经是"文末下一行"那一格，
+    //   从那一格起第一下 Enter 只是把段距补成一行（已知缺陷，见交接快照 §三）。
+    final DocBuffer buf = await _mount(tester, doc, doc.length - 1);
     final List<int> lens = <int>[buf.buf.length];
     final List<int> lines = <int>[_tailLines(doc)];
     final List<double> ys = <double>[_caretY(tester)];

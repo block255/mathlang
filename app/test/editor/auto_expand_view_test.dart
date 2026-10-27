@@ -57,11 +57,11 @@ void main() {
         (WidgetTester tester) async {
       final (_, DocBuffer buf) = await _mount(tester, '');
       await _type(tester, 'sqrt');
-      expect(buf.buf, 'sqrt', reason: '没有终止符之前不许展开');
+      expect(buf.buf, 'sqrt\n', reason: '没有终止符之前不许展开');
       await tester.sendKeyEvent(LogicalKeyboardKey.space);
       await tester.pump();
 
-      expect(buf.buf, r'$\sqrt{}$');
+      expect(buf.buf, '${r'$\sqrt{}$'}\n');
       // `$ \ s q r t { } $` ⇒ 光标在 `{` 与 `}` 之间 = 7
       expect(buf.caret, 7);
     });
@@ -71,7 +71,7 @@ void main() {
       await _type(tester, 'sqrt');
       await tester.sendKeyEvent(LogicalKeyboardKey.tab);
       await tester.pump();
-      expect(buf.buf, r'$\sqrt{}$');
+      expect(buf.buf, '${r'$\sqrt{}$'}\n');
     });
 
     testWidgets('★ 一步撤销就回到 `sqrt`（展开 ≠ 两次编辑）',
@@ -88,7 +88,7 @@ void main() {
       await tester.sendKeyEvent(LogicalKeyboardKey.keyZ);
       await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
       await tester.pump();
-      expect(buf.buf, 'sqrt');
+      expect(buf.buf, 'sqrt\n');
     });
 
     testWidgets('`summer` + 空格 ⇒ 原样，不触发', (WidgetTester tester) async {
@@ -96,7 +96,7 @@ void main() {
       await _type(tester, 'summer');
       await tester.sendKeyEvent(LogicalKeyboardKey.space);
       await tester.pump();
-      expect(buf.buf, 'summer ');
+      expect(buf.buf, 'summer \n');
     });
 
     testWidgets('关掉词触发 ⇒ 只打字母 + 空格', (WidgetTester tester) async {
@@ -104,7 +104,7 @@ void main() {
       await _type(tester, 'sqrt');
       await tester.sendKeyEvent(LogicalKeyboardKey.space);
       await tester.pump();
-      expect(buf.buf, 'sqrt ');
+      expect(buf.buf, 'sqrt \n');
     });
   });
 
@@ -115,7 +115,7 @@ void main() {
       await _type(tester, 'a');
       tester.testTextInput.updateEditingValue(_v('/'));
       await tester.pump();
-      expect(buf.buf, r'a$\frac{}{}$');
+      expect(buf.buf, '${r'a$\frac{}{}$'}\n');
       // 2026-10-18 用户改口径：`/` 独立插入分数线，**不吃**前面的 a；光标进分子空槽
       expect(buf.caret, buf.buf.indexOf('{}') + 1);
     });
@@ -125,7 +125,7 @@ void main() {
       await _type(tester, 'a');
       tester.testTextInput.updateEditingValue(_v('/'));
       await tester.pump();
-      expect(buf.buf, 'a/');
+      expect(buf.buf, 'a/\n');
     });
   });
 
@@ -138,7 +138,7 @@ void main() {
       tester.testTextInput.updateEditingValue(_v('='));
       await tester.pump();
       // ★ 只吞掉 `>` 与 `=` 两格；前面的 `a` 仍是正文 ⇒ `≥` 自成一个行内公式
-      expect(buf.buf, r'a$\ge$');
+      expect(buf.buf, '${r'a$\ge$'}\n');
     });
 
     testWidgets('关掉 ⇒ `>=` 原样留着', (WidgetTester tester) async {
@@ -148,7 +148,7 @@ void main() {
       await tester.pump();
       tester.testTextInput.updateEditingValue(_v('='));
       await tester.pump();
-      expect(buf.buf, 'a>=');
+      expect(buf.buf, 'a>=\n');
     });
   });
 

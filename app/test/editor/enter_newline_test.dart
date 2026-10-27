@@ -41,14 +41,14 @@ void main() {
   testWidgets('① 行中按 Enter ⇒ 之后的文字换到下一行', (WidgetTester tester) async {
     final (EditViewState _, DocBuffer buf) = await _mount(tester, 'abcde', caret: 2);
     await _enter(tester);
-    expect(buf.buf, 'ab\n\ncde', reason: 'Enter = 新块（md 约定块间空一行）⇒ cde 整体下移成下一段');
+    expect(buf.buf, 'ab\n\ncde\n', reason: 'Enter = 新块（md 约定块间空一行）⇒ cde 整体下移成下一段');
     expect(buf.caret, 4, reason: '光标落在下一段的行首');
   });
 
   testWidgets('② 行末且下面有内容 ⇒ 插入一个空行', (WidgetTester tester) async {
     final (EditViewState _, DocBuffer buf) = await _mount(tester, 'abc\ndef', caret: 3);
     await _enter(tester);
-    expect(buf.buf, 'abc\n\n\ndef', reason: '行末 Enter ⇒ 中间多一个空块，下文整体下移');
+    expect(buf.buf, 'abc\n\n\ndef\n', reason: '行末 Enter ⇒ 中间多一个空块，下文整体下移');
     expect(buf.caret, 5, reason: '光标落在那个空块上');
   });
 
@@ -83,7 +83,7 @@ void main() {
     final (EditViewState _, DocBuffer buf) = await _mount(tester, 'abcde', caret: 2);
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
     await tester.pump();
-    expect(buf.buf, 'ab\n\ncde', reason: '键事件路径必须与文本通道路径同源');
+    expect(buf.buf, 'ab\n\ncde\n', reason: '键事件路径必须与文本通道路径同源');
     expect(buf.caret, 4);
   });
 }

@@ -440,7 +440,8 @@ class EditorPageState extends State<EditorPage> {
       _buf.loadDocument(d.text);
       _buf.setSelection(d.anchor.clamp(0, d.text.length),
           d.caret.clamp(0, d.text.length));
-      _savedText = d.savedText;
+      // ★ 2026-10-27：快照也要走**同一条归一**（否则缓冲区比它多一个尾换行 ⇒ 永远"脏"）。
+      _savedText = normalizeDocumentText(d.savedText);
       _scrollOffset = d.scrollOffset;
       final DocumentFile df = DocumentFile(
         title: d.title.isEmpty ? DocumentFile.kUntitled : d.title,

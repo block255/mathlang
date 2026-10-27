@@ -54,10 +54,10 @@ void main() {
     final (DocBuffer buf, EditViewState st) = await _pump(tester, '');
     st.insertSymbolTex(r'\frac{}{}', template: true);
     await tester.pumpAndSettle();
-    expect(buf.buf, r'$\frac{}{}$', reason: '模板插进来了（11 字符）');
+    expect(buf.buf, '${r'$\frac{}{}$'}\n', reason: '模板插进来了（11 字符 + 行终止符）');
 
     await _blur(tester, st);
-    expect(buf.buf, r'$\frac{}{}$',
+    expect(buf.buf, '${r'$\frac{}{}$'}\n',
         reason: r'改前这里会变成 `$$`（空分式被提交点回收）');
   });
 
@@ -66,11 +66,11 @@ void main() {
     final (DocBuffer buf, EditViewState st) = await _pump(tester, '');
     st.insertSymbolTex(r'\frac{}{}', template: true);
     await tester.pumpAndSettle();
-    // 把光标挪到"整个空分式之后"（tex 末尾那一格）
+    // 把光标挪到"整个空分式之后"（= 文末行末，行终止符之前那一格）
     buf.setCaret(buf.buf.length - 1);
     await tester.pumpAndSettle();
     await _blur(tester, st);
-    expect(buf.buf, r'$\frac{}{}$');
+    expect(buf.buf, '${r'$\frac{}{}$'}\n');
   });
 
   testWidgets('★ F8 反例：光标在同段公式里、但不在那个空壳里 ⇒ 照旧回收',
@@ -80,6 +80,7 @@ void main() {
     buf.setCaret(2);
     await tester.pumpAndSettle();
     await _blur(tester, st);
-    expect(buf.buf, r'$x+$', reason: '光标不在的空壳还是要回收（别做成"永远不回收"）');
+    expect(buf.buf, '${r'$x+$'}\n',
+        reason: '光标不在的空壳还是要回收（别做成"永远不回收"）');
   });
 }

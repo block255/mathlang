@@ -59,7 +59,7 @@ void main() {
   testWidgets('★ 文末连按 Enter 到页面放不下 ⇒ 页数增长、光标始终在最后一页内',
       (WidgetTester tester) async {
     final String doc = '${List<String>.filled(56, '一行文字').join('\n\n')}\n';
-    final DocBuffer buf = await _mount(tester, doc, doc.length);
+    await _mount(tester, doc, doc.length);
     final int pagesBefore = _pages(tester).length;
     expect(pagesBefore, greaterThan(1), reason: '前置：这份文档本来就占多页');
     var pagesAfter = pagesBefore;

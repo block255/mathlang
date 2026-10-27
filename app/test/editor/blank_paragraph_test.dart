@@ -93,15 +93,17 @@ void main() {
     testWidgets('★ 点槽的下半部分 ⇒ 落到**第二行**空行（不是永远落第一行）',
         (WidgetTester tester) async {
       int? got;
-      // `甲\n\n\n\n乙`：空行有两行（偏移 2 与 3）
+      // `甲\n\n\n\n乙`：三个空行 = **两行**（第一个空行只是段距那一截），
+      // 行首偏移 = 3（第一行）与 4（第二行）。
       await _pumpDocView(tester, '甲\n\n\n\n乙',
           caret: 0, onTapOffset: (int o, Offset _, TapSource _) => got = o);
       final Rect slot = tester.getRect(_slots.first);
-      // ★ 空行的行盒**从段距之后**起算（`gapBefore ≈ 11.2`，行高 ≈ 20）
-      //   ⇒ 第二行落在 ~31..51 这段里
+      // ★ 2026-10-28 改口径：空行的行表 = `空行串[1..]`
+      //   （第一个空行是"段距那一截"，紧贴上一段行盒底，不是整行）
+      //   ⇒ 第一行在 `段距 + 行内内缩 ≈ 14.8`，第二行在 +38.4 ≈ 53.2。
       await tester.tapAt(Offset(slot.left + 40, slot.top + 60));
       await tester.pumpAndSettle();
-      expect(got, 3, reason: '点在第二个空行上 ⇒ 光标落在第二个空行的行首（实际 $got）');
+      expect(got, 4, reason: '点在第二个空行上 ⇒ 光标落在第二个空行的行首（实际 $got）');
     });
 
     testWidgets('★ 点上半部分 ⇒ 第一行（偏移 2）', (WidgetTester tester) async {
@@ -162,7 +164,7 @@ void main() {
       final DocBuffer buf = await _pumpEditView(tester, '一\n\n行', caret: 3);
       await tester.sendKeyEvent(LogicalKeyboardKey.backspace);
       await tester.pumpAndSettle();
-      expect(buf.buf, '一行', reason: '一次退格 = 撤销那一次 Enter（不是删一个字符）');
+      expect(buf.buf, '一行\n', reason: '一次退格 = 撤销那一次 Enter（不是删一个字符）');
       expect(buf.caret, 1);
     });
 
@@ -170,7 +172,7 @@ void main() {
       final DocBuffer buf = await _pumpEditView(tester, '一\n\n行', caret: 1);
       await tester.sendKeyEvent(LogicalKeyboardKey.delete);
       await tester.pumpAndSettle();
-      expect(buf.buf, '一行');
+      expect(buf.buf, '一行\n');
       expect(buf.caret, 1);
     });
   });

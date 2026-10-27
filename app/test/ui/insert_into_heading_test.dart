@@ -80,8 +80,10 @@ void main() {
         await _pump(tester, doc: doc, caret: 2);
     await tester.tap(find.byKey(const Key('symbol-frac')));
     await tester.pumpAndSettle();
-    expect(buf.buf.split('\n').length, doc.split('\n').length,
-        reason: '普通段落里插入不该加换行');
+    // ★ 2026-10-28：去掉结尾那个行终止符再比行数（"插入不该加换行"说的是内容行）
+    expect(buf.buf.trimRight().split('\n').length,
+        doc.trimRight().split('\n').length,
+        reason: '普通段落里插入不该加换行：${buf.buf}');
     expect(buf.buf.startsWith(r'甲乙$\frac{}{}$'), isTrue, reason: buf.buf);
   });
 }

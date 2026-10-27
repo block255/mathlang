@@ -14,7 +14,7 @@
 
 import 'dart:async';
 
-import 'package:flutter/foundation.dart' show kDebugMode, listEquals;
+import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -118,6 +118,15 @@ class EditViewStats {
 /// 而且它处在「平台文本 → 缓冲区」这条链上，离输入最近。
 ///
 /// 只处理"单独插入一个换行"；粘贴进来的一大段（含换行）**原样放行**。
+///
+/// ★★★ 2026-10-28：**不再挂在默认链上**（`inputFormatters` 默认空）。
+///   原因：Enter 写几个换行已经不是常量了 —— 行内要 `\n\n`（把一行切成两段），
+///   贴着行边界只要 `\n`（行数 +1）。"该写几个"要看光标在不在行内，
+///   而 formatter 只看得到"平台文本的差分"，看不到缓冲区里的行结构。
+///   ⇒ 现在两条 Enter 通道（**键事件** / **平台文本通道**）都汇到 `EditViewState._enter()`，
+///     规则只有一份（见 `notes/design/只读基准.txt` 第 1/3 条）。
+///   ★ 这个类保留（它仍是"Enter 一律新块"的合法 formatter，也给 spike 页面用），
+///     只是默认不装。
 class NewBlockOnEnterFormatter extends TextInputFormatter {
   const NewBlockOnEnterFormatter();
 
@@ -149,9 +158,7 @@ class EditView extends StatefulWidget {
     this.autoSlashFraction = true,
     this.autoWordTriggers = true,
     this.autoShorthand = true,
-    this.inputFormatters = const <TextInputFormatter>[
-      NewBlockOnEnterFormatter(),
-    ],
+    this.inputFormatters = const <TextInputFormatter>[],
   });
 
   final DocBuffer buffer;
@@ -320,7 +327,8 @@ class EditViewState extends State<EditView> {
   /// `A\n\n\n`（= 段距 + **一整行**空行，看得见、能落光标、能再按 Enter 接着长），
   /// 而不是以前那种 `A\n\n\n\n`（多出一段"看不见的段距"）。
   /// ★ `Shift+Enter` 不走这里（它是"段内硬换行"）。
-  String _enterPayload() {
+  /// 光标所在行的 `[行首, 行尾)`（不含行终止符）
+  (int, int) _lineBounds() {
     final String s = _buf.buf;
     final int c = _buf.caret.clamp(0, s.length);
     var ls = c;
@@ -331,47 +339,101 @@ class EditViewState extends State<EditView> {
     while (le < s.length && s[le] != '\n') {
       le++;
     }
-    // ★★★ 2026-10-27（**一次按键 = 一行**，见 `notes/design/行与段-空行基准.md` §三 E1）：
-    //   判据只有一条 —— **Enter 每按一次，屏幕上多一行**。
-    //   写几个换行由"现在有几个空行"决定，不由惯例决定：
-    //     · 空行上（含分页符行首：标记不可见 ⇒ 屏幕上它就是空行）⇒ 一个 `\n`（空行数 +1）；
-    //     · 行内（光标前后都有字）⇒ `\n\n`：把一行切成两行（空行数不变、段数 +1）；
-    //     · 贴着行边界（行末 / 行首）⇒ 一个 `\n` 就让空行数 +1（已有段边界，只是把它加宽一行）；
-    //     · 文末（那一行**没有**行终止符）⇒ 一个 `\n` 只够补上终止符，要两个才出现第一行。
-    //   ★ 已撤掉两条封顶（批 42 的"页尾封顶"、批 50 的"分页符行首上方有空行则封顶"）：
-    //     它们让"第二下起按了完全没反应"，与 E1 直接冲突；当时的依据（页尾空行不占行盒）
-    //     经查不成立 —— 真正缺的是**尾部的行盒与光标跟随**，那是呈现问题，不该用封顶盖住。
+    return (ls, le);
+  }
+
+  /// 是不是"**在文末下一行打字**"（需要先补一个空行，字才落成一个段）
+  ///
+  /// 判据：光标在文末、文档以**恰好一个**换行符收尾、且这次插入的是单行文本。
+  /// （`甲⏎⏎` 已经有一个空行隔开了，字插进去本来就是新段，不用再补。）
+  bool _needsLineHeadPad(String text) {
+    if (text.contains('\n') || _buf.hasSelection) return false;
+    final String s = _buf.buf;
+    if (s.isEmpty || _buf.caret != s.length) return false;
+    return s.endsWith('\n') && !s.endsWith('\n\n');
+  }
+
+  String _enterPayload() {
+    final (int ls, int le) = _lineBounds();
+    // ★★★ 2026-10-27（**一次按键 = 一行**，见 `notes/design/只读基准.txt` 第 1/3 条）：
+    //   判据只有一条 —— **Enter 每按一次，屏幕上多一行**。而"屏幕上的行数"由
+    //   **行终止符**数决定（`DocBuffer` 保证非空文档永远以 `\n` 收尾）：
+    //     · 行内（光标前后都有字）⇒ `\n\n`：把一行切成两段（行数 +1）；
+    //     · 其余（空行上 / 行首 / 行末 / 文末）⇒ 一个 `\n`：行数 +1。
+    //   ★ 已撤掉旧的两处特判：
+    //     ① `_visibleTailLines(m) = m<=1?0:m-1` 的试算（它与渲染口径差一行 —— 渲染那边
+    //        `甲⏎` 就有 1 行；于是第一下 Enter 补了两个换行，用户看到"第一下像下两行"）；
+    //     ② 批 42/50 的"页尾封顶"（那是用封顶盖住"尾行没有行盒 + 光标不跟随"的呈现问题）。
+    final int c = _buf.caret.clamp(0, _buf.buf.length);
     if (c != ls && c != le) return '\n\n';
-    // 贴着行边界 ⇒ 让**看得见的行** +1。
-    // 文末那一格要算一下：行数 = max(0, 尾部换行数 m − 2)（`甲⏎⏎` 是 0 行，`甲⏎⏎⏎` 才是 1 行），
-    // 所以"插几个换行才多一行"由 m 决定 —— 1 不够补 2、2 不够补 3（文档没有尾换行那一格）。
-    if (c == le && le >= s.length) {
-      final int m = _trailingNewlines(s);
-      for (final int k in const <int>[1, 2, 3]) {
-        if (_visibleTailLines(m + k) > _visibleTailLines(m)) return '\n' * k;
-      }
-    }
+    // ★★★ 2026-10-28（只读基准 2）：**下一行还有字（同一段里的下一行）** ⇒ 要 `\n\n`。
+    //   `abc⏎def` 里 A、B 是**一段里的两行**（段内行，行距只有行盒）：在 `abc` 行末按 Enter
+    //   要把"分成两段"（一个 `\n`）和"中间那一行空行"（再来一个 `\n`）**一起**办掉，
+    //   否则只多一个 `\n`，两行还是挤在同一段里。
+    //   ★ 只在**行末**（这一行有字）才这么算 —— 空行上行首==行末，那个"下一行"是空行
+    //     下面那一行，与这次按键无关（否则空行上按一下会长两行）。
+    final bool nextHasText = le + 1 < _buf.buf.length && _buf.buf[le + 1] != '\n';
+    if (c == le && c != ls && nextHasText) return '\n\n';
     return '\n';
   }
 
-  /// 文档末尾连续换行的个数
-  static int _trailingNewlines(String s) {
-    var n = 0;
-    while (n < s.length && s[s.length - 1 - n] == '\n') {
-      n++;
+  /// **Enter 的唯一实现** —— 键事件与平台文本通道都走这里（规则只有一份）。
+  ///
+  /// · 空行上 `Shift+Enter` ≡ `Enter`：硬换行要写"行尾两个空格"，空行没有宿主；
+  /// · 行内 ⇒ `\n\n`（把一行切成两段）；其余 ⇒ `\n`（行数 +1）；
+  /// · **行末**时换行符插在**下一行行首**，光标才会落到"新造出来的那一行"上
+  ///   （插在本行行末的话光标停在本行，屏上看起来没动）。
+  void _enter({bool shift = false}) {
+    // ★ 先把行终止符归一（"文末"要能落到下一行，缓冲区得先有那个 `\n`）——
+    //   它不算一次编辑，所以不会多出一步撤销。
+    _buf.ensureDocumentEol();
+    final String s = _buf.buf;
+    final int c = _buf.caret.clamp(0, s.length);
+    final (int ls, int le) = _lineBounds();
+    final bool emptyLine = s.substring(ls, le).trim().isEmpty;
+    if (shift && !emptyLine) {
+      _commitText('  \n', isEnter: true);
+      return;
     }
-    return n;
+    final String payload = _enterPayload();
+    // ★ 换行符插在**下一行行首**，光标才会落到"新造出来的那一行"上：
+    //   · 行末（这一行有字）⇒ 一定要挪（插在本行行末的话光标停在本行，屏上看起来没动）；
+    //   · 文末（光标已经在末行的行末/EOF 上）⇒ 也要挪（否则光标落在刚插出来的那个
+    //     "段距那一格"上，接着打字会矮 11 px）；
+    //   · 空行上（中间那些空行）⇒ **不挪**（挪了就跳过一整行）。
+    final bool onLineEnd = c == le;
+    final bool atDocEnd = c == s.length;
+    if (payload == '\n' && onLineEnd && (!emptyLine || atDocEnd)) {
+      _buf.setCaret((c + 1).clamp(0, _buf.length));
+    }
+    _commitText(payload, isEnter: true);
   }
-
-  /// 文末**看得见的空行数**：`甲⏎` = 0 行；`甲⏎⏎` = 1 行（与 `trailingBlankHeight` 同一口径）
-  static int _visibleTailLines(int m) => m <= 1 ? 0 : m - 1;
 
   /// 平台（含 IME 提交）的一段文本 → **一次**编辑写进缓冲区。
   ///
   /// ★ 这里**不碰输入设备**（不再有"回写镜像框"这一步）：
   ///   输入设备的内容由 [TextInputSurfaceController] 自己维持成"空的"。
-  void _commitText(String rawText, {int autoWrapped = 0}) {
+  void _commitText(String rawText, {int autoWrapped = 0, bool isEnter = false}) {
     if (rawText.isEmpty) return;
+    // ★★★ 2026-10-28：**两条 Enter 通道汇到这里**（键事件走 `_onKey` → `_enter()`；
+    //   平台文本通道 / IME 提交到达时就是一段裸 `\n`）。
+    //   写几个换行只有一份规则（`_enterPayload`），所以这里转一次手 —— 否则
+    //   "键事件 Enter" 和 "文本通道 Enter" 会写出不同的缓冲区（旧版正是如此：
+    //   文本通道那个 formatter 固定写 `\n\n`，在文末就多了一整行）。
+    if (!isEnter && rawText == '\n') {
+      _enter();
+      return;
+    }
+    // ★★★ 2026-10-27（只读基准 1/6）：**在"文末下一行"上打字 = 开一个新段**。
+    //   `甲⏎` 的 EOF 就是那一行（屏幕上它是一整行，行盒 + 段距），但单看缓冲区它紧贴着
+    //   一个 `\n` —— 直接把字插进去会**并进上一段**（变成"段内行"，少一截段距，
+    //   探针实测差 11.4 px：光标在 137.4，字却出现在 126.0）。所以先补一个空行，
+    //   让这个字落成一个**段**。补的那个 `\n` 与本字合并成一步撤销。
+    if (_needsLineHeadPad(rawText)) {
+      _mutate(() => _buf.replace(_buf.caret, _buf.caret, '\n', coalesce: true));
+      _commitText(rawText, autoWrapped: autoWrapped, isEnter: isEnter);
+      return;
+    }
     // ★★ PC-1b（2026-10-18）：**行内数学里按 Enter ⇒ 在光标处断栅栏**（原子一个不动）。
     //   规则（用户拍板，按"层"分）：
     //     · 行内段里、且**不在任何结构内部**（一串平铺原子之间）⇒ 就地断：`$左$` + 断行 + `$右$`；
@@ -1038,10 +1100,15 @@ class EditViewState extends State<EditView> {
         if (dest < _buf.buf.length && _buf.buf[dest] == '\n') {
           dest += 1; // 下一行行首
         } else if (dest >= _buf.buf.length) {
-          // 块在文末：先补一个换行，才有"下一行"可落
-          _buf.setCaret(dest);
-          _mutate(() => _buf.replace(dest, dest, '\n'));
-          dest += 1;
+          // 块在文末：要有一个"下一行"可落。
+          // ★ 2026-10-28：正文一律以 `\n` 收尾以后，这一格**已经是**下一行了
+          //   （EOF 就在那个换行符之后）⇒ 只在还缺行终止符时才补，别多塞一个空行。
+          _buf.ensureDocumentEol();
+          if (!_buf.buf.endsWith('\n')) {
+            _buf.setCaret(dest);
+            _mutate(() => _buf.replace(dest, dest, '\n'));
+          }
+          dest = _buf.buf.length;
         }
       }
       _buf.setCaret(dest);
@@ -1061,7 +1128,7 @@ class EditViewState extends State<EditView> {
     //   而这里返回 `ignored` ⇒ 冒泡给祖先 ⇒ **Flutter 默认的焦点遍历把焦点移走** ⇒ 失焦 ⇒ 光标消失。
     //   ⇒ 自己插换行（与 formatter 同一条规则：`Enter` = 新块 ⇒ `\n\n`；`Shift+Enter` = 块内软换行）。
     if (k == LogicalKeyboardKey.enter || k == LogicalKeyboardKey.numpadEnter) {
-      _commitText(shift ? '  \n' : _enterPayload());
+      _enter(shift: shift);
       _pokeBlink();
       return KeyEventResult.handled;
     }
@@ -1248,11 +1315,6 @@ class EditViewState extends State<EditView> {
     focusInput(); // 必须在用户手势里拿焦点，浏览器才肯把 IME 接上
 
     if (_tapHandledThisPress) {
-      // ★ 批 44：临时诊断（`kDebugMode` 才打）—— 用来定位"点空行后点回正文第一下无效"
-      if (kDebugMode) {
-        debugPrint('[tap] DEDUP丢弃 off=$offset src=${source.name}'
-            ' prio=${source.priority} applied=$_tapAppliedPriority');
-      }
       // 同一次按下的后续上报：**只有优先级更高**的才覆盖落点（计数一律不动）
       //   band（页边物理边界）＞ math（字形命中）＞ text（单元宿主的粗落点）
       if (source.priority > _tapAppliedPriority) {
@@ -1275,10 +1337,6 @@ class EditViewState extends State<EditView> {
         now.difference(_lastClickAt!) < const Duration(milliseconds: 400);
     final bool combo = sameSpot && quick;
     _clickCount = combo ? (_clickCount >= 3 ? 1 : _clickCount + 1) : 1;
-    if (kDebugMode) {
-      debugPrint('[tap] off=$offset count=$_clickCount src=${source.name}'
-          ' pos=(${pos.dx.toStringAsFixed(0)},${pos.dy.toStringAsFixed(0)})');
-    }
     _lastClickAt = now;
     _lastClickPos = pos;
 
@@ -1293,11 +1351,6 @@ class EditViewState extends State<EditView> {
 
   /// 把"这一击"落到文档上（**同一次按下可能被调用多次**：公式层会拿更精确的偏移重放一次）。
   void _applyClick(int offset) {
-    if (kDebugMode) {
-      debugPrint('[tap] apply off=$offset count=$_clickCount'
-          ' → ${_clickCount == 2 ? 'word(选词)' : _clickCount >= 3 ? 'unit(选块)' : 'caret'}'
-          ' 当前caret=${_buf.caret}');
-    }
     if (HardwareKeyboard.instance.isShiftPressed) {
       // Shift+点击 = **扩展**（锚点不动）
       _buf.setSelection(_buf.anchor, offset);

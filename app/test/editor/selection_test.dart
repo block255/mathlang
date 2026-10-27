@@ -193,9 +193,9 @@ void main() {
     await tester.pumpAndSettle();
     _commitFor(tester, 'X');
     await tester.pumpAndSettle();
-    expect(buf.buf, '甲X丁', reason: '选区 [1,3) 被替换：${buf.buf}');
+    expect(buf.buf, '甲X丁\n', reason: '选区 [1,3) 被替换：${buf.buf}');
     expect(buf.undo(), isTrue);
-    expect(buf.buf, '甲乙丙丁', reason: '一次 Ctrl+Z 就该完全回到原样');
+    expect(buf.buf, '甲乙丙丁\n', reason: '一次 Ctrl+Z 就该完全回到原样（归一之后的原文）');
   });
 
   testWidgets('★★ 剪切 = 一步撤销', (WidgetTester tester) async {
@@ -208,9 +208,9 @@ void main() {
     await tester.sendKeyEvent(LogicalKeyboardKey.keyX);
     await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
     await tester.pumpAndSettle();
-    expect(buf.buf, '甲丁', reason: '剪切删掉选区：${buf.buf}');
+    expect(buf.buf, '甲丁\n', reason: '剪切删掉选区：${buf.buf}');
     expect(buf.undo(), isTrue);
-    expect(buf.buf, '甲乙丙丁', reason: '一次撤销就该回来');
+    expect(buf.buf, '甲乙丙丁\n', reason: '一次撤销就该回来');
   });
   testWidgets('★★ 单行内拖到**行尾之外** ⇒ 整行都选中（用户实测：会少最后一个字）',
       (WidgetTester tester) async {
@@ -256,7 +256,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.sendKeyEvent(LogicalKeyboardKey.backspace);
     await tester.pumpAndSettle();
-    expect(buf.buf, '甲丁', reason: '选区 [1,3) 应当被整体删掉：${buf.buf}');
+    expect(buf.buf, '甲丁\n', reason: '选区 [1,3) 应当被整体删掉：${buf.buf}');
   });
 
   testWidgets('★ Ctrl+A 全选；接着打字 ⇒ 整段被替换', (WidgetTester tester) async {
@@ -272,7 +272,7 @@ void main() {
     expect(buf.selectionEnd, buf.length);
     _commitFor(tester, 'X');
     await tester.pumpAndSettle();
-    expect(buf.buf, 'X', reason: '有选区时打字 = 替换选区');
+    expect(buf.buf, 'X\n', reason: '有选区时打字 = 替换选区');
   });
 }
 

@@ -45,7 +45,7 @@ void main() {
 
     await _backspace(tester);
 
-    expect(buf.buf, '前后', reason: '改前：留下一个空框，得再按一次');
+    expect(buf.buf, '前后\n', reason: '改前：留下一个空框，得再按一次');
     expect(find.byType(EmptyMathMark), findsNothing, reason: '不许留占位框');
   });
 
@@ -56,13 +56,13 @@ void main() {
         await _mount(tester, doc, doc.indexOf(math) + math.length);
 
     await _backspace(tester);
-    expect(buf.buf, '前后');
+    expect(buf.buf, '前后\n');
 
     await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
     await tester.sendKeyEvent(LogicalKeyboardKey.keyZ);
     await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
     await tester.pump();
-    expect(buf.buf, doc, reason: '删结构与删定界符必须合成**一次**编辑');
+    expect(buf.buf, '$doc\n', reason: '删结构与删定界符必须合成**一次**编辑');
   });
 
   testWidgets('★ 行间块整段删 ⇒ 连围栏一起走', (WidgetTester tester) async {
@@ -84,7 +84,7 @@ void main() {
 
     await _backspace(tester);
 
-    expect(buf.buf, r'$\sqrt{}$', reason: '子位点：删内容只留空槽，结构还在');
+    expect(buf.buf, '${r'$\sqrt{}$'}\n', reason: '子位点：删内容只留空槽，结构还在');
     // 空槽由注入的占位垫画出，不是"空公式框"
     expect(find.byType(EmptyMathMark), findsNothing);
   });

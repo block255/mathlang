@@ -92,7 +92,7 @@ void main() {
       tester.testTextInput.updateEditingValue(_v('X'));
       await tester.pump();
 
-      expect(buf.buf, 'abcX');
+      expect(buf.buf, 'abcX\n');
       expect(buf.caret, 4, reason: '插入后光标在插入内容之后');
       expect(last?.edits, 1);
     });
@@ -111,7 +111,7 @@ void main() {
       tester.testTextInput.updateEditingValue(_v('中'));
       await tester.pump();
 
-      expect(buf.buf, r'设 $x^2+1$ 为常数中');
+      expect(buf.buf, '${r'设 $x^2+1$ 为常数中'}\n');
       expect(tester.testTextInput.editingState?['text'], '',
           reason: r'★ 提交之后元素必须被清空 —— 元素里留着 `$x^2+1$` 就会让插值符跑到别处，'
               '候选框也跟着跑（旧镜像框方案就是这么坏的）');
@@ -136,7 +136,7 @@ void main() {
       // 选字提交（组合结束）
       tester.testTextInput.updateEditingValue(_v('中'));
       await tester.pump();
-      expect(buf.buf, '中');
+      expect(buf.buf, '中\n');
       expect(last?.edits, 1);
       expect(last?.composing, isFalse);
     });
@@ -168,7 +168,7 @@ void main() {
       tester.testTextInput.updateEditingValue(_v('中文abc'));
       await tester.pump();
 
-      expect(buf.buf, '中文abc');
+      expect(buf.buf, '中文abc\n');
       expect(last?.edits, 1, reason: '一次语义编辑只能记一次（否则撤销栈会炸开）');
     });
 
@@ -235,12 +235,12 @@ void main() {
 
       await tester.sendKeyEvent(LogicalKeyboardKey.backspace);
       await tester.pump();
-      expect(buf.buf, 'ac', reason: '退格删光标前一个字符');
+      expect(buf.buf, 'ac\n', reason: '退格删光标前一个字符');
       expect(buf.caret, 1);
 
       await tester.sendKeyEvent(LogicalKeyboardKey.delete);
       await tester.pump();
-      expect(buf.buf, 'a', reason: 'Delete 删光标后一个字符');
+      expect(buf.buf, 'a\n', reason: 'Delete 删光标后一个字符');
       expect(last?.edits, 2,
           reason: '两条通道的编辑统一计数：缓冲区真被改了几次就是几次');
 
@@ -329,14 +329,14 @@ void main() {
       // 一次退格 = 整个 `\pm` 一次删光
       await tester.sendKeyEvent(LogicalKeyboardKey.backspace);
       await tester.pump();
-      expect(buf.buf, r'$a b$', reason: '原子级删除：`\\pm` 一次消失');
+      expect(buf.buf, '${r'$a b$'}\n', reason: '原子级删除：`\\pm` 一次消失');
 
       // ★ 一次 Ctrl+Z 就把整个 `\pm` 撤回来（因为删除是**一次区间替换**）
       await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
       await tester.sendKeyEvent(LogicalKeyboardKey.keyZ);
       await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
       await tester.pump();
-      expect(buf.buf, r'$a\pm b$', reason: '删除 = 一步，撤销 = 一步');
+      expect(buf.buf, '${r'$a\pm b$'}\n', reason: '删除 = 一步，撤销 = 一步');
 
       // 重做
       await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
@@ -345,7 +345,7 @@ void main() {
       await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
       await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
       await tester.pump();
-      expect(buf.buf, r'$a b$');
+      expect(buf.buf, '${r'$a b$'}\n');
     });
   });
 
@@ -479,7 +479,7 @@ void main() {
       buf.insertText('X');
       await tester.pump();
 
-      expect(buf.buf, 'aXbc');
+      expect(buf.buf, 'aXbc\n');
       expect(buf.caret, 2);
       expect(tester.testTextInput.editingState?['text'], '',
           reason: '输入设备只接收"要提交的文本"，永远不接收文档内容');
@@ -859,7 +859,7 @@ $$
       tester.testTextInput.updateEditingValue(_v('\$\$\nx=1\n\$\$'));
       await tester.pump();
 
-      expect(buf.buf, '前文 甲乙\n\$\$\nx=1\n\$\$\n丙 后文',
+      expect(buf.buf, '前文 甲乙\n\$\$\nx=1\n\$\$\n丙 后文\n',
           reason: r'★ 载荷两端各补一个 `\n` —— 否则 `$$` 与同行文字粘在一起，围栏就没了');
       expect(last?.edits, 1, reason: '★ 补换行与插入必须是**同一次编辑**（一步撤销）');
       // 块模型视角：那个 `$$` 块必须是一个**独立的数学块**（不是行内公式碎片）
@@ -880,7 +880,7 @@ $$
       tester.testTextInput.updateEditingValue(_v('第一行\n第二行'));
       await tester.pump();
 
-      expect(buf.buf, '前文 甲乙第一行\n第二行丙 后文');
+      expect(buf.buf, '前文 甲乙第一行\n第二行丙 后文\n');
     });
 
     testWidgets(r'★ 光标停在 `$$` 围栏行末尾 + 粘多行 ⇒ 落到围栏行**之后**（不撑坏围栏）',
@@ -965,7 +965,7 @@ $$
       st.pasteText('\$\$\nx=1\n\$\$'); // 自带围栏：包裹阶段会跳过，剩下的是行边界 ③④⑤
       await tester.pump();
 
-      expect(buf.buf, '前文 甲乙\n\$\$\nx=1\n\$\$\n丙 后文',
+      expect(buf.buf, '前文 甲乙\n\$\$\nx=1\n\$\$\n丙 后文\n',
           reason: '★ 智能包裹不许动已有的 `\$\$` 块；行边界仍由 insert_guard 负责');
       final BlockIndex idx = BlockIndex.parse(buf.buf);
       expect(idx.blocks.where((Block b) => b.type == BlockType.math).length, 1);

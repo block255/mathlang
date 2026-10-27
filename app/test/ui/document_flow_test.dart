@@ -142,7 +142,7 @@ void main() {
       await tester.tap(find.byKey(const Key('discard-no-save')));
       await tester.pumpAndSettle();
 
-      expect(buf.buf, '# 打开的内容\n\n\$y^2\$');
+      expect(buf.buf, '# 打开的内容\n\n\$y^2\$\n');
       expect(st.docFile.title, '新文件');
       expect(st.docFile.path, r'C:\docs\新文件.md');
       expect(st.dirty, isFalse, reason: '刚打开的文件是干净的');

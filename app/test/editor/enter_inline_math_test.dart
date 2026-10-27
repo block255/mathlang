@@ -40,11 +40,13 @@ void main() {
     //           0123456789
     final DocBuffer buf = await _mount(tester, r'a $x+y$ b', 5);
     await _enter(tester);
-    expect(buf.buf, '\$a \$x+\$\n\n\$y\$ b\$'.substring(1).substring(0, buf.buf.length),
+    // 断点处两侧各补一对栅栏：左 `$x+$`、右 `$y$`，` b` 仍在围栏外
+    expect(buf.buf, '${r'a $x+$'}\n\n${r'$y$ b'}\n',
         reason: '两侧各补一对栅栏：实际=${buf.buf}');
     expect(buf.buf, contains('\n\n'), reason: '断点处是一个新块');
     expect(buf.buf.startsWith(r'a $x+$'), isTrue, reason: '左段应被关闭：${buf.buf}');
-    expect(buf.buf.endsWith(r'$y$ b'), isTrue, reason: '右段应被重新打开：${buf.buf}');
+    expect(buf.buf.trimRight().endsWith(r'$y$ b'), isTrue,
+        reason: '右段应被重新打开：${buf.buf}');
     expect(buf.caret, 8, reason: '光标落在右段内容开头（乙案）');
   });
 

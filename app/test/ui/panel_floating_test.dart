@@ -87,7 +87,8 @@ void main() {
     await tester.pumpAndSettle();
 
     // 打开面板**不许**把焦点抢给搜索框 ⇒ 文本通道仍属于编辑面
-    final int before = buf.length;
+    // ★ 2026-10-28：`before` 是**归一前**的长度；打完字缓冲区会带上行终止符 ⇒ 基准也算归一后
+    final int before = normalizeDocumentText(buf.buf).length;
     tester.testTextInput.updateEditingValue(_v('Z'));
     await tester.pump();
 
