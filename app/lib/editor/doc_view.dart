@@ -1904,26 +1904,41 @@ class DocViewState extends State<DocView> {
   static const String _kTailBlankItem = '\u0000tail-blank';
 
   List<FlowItem> _itemsFrom(List<double> hs) {
-    final List<FlowItem> items = <FlowItem>[
-      for (var i = 0; i < _units.length; i++)
-        FlowItem(
-          id: _units[i].id,
-          height: hs[i],
-          // ★★ 2026-10-18 晚（§11.46 真修）：段距之外还要加上**真空段落**的高度。
-          //   规则：上一个单元之后有 n 个连续空行 ⇒
-          //     n <= 1 ⇒ 只是段距（一个空行 = 段落边界，视觉上是"一点段距"）
-          //     n >= 2 ⇒ 多出 (n-1) 个**整行**（用户连按 Enter 出来的那些空行要真占高）
-          leadingGap: _units[i].isFirstInBlock && i > 0
-              ? _gapBefore(_units[i].type) +
-                  extraBlankHeight(_blankRunAfter(_units[i - 1]).length,
-                      lineHeight: _blankLineHeight)
-              : 0,
-          breakBefore: _units[i].breakBefore,
-          // ★★ 2026-10-20（N5）：标题不许孤零零留在页底
-          keepWithNext: _isHeadingType(_units[i].type),
-          label: _units[i].label,
-        ),
-    ];
+    final List<FlowItem> items = <FlowItem>[];
+    for (var i = 0; i < _units.length; i++) {
+      // ★★★ 2026-10-27（用户实测："原页一直 Enter 往下，光标进入异次元空间"）：
+      //   **硬分页之前那串空行**原来只作为"下一个单元的 leadingGap"结算 ——
+      //   而那个单元带 `breakBefore`、永远从新页开始，**页首不留段前距** ⇒ 高度被整个丢掉。
+      //   结果：页面不长、光标却按"第几个空行"一路下移（探针：第 1 页底 1163 不变，光标 154→734）。
+      //   ⇒ 把这串空行做成**占位 item 排在分页符那个单元之前**（与末页同一套），
+      //     它跟正文一样会被 flush：写满一页就流到下一页，分页符再把后面的内容推到再下一页
+      //     （与 Word 里"在手动分页符上方加空段落"的表现一致）。
+      if (i > 0 && _units[i].breakBefore) {
+        final int nBlanks = _blankRunAfter(_units[i - 1]).length;
+        final double h =
+            trailingBlankHeight(nBlanks, lineHeight: _blankLineHeight);
+        if (h > 0) {
+          items.add(FlowItem(id: '$_kTailBlankItem#break$i', height: h));
+        }
+      }
+      items.add(FlowItem(
+        id: _units[i].id,
+        height: hs[i],
+        // ★★ 2026-10-18 晚（§11.46 真修）：段距之外还要加上**真空段落**的高度。
+        //   规则：上一个单元之后有 n 个连续空行 ⇒
+        //     n <= 1 ⇒ 只是段距（一个空行 = 段落边界，视觉上是"一点段距"）
+        //     n >= 2 ⇒ 多出 (n-1) 个**整行**（用户连按 Enter 出来的那些空行要真占高）
+        leadingGap: _units[i].isFirstInBlock && i > 0
+            ? _gapBefore(_units[i].type) +
+                extraBlankHeight(_blankRunAfter(_units[i - 1]).length,
+                    lineHeight: _blankLineHeight)
+            : 0,
+        breakBefore: _units[i].breakBefore,
+        // ★★ 2026-10-20（N5）：标题不许孤零零留在页底
+        keepWithNext: _isHeadingType(_units[i].type),
+        label: _units[i].label,
+      ));
+    }
     // ★★★ 2026-10-27（用户实测：页面写满后文末连按 Enter，光标画到纸外、页数不变）：
     //   **尾部空行也要参与自动分页**。原来空行高度只作为"下一个单元的 leadingGap"结算，
     //   文末后面没有下一个单元 ⇒ 分页器根本不知道那里还有高度（探针：45 次 Enter 页数一直 3，
@@ -2247,13 +2262,14 @@ class DocViewState extends State<DocView> {
     );
   }
 
-  /// 第 [p] 页有没有单元（没有 ⇒ 那是"分页符之后什么都没有"的空页）
+  /// 第 [p] 页有没有**内容**（单元或"尾部空行占位项"）。
+  ///
+  /// ★ 2026-10-27（用户实测：自动分页之后，原页下部空白点不动）：
+  ///   原来的判据只看**单元**，而自动分页把尾部空行推到新页时，那一页**只有占位项、没有单元**
+  ///   ⇒ 判成"空页" ⇒ 上一页不建接缝槽 ⇒ 原页底部那片白没有点击判定。
   bool _pageHasUnit(PageLayout layout, int p) {
     if (p < 0 || p >= layout.pages.length) return false;
-    for (final PageSlot s in layout.pages[p]) {
-      if (_unitById[s.item.id] != null) return true;
-    }
-    return false;
+    return layout.pages[p].isNotEmpty;
   }
 
   /// 接缝带的**右端（不含）**：下一页第一个单元的左边界（没有下一页 ⇒ 文末）。
