@@ -635,8 +635,45 @@ SmartEdit smartEditAt(String source, int offset, {required bool forward}) {
   final SmartEdit raw = _smartEditCore(source, o, forward: forward);
   if (raw.isNone || !raw.deletes) return raw;
   if (!_wouldLeaveBareMarker(source, raw.from!, raw.to!)) return raw;
-  return _deleteMarkerLineTouchedBy(source, raw.from!, raw.to!) ?? SmartEdit.none;
+  // ★★★ 批 49（2026-10-27，用户："在原页空行行首按删除，直觉就是回退到上一行文末，
+  //   不该被看不见的换行符抢走语义"）：**分页符永远不参与删除**。
+  //   做法分两步，与批 32 对 `$$` 围栏的"退一步"同一套路：
+  //     ① 原删除跨了多个换行（段落边界 = 一次删两个）⇒ **退一步只删一个换行** ——
+  //        那一格正好是"这一行空行"，标记仍然完好（`甲⏎⏎<!--pb-->` ⇒ `甲⏎<!--pb-->`）；
+  //     ② 连一个换行都删不得 ⇒ **这一下不生效**（不许像批 41 那样升级成"整行删分页符"）。
+  if (raw.to! - raw.from! > 1 && _onlyNewlines(source, raw.from!, raw.to!)) {
+    for (final int at in <int>[raw.from!, raw.to! - 1]) {
+      if (at < 0 || at + 1 > source.length) continue;
+      if (!_wouldLeaveBareMarker(source, at, at + 1)) {
+        return SmartEdit.remove(at, at + 1, at);
+      }
+    }
+  }
+  // ★★★ 批 49（用户："就算这一下判定到分页符，我根本看不到分页符，
+  //   在我的视角我只是想回退到上一行末而已"）：
+  //   ⇒ 不许"没反应"：**把光标退到分页符行之前那一格的末尾**（不动文档）。
+  final int back = _lineStartBeforeMarker(source, raw.from!);
+  return back >= 0 && back != o ? SmartEdit.move(back) : SmartEdit.none;
 }
+
+/// 分页符行**之前那一行**的末尾（不删任何东西，只用于"退一步放光标"）。
+int _lineStartBeforeMarker(String s, int near) {
+  var ls = 0;
+  while (ls <= s.length) {
+    int le = s.indexOf('\n', ls);
+    if (le < 0) le = s.length;
+    if (BlockMarkers.isPageBreak(s.substring(ls, le)) && near <= le + 1) {
+      return ls > 0 ? ls - 1 : 0;
+    }
+    if (le >= s.length) break;
+    ls = le + 1;
+  }
+  return -1;
+}
+
+/// `[from,to)` 是不是**纯换行**。
+bool _onlyNewlines(String s, int from, int to) =>
+    s.substring(from, to).replaceAll('\n', '').isEmpty;
 
 /// 删掉 `[from,to)` 之后，文档里会不会出现"含 pagebreak 但已不是完好整行标记"的行？
 bool _wouldLeaveBareMarker(String src, int from, int to) {
@@ -646,29 +683,6 @@ bool _wouldLeaveBareMarker(String src, int from, int to) {
     if (!BlockMarkers.isPageBreak(line)) return true;
   }
   return false;
-}
-
-/// 删掉**被 `[from,to)` 牵连到的那个分页符行**（含行尾换行），并给出落点光标。
-///
-/// "牵连到" = 那一行的字符区间与 `[from,to)` 相交，或 `[from,to)` 正好是它左右两侧的换行之一
-/// （那两种换行一动，标记就会和邻居粘成一行）。
-SmartEdit? _deleteMarkerLineTouchedBy(String src, int from, int to) {
-  var ls = 0;
-  while (ls <= src.length) {
-    int le = src.indexOf('\n', ls);
-    if (le < 0) le = src.length;
-    if (BlockMarkers.isPageBreak(src.substring(ls, le))) {
-      final bool touches = from <= le && to >= ls - 1;
-      if (touches) {
-        final int delTo = le < src.length ? le + 1 : le;
-        final int caret = (ls > 0 ? ls - 1 : 0).clamp(0, src.length);
-        return SmartEdit.remove(ls, delTo, caret);
-      }
-    }
-    if (le >= src.length) break;
-    ls = le + 1;
-  }
-  return null;
 }
 
 /// 删除的**原有判据**（结构感知删除本体；分页符的事已在入口处理完）。

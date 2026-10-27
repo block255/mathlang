@@ -18,8 +18,9 @@ import 'package:mathlang/core/block.dart';
 import 'package:mathlang/render/math_nav.dart';
 import 'package:mathlang/render/smart_delete.dart';
 
+/// 应用一次删除（`move` = 只挪光标、不改文档 ⇒ 原样返回）
 String _apply(String doc, SmartEdit e) =>
-    e.isNone ? doc : doc.replaceRange(e.from!, e.to!, '');
+    (e.isNone || !e.deletes) ? doc : doc.replaceRange(e.from!, e.to!, '');
 
 /// 结果里不许有"含 pagebreak 但不是完好整行标记"的行
 void _expectNoBareMarker(String doc, String why) {
@@ -78,13 +79,14 @@ void main() {
     });
   });
 
-  group('★ 会毁掉它时 ⇒ 删掉**整个**分页符行（一次删干净）', () {
+  group('★ 批 49 改口径：**分页符永不参与删除** —— 能删空行就删空行，删不了就只退光标', () {
     test('★ 退格在标记行首（上一行有字）⇒ 整个分页符行消失，不留残片', () {
       const String doc = '甲\n<!-- pagebreak -->\n乙\n';
       final int start = doc.indexOf('<!--');
       final SmartEdit e = smartEditAt(doc, start, forward: false);
       final String out = _apply(doc, e);
-      expect(_hasMarker(out), isFalse, reason: '这一下应当删掉整行：$out');
+      expect(_hasMarker(out), isTrue,
+          reason: '分页符**不许**被删：${out.replaceAll('\n', r'\n')}');
       _expectNoBareMarker(out, '退格 @$start');
       expect(out.contains('甲'), isTrue, reason: '正文字符不许被删：$out');
       expect(out.contains('乙'), isTrue, reason: '正文字符不许被删：$out');
@@ -95,7 +97,8 @@ void main() {
       final int end = doc.indexOf('-->') + 3; // 标记行那个换行
       final SmartEdit e = smartEditAt(doc, end, forward: true);
       final String out = _apply(doc, e);
-      expect(_hasMarker(out), isFalse, reason: '这一下应当删掉整行：$out');
+      expect(_hasMarker(out), isTrue,
+          reason: '分页符**不许**被删：${out.replaceAll('\n', r'\n')}');
       _expectNoBareMarker(out, 'Delete @$end');
     });
 
@@ -105,7 +108,8 @@ void main() {
       final SmartEdit e = smartEditAt(doc, lt, forward: true);
       final String out = _apply(doc, e);
       _expectNoBareMarker(out, 'Delete 标记首字符');
-      expect(_hasMarker(out), isFalse, reason: '删了半截标记就只能整行删：$out');
+      expect(_hasMarker(out), isTrue,
+          reason: '标记不许被删（连一个字符都不许）：${out.replaceAll('\n', r'\n')}');
     });
   });
 
@@ -126,6 +130,7 @@ void main() {
             checked++;
             final String out = _apply(doc, e);
             _expectNoBareMarker(out, '${fwd ? 'Delete' : '退格'} @$o');
+            if (!e.deletes) continue; // move：只挪光标、不改文档
             if (_farFromMarker(doc, e.from!, e.to!)) {
               expect(_hasMarker(out), isTrue,
                   reason: '${fwd ? 'Delete' : '退格'} @$o 离标记很远却把分页符删了：'
