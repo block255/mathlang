@@ -172,38 +172,42 @@ void main() {
     });
   });
 
-  group('④ Enter 的口径：普通行开新段，空行只加一行', () {
-    testWidgets('★ 普通行按 Enter ⇒ `\\n\\n`（新段，口径不变）',
+  group('④ Enter 的口径：**一次按键 = 一行**（2026-10-27 口径变更）', () {
+    // ★★★ 2026-10-27 口径变更（用户拍板）：撤销批 42 的"文末 / 页尾 Enter 封顶"。
+    //   基准 = `notes/design/行与段-空行基准.md` §三 E1/E2 + §六 实测：
+    //     · 旧版（1.1.1）与开发版（1.1.2）都实测过 —— 文末第二下起屏幕完全不动（封顶），
+    //       而"一次按键动一行"才是用户要的；封顶的依据（页尾空行不占行盒）经查不成立
+    //       （真正缺的是文末那行的行盒与光标跟随，已在本轮补上）。
+    //   ⇒ 下面三条期望随之改写：文末每按一次**都**多一整行。
+    testWidgets('★ 普通行按 Enter ⇒ 立刻出现**一整行**（`甲⏎⏎⏎`）',
         (WidgetTester tester) async {
+      // 行数 = max(0, 尾部换行数 − 2)：`甲⏎⏎` 还是 0 行，`甲⏎⏎⏎` 才是 1 行
+      // ⇒ 第一次 Enter 要补两个换行才"看得见一行"（改前只补一个 ⇒ 屏幕不动）。
       final DocBuffer buf = await _pumpEditView(tester, '甲', caret: 1);
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pumpAndSettle();
-      expect(buf.buf, '甲\n\n');
-      expect(buf.caret, 3);
+      expect(buf.buf, '甲\n\n\n', reason: '一次 Enter = 看得见的一行（改前是 `甲⏎⏎`）');
+      expect(buf.caret, 4);
     });
 
-    testWidgets('★★ 空行上按 Enter ⇒ 只补一个 `\\n`（真空段落再长一行）',
+    testWidgets('★★ 空行上按 Enter ⇒ 再长一行（不再封顶）',
         (WidgetTester tester) async {
-      // `甲\n\n`：光标在 3 = 空行行首（正是"Enter 一次"之后的落点）
-      // ★★ 批 42（2026-10-26 用户拍板 **甲**）：这一格是**最后一页的文末空行** ⇒ **封顶一行**。
-      //   改前这里会再加一个 `\n`（`甲\n\n\n`）—— 而尾部空行**不占行盒**，加了也看不见，
-      //   只留下"按了像没反应 / 回来要按同样多次 Delete"。
+      // `甲\n\n`：光标在 3 = 文末空行位置；再按一次必须**真的再加一行**。
       final DocBuffer buf = await _pumpEditView(tester, '甲\n\n', caret: 3);
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pumpAndSettle();
-      expect(buf.buf, '甲\n\n', reason: '文末空行封顶一行：再按 Enter 不再加');
-      expect(buf.caret, 3);
+      expect(buf.buf, '甲\n\n\n', reason: '空行上 Enter 再长一行（批 42 封顶已撤）');
+      expect(buf.caret, 4);
     });
 
-    testWidgets('★ 连按两次 Enter（从正文出发）⇒ `甲\\n\\n\\n`（段距 + 一行空行）',
+    testWidgets('★ 连按两次 Enter（从正文出发）⇒ `甲⏎⏎⏎⏎`（两行空行）',
         (WidgetTester tester) async {
       final DocBuffer buf = await _pumpEditView(tester, '甲', caret: 1);
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pumpAndSettle();
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pumpAndSettle();
-      // ★★ 批 42（甲）：第二下 Enter 落在**文末空行**上 ⇒ 封顶，不再加（改前是 `甲\n\n\n`）。
-      expect(buf.buf, '甲\n\n');
+      expect(buf.buf, '甲\n\n\n\n', reason: '两次 Enter = 两行（一次一行）');
     });
   });
 }

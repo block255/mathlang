@@ -2081,6 +2081,18 @@ class DocViewState extends State<DocView> {
           : (prevUnit.acceptTo + 1 < widget.buffer.buf.length
               ? prevUnit.acceptTo + 1
               : -1);
+      // ★★★ 2026-10-27（**一次按键 = 一行**，`notes/design/行与段-空行基准.md` §三 B2）：
+      //   文末有 n 行空行时，光标可能站在其中**任意一行**上，所以竖条必须按"第几个空行"落：
+      //   `dy = gapBefore + k × lineH`（§11.46 P5 的算式，本来就有）。
+      //   改前 `caretDy` 恒取 `_gapBefore`（等价于 k 恒 0）⇒ 用户连按 Enter，
+      //   缓冲区在长、**光标一动不动**（探针：三次 Enter 光标都停在 133.79）⇒ "推不动"。
+      final List<int> tailRun =
+          after >= 0 ? _blankRunFrom(after) : const <int>[];
+      // ★ k 取到 `run.length - 1`：最后一个被计数的空行就是"新段落会落脚"的那一行
+      //   （它的高度已经算在 `extraBlankHeight` 里），光标站在它上面 = 和打出来的字对齐。
+      final int tailK = tailRun.isEmpty
+          ? 0
+          : ((_caret ?? -1) - after).clamp(0, tailRun.length - 1);
       children.add(_BlankSlot(
         id: 'blank@$tail',
         height: free,
@@ -2096,8 +2108,10 @@ class DocViewState extends State<DocView> {
             widget.caretVisible &&
             owned >= 0 &&
             (_caret ?? -1) >= owned,
-        // 文末的空行 = 下一个段落的行首 ⇒ 从段距处起画
-        caretDy: after >= 0 ? _gapBefore(BlockType.paragraph) : null,
+        // 文末的空行 = 下一个段落的行首 ⇒ 从段距处起画；**再按第几个空行往下叠一行**
+        caretDy: after >= 0
+            ? _gapBefore(BlockType.paragraph) + tailK * _blankLineHeight
+            : null,
         caretHeight: textCaretHeight(_s.bodyFontSize),
         caretWidth: 1.5,
         caretColor: const Color(kCaretColorValue),

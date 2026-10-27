@@ -331,59 +331,40 @@ class EditViewState extends State<EditView> {
     while (le < s.length && s[le] != '\n') {
       le++;
     }
-    final String lineText = s.substring(ls, le);
-    final bool lineBlank = lineText.trim().isEmpty;
-    // ★★★ 批 50（2026-10-27，用户："点原页远处空白落进空行后，Enter 与 Delete 次数不成对"）：
-    //   光标停在**分页符行行首**时，这一行在屏幕上也是空白（标记不可见），用户以为自己在空行上。
-    //   原来它走"普通行"分支 ⇒ 每次 Enter 插 `\n\n`（两个），而删除一次只吃一个换行
-    //   ⇒ **按 3 次 Enter 要按 6 次 Delete**（探针实测 9/11/13 → 12/12/11/11/10/10）。
-    //   ⇒ 按"空行"处理：插**一个** `\n`；且**上面已经有一行空行时封顶**（与 甲 同口径）。
-    if (!lineBlank) {
-      final bool atPageBreakLineStart = BlockMarkers.isPageBreak(lineText) && c == ls;
-      if (!atPageBreakLineStart) return '\n\n';
-      final bool blankAbove = ls >= 2 && s[ls - 2] == '\n';
-      return blankAbove ? '' : '\n';
+    // ★★★ 2026-10-27（**一次按键 = 一行**，见 `notes/design/行与段-空行基准.md` §三 E1）：
+    //   判据只有一条 —— **Enter 每按一次，屏幕上多一行**。
+    //   写几个换行由"现在有几个空行"决定，不由惯例决定：
+    //     · 空行上（含分页符行首：标记不可见 ⇒ 屏幕上它就是空行）⇒ 一个 `\n`（空行数 +1）；
+    //     · 行内（光标前后都有字）⇒ `\n\n`：把一行切成两行（空行数不变、段数 +1）；
+    //     · 贴着行边界（行末 / 行首）⇒ 一个 `\n` 就让空行数 +1（已有段边界，只是把它加宽一行）；
+    //     · 文末（那一行**没有**行终止符）⇒ 一个 `\n` 只够补上终止符，要两个才出现第一行。
+    //   ★ 已撤掉两条封顶（批 42 的"页尾封顶"、批 50 的"分页符行首上方有空行则封顶"）：
+    //     它们让"第二下起按了完全没反应"，与 E1 直接冲突；当时的依据（页尾空行不占行盒）
+    //     经查不成立 —— 真正缺的是**尾部的行盒与光标跟随**，那是呈现问题，不该用封顶盖住。
+    if (c != ls && c != le) return '\n\n';
+    // 贴着行边界 ⇒ 让**看得见的行** +1。
+    // 文末那一格要算一下：行数 = max(0, 尾部换行数 m − 2)（`甲⏎⏎` 是 0 行，`甲⏎⏎⏎` 才是 1 行），
+    // 所以"插几个换行才多一行"由 m 决定 —— 1 不够补 2、2 不够补 3（文档没有尾换行那一格）。
+    if (c == le && le >= s.length) {
+      final int m = _trailingNewlines(s);
+      for (final int k in const <int>[1, 2, 3]) {
+        if (_visibleTailLines(m + k) > _visibleTailLines(m)) return '\n' * k;
+      }
     }
-    // ★★★ 批 42（2026-10-26，用户拍板 **甲**，并明确**只针对两种页尾**）：
-    //   **① 最后一页的文末空行；② 分页后原页的页尾空行（后面紧跟分页符）** ⇒ **封顶一行**：
-    //   Enter 落在这两种空行上时**不再加**（返回空载荷 ⇒ 一次编辑都不产生）。
-    //   为什么只封这两种：它们**不占行盒**（`blank_runs.blankRunFrom` 已把"文末那个位置"
-    //   排除在"真有行盒的空行"之外）⇒ 加了也**看不见**，只留下"按了像没反应"
-    //   和"回来要按同样多次 Delete"（用户实测）。也与"点文末那片白"的幂等同口径。
-    //   ★ 页面**中间**的空行（两段正文之间）**照旧**"按 Enter 接着长"（§11.46 原样不动）。
-    if (_isPageTailBlankLine(c)) return '';
     return '\n';
   }
 
-  /// 光标所在那一行是不是**"页尾空行"**（文末 / 分页符之前那一串空行）。
-  ///
-  /// 判据：从这一行**往后**逐行看 —— 全是空行，直到**文末**或**分页符行**。
-  ///   · 到文末 ⇒ 最后一页的文末空行；
-  ///   · 先碰到分页符行 ⇒ 分页后原页的页尾空行；
-  ///   · 先碰到有字的行 ⇒ 页面中间的空行（**不算**，照旧能长）。
-  ///
-  /// ★ 还要"**已经真的有那一行**"才封顶：
-  ///   · 文末那种：文档必须以 `\n\n` 结尾（`甲\n` 的末尾**没有**空行 ⇒ 第一下 Enter 还要让它长出来）；
-  ///   · 分页符那种：光标既然站在空行上，那行就已经存在 ⇒ 直接封顶。
-  bool _isPageTailBlankLine(int caret) {
-    final String s = _buf.buf;
-    var le = caret.clamp(0, s.length);
-    while (le < s.length && s[le] != '\n') {
-      le++;
+  /// 文档末尾连续换行的个数
+  static int _trailingNewlines(String s) {
+    var n = 0;
+    while (n < s.length && s[s.length - 1 - n] == '\n') {
+      n++;
     }
-    var o = le < s.length ? le + 1 : s.length;
-    while (o < s.length) {
-      final int nl = s.indexOf('\n', o);
-      final int end = nl < 0 ? s.length : nl;
-      final String line = s.substring(o, end);
-      if (BlockMarkers.isPageBreak(line)) return true; // ① 页尾（分页符之前）
-      if (line.trim().isNotEmpty) return false;        // 页面中间的空行
-      if (nl < 0) break;
-      o = nl + 1;
-    }
-    // ② 文末：只有"已经有一行空行"才封顶
-    return s.endsWith('\n\n');
+    return n;
   }
+
+  /// 文末**看得见的空行数**：`甲⏎` / `甲⏎⏎` = 0 行；`甲⏎⏎⏎` = 1 行（与 `extraBlankHeight` 同一口径）
+  static int _visibleTailLines(int m) => m <= 2 ? 0 : m - 2;
 
   /// 平台（含 IME 提交）的一段文本 → **一次**编辑写进缓冲区。
   ///
