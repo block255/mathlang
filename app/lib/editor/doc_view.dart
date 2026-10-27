@@ -1900,26 +1900,50 @@ class DocViewState extends State<DocView> {
   static bool _isHeadingType(BlockType t) =>
       t == BlockType.heading1 || t == BlockType.heading2 || t == BlockType.heading3;
 
-  List<FlowItem> _itemsFrom(List<double> hs) => <FlowItem>[
-        for (var i = 0; i < _units.length; i++)
-          FlowItem(
-            id: _units[i].id,
-            height: hs[i],
-            // ★★ 2026-10-18 晚（§11.46 真修）：段距之外还要加上**真空段落**的高度。
-            //   规则：上一个单元之后有 n 个连续空行 ⇒
-            //     n <= 1 ⇒ 只是段距（一个空行 = 段落边界，视觉上是"一点段距"）
-            //     n >= 2 ⇒ 多出 (n-1) 个**整行**（用户连按 Enter 出来的那些空行要真占高）
-            leadingGap: _units[i].isFirstInBlock && i > 0
-                ? _gapBefore(_units[i].type) +
-                    extraBlankHeight(_blankRunAfter(_units[i - 1]).length,
-                        lineHeight: _blankLineHeight)
-                : 0,
-            breakBefore: _units[i].breakBefore,
-            // ★★ 2026-10-20（N5）：标题不许孤零零留在页底
-            keepWithNext: _isHeadingType(_units[i].type),
-            label: _units[i].label,
-          ),
-      ];
+  /// 尾部空行那个"占位 item"的 id（不产单元，只让分页器知道这里还有高度）
+  static const String _kTailBlankItem = '\u0000tail-blank';
+
+  List<FlowItem> _itemsFrom(List<double> hs) {
+    final List<FlowItem> items = <FlowItem>[
+      for (var i = 0; i < _units.length; i++)
+        FlowItem(
+          id: _units[i].id,
+          height: hs[i],
+          // ★★ 2026-10-18 晚（§11.46 真修）：段距之外还要加上**真空段落**的高度。
+          //   规则：上一个单元之后有 n 个连续空行 ⇒
+          //     n <= 1 ⇒ 只是段距（一个空行 = 段落边界，视觉上是"一点段距"）
+          //     n >= 2 ⇒ 多出 (n-1) 个**整行**（用户连按 Enter 出来的那些空行要真占高）
+          leadingGap: _units[i].isFirstInBlock && i > 0
+              ? _gapBefore(_units[i].type) +
+                  extraBlankHeight(_blankRunAfter(_units[i - 1]).length,
+                      lineHeight: _blankLineHeight)
+              : 0,
+          breakBefore: _units[i].breakBefore,
+          // ★★ 2026-10-20（N5）：标题不许孤零零留在页底
+          keepWithNext: _isHeadingType(_units[i].type),
+          label: _units[i].label,
+        ),
+    ];
+    // ★★★ 2026-10-27（用户实测：页面写满后文末连按 Enter，光标画到纸外、页数不变）：
+    //   **尾部空行也要参与自动分页**。原来空行高度只作为"下一个单元的 leadingGap"结算，
+    //   文末后面没有下一个单元 ⇒ 分页器根本不知道那里还有高度（探针：45 次 Enter 页数一直 3，
+    //   第 42 次起光标 y 超过末页底）。
+    //   ⇒ 末尾追加一个"占位 item"（有高度、无单元），它跟正文一样会被 flush 到下一页。
+    //      `n <= 1` 时高度是 0（只是段距）⇒ 不追加，行为与改前完全一致。
+    if (_units.isNotEmpty) {
+      final int nTail = _blankRunAfter(_units.last).length;
+      final double h =
+          extraBlankHeight(nTail, lineHeight: _blankLineHeight);
+      if (h > 0) {
+        items.add(FlowItem(
+          id: _kTailBlankItem,
+          height: h,
+          leadingGap: _gapBefore(BlockType.paragraph),
+        ));
+      }
+    }
+    return items;
+  }
 
   /// 一行空行的**高度**（用正文字号算，与文本行盒同一把尺子）
   double get _blankLineHeight => textCaretHeight(_s.bodyFontSize);
@@ -2053,13 +2077,17 @@ class DocViewState extends State<DocView> {
     final double free = (_m.bodyHeight - bottom)
         .clamp(textCaretHeight(_s.bodyFontSize), _m.bodyHeight);
 
-    if (isLastPage && prevUnit != null) {
+    // ★★★ 2026-10-27（自动分页）：尾部空行被推到**新的一页**时，那一页没有任何单元
+    //   （`prevUnit == null`）⇒ 用"**全文最后一个单元**"兜底 —— 否则新页上没人画光标，
+    //   用户看到的还是"光标出页消失"。
+    final _Unit? tailPrev = prevUnit ?? (_units.isEmpty ? null : _units.last);
+    if (isLastPage && tailPrev != null) {
       // ★★ ⑥ 丙 · **文末那片空白 = 一行空行**（2026-10-17 用户拍板 **甲**）：
       //   「添加空行有两条途径：Enter、点下方空白」—— 两条**都会改文档**（和 Enter 一样）：
       //   点一下就在文末起一行空行、光标落在那儿；已经有一行就不再加（**幂等**）。
       //   槽的高度取**这一页剩下的正文高度** ⇒ 那片空白**整片**都能点；
       //   竖条**贴顶**画在最后一行下面。
-      final int after = _blankOffsetAfter(prevUnit);
+      final int after = _blankOffsetAfter(tailPrev);
       final int tail = after >= 0 ? after : widget.buffer.buf.length;
       // ★★ 批 38：**认领范围**从"上一单元之后那一格"起 —— 不再要求后面是空行。
       //   实测现场：文末是 `…$$⏎<!-- pagebreak -->⏎⏎…`（用户在文末插了分页符），
@@ -2072,14 +2100,14 @@ class DocViewState extends State<DocView> {
       //   ★ 否则（文档以正文结尾、**连尾换行都没有** —— 那正是"打字中"的缓冲区形态）
       //     那一格是**单元自己**的：再画一根 = 用户看到的"每打一个字就双光标"
       //     （探针实测：`aa⏎⏎bb⏎⏎cc` 在 EOF 处 175/199 两根，正好差一行）。
-      final int seamTap = _seamTapTarget(prevUnit);
+      final int seamTap = _seamTapTarget(tailPrev);
       // ★ 批 46：认领范围与"点击落点"分开算 —— 点击落在**最后一行行尾**（分页符之前），
       //   但**认领**仍从 `acceptTo + 1` 起（分页符那 19 格与它后面的空行都要有主）；
       //   只有"后面真的还有字符"才算（否则 `…cc` 打字的文末会与单元叠成两根）。
       final int owned = after >= 0
           ? after
-          : (prevUnit.acceptTo + 1 < widget.buffer.buf.length
-              ? prevUnit.acceptTo + 1
+          : (tailPrev.acceptTo + 1 < widget.buffer.buf.length
+              ? tailPrev.acceptTo + 1
               : -1);
       // ★★★ 2026-10-27（**一次按键 = 一行**，`notes/design/行与段-空行基准.md` §三 B2）：
       //   文末有 n 行空行时，光标可能站在其中**任意一行**上，所以竖条必须按"第几个空行"落：
@@ -2121,7 +2149,7 @@ class DocViewState extends State<DocView> {
         onTap: (int at, Offset global) => _onTailBlankTap(
             (after >= 0 && after < widget.buffer.buf.length)
                 ? after
-                : (seamTap > (prevUnit?.acceptTo ?? -1) &&
+                : (seamTap > tailPrev.acceptTo &&
                         seamTap < widget.buffer.buf.length
                     ? seamTap
                     : null)),
