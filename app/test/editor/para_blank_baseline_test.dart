@@ -161,4 +161,41 @@ void main() {
           reason: '第 $i 次 Enter 光标要真的往下走一行（改前第二下起封顶 ⇒ 不动）');
     }
   });
+
+  // ─── A5：连按两次 Enter 之后，退格要**逐次**收回（E1/E2 的另一半）───
+  testWidgets('A5 行末连按两次 Enter ⇒ 退格两次各收一行（不许一下全还原）',
+      (WidgetTester tester) async {
+    const String doc = 'AA\n\nBBgg\n\nccdd\n';
+    const int afterG = 8;
+    final DocBuffer buf = await _mount(tester, doc, afterG);
+    expect(_nAfter(doc, afterG), 1);
+    await _press(tester, LogicalKeyboardKey.enter, 2);
+    // ignore: avoid_print
+    print('[A5] Enter×2 | n=${_nAfter(buf.buf, afterG)} | ${buf.buf.replaceAll('\n', '⏎')}');
+    expect(_nAfter(buf.buf, afterG), 3, reason: '两次 Enter = 多两行');
+    await _press(tester, LogicalKeyboardKey.backspace);
+    // ignore: avoid_print
+    print('[A5] BS#1 | n=${_nAfter(buf.buf, afterG)} | ${buf.buf.replaceAll('\n', '⏎')}');
+    expect(_nAfter(buf.buf, afterG), 2, reason: '一次退格只收一行（改前一次收掉两行）');
+    await _press(tester, LogicalKeyboardKey.backspace);
+    expect(buf.buf, doc, reason: '两次退格正好还原（E2）');
+    expect(buf.caret, afterG);
+  });
+
+  // ─── A6：文末同理 ───
+  testWidgets('A6 文末连按两次 Enter ⇒ 退格逐次收回（视觉 1:1）', (WidgetTester tester) async {
+    const String doc = 'AA\n\nBBgg\n';
+    final DocBuffer buf = await _mount(tester, doc, doc.length);
+    await _press(tester, LogicalKeyboardKey.enter, 2);
+    expect(_tailLines(buf.buf), 2, reason: '两次 Enter = 两行空白');
+    await _press(tester, LogicalKeyboardKey.backspace);
+    expect(_tailLines(buf.buf), 1, reason: '一次退格只收一行（改前第二下起就是一次收两行）');
+    await _press(tester, LogicalKeyboardKey.backspace);
+    expect(_tailLines(buf.buf), 0, reason: '两次退格收光两行');
+    // ★ 逐字还原要多按一下：文末**第一下** Enter 补了两个换行（`甲⏎` 到 `甲⏎⏎⏎`，
+    //   因为"行数 = 尾部换行数 − 2"），所以字节层面 3 个字符对应 2 行。
+    //   这一下是**视觉无变化**的空操作，不影响 §三 E1（每次都只收一行）。
+    await _press(tester, LogicalKeyboardKey.backspace);
+    expect(buf.buf, doc, reason: '第三次退格才逐字回到原样（视觉上已经没有变化）');
+  });
 }

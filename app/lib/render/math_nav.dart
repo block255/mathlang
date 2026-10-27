@@ -593,7 +593,16 @@ SmartEdit? _paragraphBreakDelete(String source, int o, {required bool forward}) 
     }
   }
   if (k < 2) return null;
-  final int n = k == 2 ? 2 : 1;
+  // ★★★ 2026-10-27（用户实测：「enter 两次，点一下退格也会直接一下还原」）：
+  //   `甲⏎⏎|⏎⏎乙` 这一格往前只数到 2 个换行（另外两个在光标**后面**），
+  //   原来 k==2 一律"删两个" ⇒ 两行空行一下被收光，等于一次退格退了两行。
+  //   ⇒ 判据看**光标站在哪一行**：
+  //     · 站在**空行**上（`s[o] == '\n'` 或文末）⇒ 这一下只收掉**这一行**（删 1）；
+  //     · 站在**有字的行首** ⇒ 那才是"把两段并成一行"的段落边界（删 2，口径不变）。
+  final bool atLineStart = o == 0 || source[o - 1] == '\n';
+  final bool onBlankLine =
+      atLineStart && (o >= source.length || source[o] == '\n');
+  final int n = onBlankLine ? 1 : (k == 2 ? 2 : 1);
   final SmartEdit full = forward
       ? (o + n > source.length
           ? SmartEdit.none
