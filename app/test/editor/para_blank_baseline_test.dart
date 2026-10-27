@@ -54,7 +54,7 @@ int _tailLines(String s) {
   while (m < s.length && s[s.length - 1 - m] == '\n') {
     m++;
   }
-  return m <= 2 ? 0 : m - 2;
+  return m <= 1 ? 0 : m - 1;
 }
 
 /// 当前光标条的纵坐标（屏幕像素）—— "看得见的一行"就用它量
@@ -182,20 +182,18 @@ void main() {
     expect(buf.caret, afterG);
   });
 
-  // ─── A6：文末同理 ───
-  testWidgets('A6 文末连按两次 Enter ⇒ 退格逐次收回（视觉 1:1）', (WidgetTester tester) async {
+  // ─── A6：文末同理（文末空行按 n × 行高结算之后，**字节也 1:1**）───
+  testWidgets('A6 文末连按两次 Enter ⇒ 退格两次逐字回到原样', (WidgetTester tester) async {
     const String doc = 'AA\n\nBBgg\n';
     final DocBuffer buf = await _mount(tester, doc, doc.length);
     await _press(tester, LogicalKeyboardKey.enter, 2);
     expect(_tailLines(buf.buf), 2, reason: '两次 Enter = 两行空白');
     await _press(tester, LogicalKeyboardKey.backspace);
-    expect(_tailLines(buf.buf), 1, reason: '一次退格只收一行（改前第二下起就是一次收两行）');
+    expect(_tailLines(buf.buf), 1, reason: '一次退格只收一行');
     await _press(tester, LogicalKeyboardKey.backspace);
     expect(_tailLines(buf.buf), 0, reason: '两次退格收光两行');
-    // ★ 逐字还原要多按一下：文末**第一下** Enter 补了两个换行（`甲⏎` 到 `甲⏎⏎⏎`，
-    //   因为"行数 = 尾部换行数 − 2"），所以字节层面 3 个字符对应 2 行。
-    //   这一下是**视觉无变化**的空操作，不影响 §三 E1（每次都只收一行）。
-    await _press(tester, LogicalKeyboardKey.backspace);
-    expect(buf.buf, doc, reason: '第三次退格才逐字回到原样（视觉上已经没有变化）');
+    // ★ 2026-10-27：文末空行改成 `trailingBlankHeight = n × 行高`（与文首对称）之后，
+    //   **一次 Enter 一个换行、一次退格一个换行** ⇒ 逐字还原正好两次，不再需要第三下空操作。
+    expect(buf.buf, doc, reason: '两次退格逐字回到原样');
   });
 }

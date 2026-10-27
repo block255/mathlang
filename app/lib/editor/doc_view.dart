@@ -1933,7 +1933,7 @@ class DocViewState extends State<DocView> {
     if (_units.isNotEmpty) {
       final int nTail = _blankRunAfter(_units.last).length;
       final double h =
-          extraBlankHeight(nTail, lineHeight: _blankLineHeight);
+          trailingBlankHeight(nTail, lineHeight: _blankLineHeight);
       if (h > 0) {
         items.add(FlowItem(
           id: _kTailBlankItem,
@@ -2005,7 +2005,11 @@ class DocViewState extends State<DocView> {
         final List<int> run = prevUnit != null
             ? _blankRunAfter(prevUnit)
             : (p == 0 ? _blankRunAtStart() : const <int>[]);
-        if (run.isNotEmpty) {
+        // ★★★ 2026-10-27（`caret_ownership_global_test` ③ 当场抓到的双光标）：
+        //   `u == null` 就是"**本页最后一个单元之后**"那段空行 —— 它由**末页槽**认领
+        //   （末页槽的 `dy = 段距 + k × 行高`，量的是同一串空行）。
+        //   这里再建一个块间空行槽 = 同一格像素两个主人（探针：偏移 5 画在 161 与 183 两根）。
+        if (run.isNotEmpty && u != null) {
           final int? idx = _caretLineIndexInRun(run);
           // ★ 段距那一截：空隙里除了"真空段落的行"之外，前面还有一段**段距**
           final double gapBefore =
@@ -2116,11 +2120,11 @@ class DocViewState extends State<DocView> {
       //   缓冲区在长、**光标一动不动**（探针：三次 Enter 光标都停在 133.79）⇒ "推不动"。
       final List<int> tailRun =
           after >= 0 ? _blankRunFrom(after) : const <int>[];
-      // ★ k 取到 `run.length - 1`：最后一个被计数的空行就是"新段落会落脚"的那一行
-      //   （它的高度已经算在 `extraBlankHeight` 里），光标站在它上面 = 和打出来的字对齐。
+      // ★ k 取到 `run.length`：文末最后一个空行之后就是"新段落会落脚"的那一行
+      //   （文末空行按 `trailingBlankHeight = n × 行高` 结算，所以 EOF 正好在最下面那行的下一行）。
       final int tailK = tailRun.isEmpty
           ? 0
-          : ((_caret ?? -1) - after).clamp(0, tailRun.length - 1);
+          : ((_caret ?? -1) - after).clamp(0, tailRun.length);
       children.add(_BlankSlot(
         id: 'blank@$tail',
         height: free,

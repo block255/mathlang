@@ -80,11 +80,11 @@ void main() {
     await _press(tester, LogicalKeyboardKey.enter);
     // ignore: avoid_print
     print('[tail#1] ${_vis(buf.buf)}');
-    expect(buf.buf, '甲\n\n\n', reason: '第一下就出现一整行（行数 = 尾部换行数 − 2）');
+    expect(buf.buf, '甲\n\n', reason: '第一下就出现一整行（行数 = 尾部换行数 − 1）');
     await _press(tester, LogicalKeyboardKey.enter, 3);
     // ignore: avoid_print
     print('[tail#4] ${_vis(buf.buf)}');
-    expect(buf.buf, '甲\n\n\n\n\n\n', reason: '四下 = 四行（改前第二下起封顶 ⇒ 只有 `甲⏎⏎`）');
+    expect(buf.buf, '甲\n\n\n\n\n', reason: '四下 = 四行（改前第二下起封顶 ⇒ 只有 `甲⏎⏎`）');
   });
 
   testWidgets('页尾（分页符之前那行空行）：每次多一行', (WidgetTester tester) async {

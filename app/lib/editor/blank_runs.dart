@@ -48,3 +48,12 @@ double extraBlankHeight(int n, {required double lineHeight}) =>
 /// **文首**空行要多高：前面没有"上一段"要分隔 ⇒ 每一个空行都占一整行。
 double leadingBlankHeight(int n, {required double lineHeight}) =>
     n <= 0 ? 0.0 : n * lineHeight;
+
+/// **文末**空行要多高：**与文首同一条** —— 后面没有"下一段"要分隔，
+/// 所以第一个空行也占一整行。
+///
+/// ★ 2026-10-27 改前用的是 `extraBlankHeight`（第一个空行只是段距、高度 0），
+///   于是"文末按一次 Enter 屏幕不动、要补两个换行才看得见一行"，而退格只删一个 ⇒ 两边不 1:1。
+///   文末与文首对称之后：**一个空行 = 一行 = 一个换行符**，字节与行一齐平。
+double trailingBlankHeight(int n, {required double lineHeight}) =>
+    n <= 0 ? 0.0 : n * lineHeight;

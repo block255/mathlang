@@ -363,8 +363,8 @@ class EditViewState extends State<EditView> {
     return n;
   }
 
-  /// 文末**看得见的空行数**：`甲⏎` / `甲⏎⏎` = 0 行；`甲⏎⏎⏎` = 1 行（与 `extraBlankHeight` 同一口径）
-  static int _visibleTailLines(int m) => m <= 2 ? 0 : m - 2;
+  /// 文末**看得见的空行数**：`甲⏎` = 0 行；`甲⏎⏎` = 1 行（与 `trailingBlankHeight` 同一口径）
+  static int _visibleTailLines(int m) => m <= 1 ? 0 : m - 1;
 
   /// 平台（含 IME 提交）的一段文本 → **一次**编辑写进缓冲区。
   ///

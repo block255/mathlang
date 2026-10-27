@@ -150,7 +150,10 @@ void main() {
       final double dy = bar.top - slot.top;
       expect(dy, greaterThan(6.0),
           reason: '竖条要往下让开一个段距（实测 dy=${dy.toStringAsFixed(1)}）');
-      expect(dy, lessThan(18.0), reason: '只让开一个段距，不是一整行');
+      // ★ 2026-10-27：文末空行按 `trailingBlankHeight = n × 行高` 结算（与文首对称），
+      //   所以 `甲⏎⏎` 里那行空行是**真的一行** ⇒ 新段落落在它**下面**（段距 + 一行），
+      //   不再是"只让开一个段距"（旧口径下 `甲⏎⏎` 的高度是 0）。
+      expect(dy, lessThan(18.0 + 30.0), reason: '让开一个段距 + 一行，不是两行');
     });
 
     testWidgets('★★ 段落边界**一次退格整个删掉**（Enter 插了两个 `\\n`）',
@@ -179,15 +182,16 @@ void main() {
     //       而"一次按键动一行"才是用户要的；封顶的依据（页尾空行不占行盒）经查不成立
     //       （真正缺的是文末那行的行盒与光标跟随，已在本轮补上）。
     //   ⇒ 下面三条期望随之改写：文末每按一次**都**多一整行。
-    testWidgets('★ 普通行按 Enter ⇒ 立刻出现**一整行**（`甲⏎⏎⏎`）',
+    testWidgets('★ 普通行按 Enter ⇒ 立刻出现**一整行**（`甲⏎⏎`）',
         (WidgetTester tester) async {
-      // 行数 = max(0, 尾部换行数 − 2)：`甲⏎⏎` 还是 0 行，`甲⏎⏎⏎` 才是 1 行
-      // ⇒ 第一次 Enter 要补两个换行才"看得见一行"（改前只补一个 ⇒ 屏幕不动）。
+      // ★ 2026-10-27 最终口径：文末空行按 `trailingBlankHeight = n × 行高` 结算（与**文首对称**）
+      //   ⇒ 一个空行就是一行、就是一个换行符 ⇒ 一次 Enter 补**一个** `\n`。
+      //   （中间那两版：补两个 / 补三个，都是"第一个空行不占整行"造成的补偿。）
       final DocBuffer buf = await _pumpEditView(tester, '甲', caret: 1);
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pumpAndSettle();
-      expect(buf.buf, '甲\n\n\n', reason: '一次 Enter = 看得见的一行（改前是 `甲⏎⏎`）');
-      expect(buf.caret, 4);
+      expect(buf.buf, '甲\n\n', reason: '一次 Enter = 一个换行 = 看得见的一行');
+      expect(buf.caret, 3);
     });
 
     testWidgets('★★ 空行上按 Enter ⇒ 再长一行（不再封顶）',
@@ -200,14 +204,14 @@ void main() {
       expect(buf.caret, 4);
     });
 
-    testWidgets('★ 连按两次 Enter（从正文出发）⇒ `甲⏎⏎⏎⏎`（两行空行）',
+    testWidgets('★ 连按两次 Enter（从正文出发）⇒ `甲⏎⏎⏎`（两行空行）',
         (WidgetTester tester) async {
       final DocBuffer buf = await _pumpEditView(tester, '甲', caret: 1);
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pumpAndSettle();
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pumpAndSettle();
-      expect(buf.buf, '甲\n\n\n\n', reason: '两次 Enter = 两行（一次一行）');
+      expect(buf.buf, '甲\n\n\n', reason: '两次 Enter = 两个换行 = 两行（一次一行）');
     });
   });
 }
