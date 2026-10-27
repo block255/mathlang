@@ -2249,10 +2249,14 @@ class DocViewState extends State<DocView> {
     return at;
   }
 
-  /// 点"文末那片空白" = **在文末起一行空行**（⑥ 甲；与 `Enter` 同一条路、同样会改文档）。
+  /// 点"文末那片空白" ⇒ **把光标放到最后一行下面那一行**（**不改文档**）。
   ///
-  /// 幂等：文末已经是一行空行（`…\n\n`）就只把光标放上去；末尾只有一个换行 ⇒ 补一个；
-  /// 没有换行 ⇒ 补两个。一次插入 = 一步编辑（`Ctrl+Z` 可一步回退）。
+  /// ★★★ 2026-10-27（撤批 43 的"点击补一行"；用户："点击下部空白让光标落到文末下一个空行，
+  ///   这符合直觉和操作习惯 —— 但没必要和改文档冲突"）：
+  ///   "文末下一个空行"**不需要造出来** —— 它就是这个位置：最后一行之后那一格
+  ///   （= `buf.length`，也就是再按一次 Enter 会落脚的那一行）。
+  ///   ⇒ 点击只移光标；要真的多一行按 Enter（现在一次 Enter 正好一行）。
+  ///   两种口径在**看不见一个字符**上是等价的，区别只在"点一下会不会把文档改脏"。
   void _onTailBlankTap([int? at]) {
     final DocBuffer b = widget.buffer;
     final String s = b.buf;
@@ -2260,21 +2264,12 @@ class DocViewState extends State<DocView> {
       b.setCaret(0);
       return;
     }
-    // ★★ 批 43（2026-10-26，用户："点下部空白光标只能落在文末而不是空行"）：
-    //   槽已经有"第一个可落位置"（空行首 / 分页符行首）时 ⇒ **只把光标放上去，不改文档**。
-    //   原来这里无条件走"补空行"，于是文末夹着分页符时 `tail` 退化成 `buf.length`
-    //   ⇒ 点一下永远落到文末。
+    // 槽给出了"第一个真实可落位置"（空行行首 / 分页符行首）⇒ 落到那儿，同样不改文档。
     if (at != null && at >= 0 && at < s.length) {
       b.setCaret(at);
       return;
     }
-    final String add =
-        s.endsWith('\n\n') ? '' : (s.endsWith('\n') ? '\n' : '\n\n');
-    if (add.isEmpty) {
-      b.setCaret(s.length); // 已经有一行空行 ⇒ 只移光标（落点自动在那一行行首）
-    } else {
-      b.replace(s.length, s.length, add); // 落点自动到插入之后 = 新行行首
-    }
+    b.setCaret(s.length);
   }
 
   /// 上一个单元之后如果跟着**空行**，返回那个空行的起点；否则 -1。

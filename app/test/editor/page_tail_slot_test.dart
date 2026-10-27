@@ -129,17 +129,19 @@ void main() {
           reason: '应当落在分页符行首；实际落在 ${buf.caret}');
     });
 
-    testWidgets('★ 点末页那片白 ⇒ 仍然"起一行空行"（既有口径不许被我改坏）',
+    testWidgets('★ 点末页那片白 ⇒ 光标落到**文末下一行**，文档一个字都不变（2026-10-27 撤批 43）',
         (WidgetTester tester) async {
+      // 用户 2026-10-27：「点击下部空白让光标落到文末下一个空行，符合直觉和操作习惯，
+      //   但没必要和改文档冲突」⇒ **那个位置本来就存在**（最后一行之后那一格），不必造一行。
+      // 判据：点完文档逐字不变、光标在 `buf.length`（= 再按 Enter 会落脚的那一行）。
       final DocBuffer buf = await _mount(tester, '甲\n\n乙\n');
       final String before = buf.buf;
       final List<Rect> slots = _slotRects(tester);
       expect(slots, isNotEmpty);
       await tester.tapAt(slots.last.center);
       await tester.pumpAndSettle();
-      expect(buf.buf.length, greaterThan(before.length),
-          reason: '末页那片白 = 文末那片空白：点它要起一行空行（改前行为）');
-      expect(buf.caret, buf.buf.length, reason: '光标落在新空行的行首');
+      expect(buf.buf, before, reason: '点击只移光标，不许改文档（改前会补一行空行）');
+      expect(buf.caret, buf.buf.length, reason: '光标落在文末下一行的行首');
     });
 
     testWidgets('★ 分页符行内每格**只有一根**光标条（不许页尾槽与单元叠两根）',
