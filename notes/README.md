@@ -27,7 +27,7 @@
 
 ## 二、先看哪几份（最短路径）
 
-- **新会话/接手**：`README.md` → 本页 → [`后优化清单.md`](后优化清单.md) §一（影响每天都用）→ [`handover/会话状态快照-20261024.md`](handover/会话状态快照-20261024.md) → 对应 design 规格。
+- **新会话/接手**：`README.md` → 本页 → [`后优化清单.md`](后优化清单.md) §一（影响每天都用）→ [`handover/会话状态快照-20261027-晚.md`](handover/会话状态快照-20261027-晚.md) → **先读 [`design/只读基准.txt`](design/只读基准.txt)（最高优先）** → 对应 design 规格。
 - **用户/安装**：根 [`README.md`](../README.md) + [`release/v1.1.0.md`](release/v1.1.0.md)。
 - **修 bug**：先找现行规格和守卫测试；找不到判据就先记进 [`后优化清单.md`](后优化清单.md)。
 - **发布**：`CONTRIBUTING.md` §8 + [`release/v1.1.0.md`](release/v1.1.0.md) + `signing/README.md`。
@@ -44,7 +44,8 @@
 | 符号表数据 | [`../app/assets/symbols.json`](../app/assets/symbols.json) + [`design/符号表-分类与关键词.md`](design/符号表-分类与关键词.md) | JSON 是数据源 |
 | 快捷键 | [`../app/lib/lang/shortcut_registry.dart`](../app/lib/lang/shortcut_registry.dart) + [`../app/test/lang/shortcut_registry_test.dart`](../app/test/lang/shortcut_registry_test.dart) | 文档只讲设计理由 |
 | 发布说明 | [`release/v1.1.0.md`](release/v1.1.0.md) + GitHub Release | **逐字一致** |
-| 最近交接 | [`handover/会话状态快照-20261024.md`](handover/会话状态快照-20261024.md) | 历史事实，不是现行规格 |
+| 最近交接 | [`handover/会话状态快照-20261027-晚.md`](handover/会话状态快照-20261027-晚.md) | 历史事实，不是现行规格 |
+| **行为基准（最高优先）** | [`design/只读基准.txt`](design/只读基准.txt) | **用户编辑、AI 只读**；与任何文档冲突时以它为准 |
 | 历史过程 | [`dev_log/`](dev_log/) + [`handover/`](handover/) | 只读 |
 
 ## 四、全量索引
@@ -90,7 +91,8 @@
 
 | 文档 | 状态 | 最后核对 | 说明 |
 |---|---|---|---|
-| [`会话状态快照-20261027.md`](handover/会话状态快照-20261027.md) | **最新交接（历史事实）** | 2026-10-27 校对 | 本轮 A1/A2/B1 验收 + 光标/分页 13 个提交的**打地鼠账**、G1–G4 未收口、C/D 与 v1.2.0 计划 |
+| [`会话状态快照-20261027-晚.md`](handover/会话状态快照-20261027-晚.md) | **最新交接（历史事实）** | 2026-10-27 晚 | 只读基准 7 条 × 现状大对账（符合 2 / 半修 2 / 未修 5）、未修 7 项一批做完、行/段/行间距/段间距的定义、流程教训 |
+| [`会话状态快照-20261027.md`](handover/会话状态快照-20261027.md) | 历史 | 2026-10-27 早 | A1/A2/B1 验收 + 光标/分页 13 个提交的打地鼠账、G1–G4、C/D 与 v1.2.0 计划 |
 | [`会话状态快照-20261024.md`](handover/会话状态快照-20261024.md) | 历史 | 2026-10-25 索引 | 2026-10-24 → 25；批 31–36；§〇 总览 |
 | [`会话状态快照-20261021.md`](handover/会话状态快照-20261021.md) | 历史 | — | v1.0.0 前后 |
 | [`会话状态快照-20261014-S3.md`](handover/会话状态快照-20261014-S3.md) | 历史（最长，P0–P6 全史） | — | 259 KB；只在查早期证据时读 |
