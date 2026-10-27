@@ -67,4 +67,20 @@ void main() {
     await _press(tester, LogicalKeyboardKey.enter, 2);
     expect(buf.buf, '甲\n\n\n\n乙\n', reason: '中间的空行看得见，照旧一次加一行');
   });
+
+  testWidgets('★ 分页符行首（视觉上也是空白）按 Enter ⇒ 只补一个换行，与 Delete 1:1',
+      (WidgetTester tester) async {
+    const String doc = 'bb\n<!-- pagebreak -->\ncc\n';
+    final int pb = doc.indexOf('<!--');
+    final DocBuffer buf = await _mount(tester, doc, pb);
+    await _press(tester, LogicalKeyboardKey.enter, 1);
+    expect(buf.buf, 'bb\n\n<!-- pagebreak -->\ncc\n',
+        reason: '一次 Enter 只补一个换行（改前补两个 ⇒ 删除要按两次）');
+    // 再按一次：上面已经有一行空行 ⇒ 封顶
+    await _press(tester, LogicalKeyboardKey.enter, 1);
+    expect(buf.buf, 'bb\n\n<!-- pagebreak -->\ncc\n', reason: '页尾空行封顶');
+    // 一次退格就回到文末
+    await _press(tester, LogicalKeyboardKey.backspace, 1);
+    expect(buf.buf, 'bb\n<!-- pagebreak -->\ncc\n', reason: '一次退格就吃掉那一行空行');
+  });
 }

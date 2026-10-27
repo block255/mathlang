@@ -331,8 +331,19 @@ class EditViewState extends State<EditView> {
     while (le < s.length && s[le] != '\n') {
       le++;
     }
-    final bool lineBlank = s.substring(ls, le).trim().isEmpty;
-    if (!lineBlank) return '\n\n';
+    final String lineText = s.substring(ls, le);
+    final bool lineBlank = lineText.trim().isEmpty;
+    // ★★★ 批 50（2026-10-27，用户："点原页远处空白落进空行后，Enter 与 Delete 次数不成对"）：
+    //   光标停在**分页符行行首**时，这一行在屏幕上也是空白（标记不可见），用户以为自己在空行上。
+    //   原来它走"普通行"分支 ⇒ 每次 Enter 插 `\n\n`（两个），而删除一次只吃一个换行
+    //   ⇒ **按 3 次 Enter 要按 6 次 Delete**（探针实测 9/11/13 → 12/12/11/11/10/10）。
+    //   ⇒ 按"空行"处理：插**一个** `\n`；且**上面已经有一行空行时封顶**（与 甲 同口径）。
+    if (!lineBlank) {
+      final bool atPageBreakLineStart = BlockMarkers.isPageBreak(lineText) && c == ls;
+      if (!atPageBreakLineStart) return '\n\n';
+      final bool blankAbove = ls >= 2 && s[ls - 2] == '\n';
+      return blankAbove ? '' : '\n';
+    }
     // ★★★ 批 42（2026-10-26，用户拍板 **甲**，并明确**只针对两种页尾**）：
     //   **① 最后一页的文末空行；② 分页后原页的页尾空行（后面紧跟分页符）** ⇒ **封顶一行**：
     //   Enter 落在这两种空行上时**不再加**（返回空载荷 ⇒ 一次编辑都不产生）。
