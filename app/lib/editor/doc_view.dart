@@ -1915,10 +1915,10 @@ class DocViewState extends State<DocView> {
       //     （与 Word 里"在手动分页符上方加空段落"的表现一致）。
       if (i > 0 && _units[i].breakBefore) {
         final int nBlanks = _blankRunAfter(_units[i - 1]).length;
-        final double h =
-            trailingBlankHeight(nBlanks, lineHeight: _blankLineHeight);
-        if (h > 0) {
-          items.add(FlowItem(id: '$_kTailBlankItem#break$i', height: h));
+        // ★ 一行一个 item：空行多到超过一页时才能像正文那样逐行流到下一页
+        for (var k = 0; k < nBlanks; k++) {
+          items.add(FlowItem(
+              id: '$_kTailBlankItem#b$i#$k', height: _blankLineHeight));
         }
       }
       items.add(FlowItem(
@@ -1945,23 +1945,27 @@ class DocViewState extends State<DocView> {
     //   第 42 次起光标 y 超过末页底）。
     //   ⇒ 末尾追加一个"占位 item"（有高度、无单元），它跟正文一样会被 flush 到下一页。
     //      `n <= 1` 时高度是 0（只是段距）⇒ 不追加，行为与改前完全一致。
-    if (_units.isNotEmpty) {
+    // ★ 2026-10-27（统一行高）：尾部区域 = n 个空行 **+ 1 个"当前行"**（光标停的那一行，
+    //   Word 里那个总是存在的段落标记），**一行一个 item**、每行 = 一个正文行距。
+    //   文档没有尾换行时（`甲` 打字的中间态）当前行就是正文那一行 ⇒ 不额外占位。
+    if (_units.isNotEmpty && widget.buffer.buf.endsWith('\n')) {
       final int nTail = _blankRunAfter(_units.last).length;
-      final double h =
-          trailingBlankHeight(nTail, lineHeight: _blankLineHeight);
-      if (h > 0) {
+      for (var k = 0; k <= nTail; k++) {
         items.add(FlowItem(
-          id: _kTailBlankItem,
-          height: h,
-          leadingGap: _gapBefore(BlockType.paragraph),
-        ));
+            id: '$_kTailBlankItem#t#$k', height: _blankLineHeight));
       }
     }
     return items;
   }
 
-  /// 一行空行的**高度**（用正文字号算，与文本行盒同一把尺子）
-  double get _blankLineHeight => textCaretHeight(_s.bodyFontSize);
+  /// 一行（空行 / 文字行 / 文末那一行）的**高度** = **一个正文行距**（行盒 + 段距）。
+  ///
+  /// ★★★ 2026-10-27（用户："文末第一下 Enter 像下两行、后面每下只一行，无特殊结构也不统一"）：
+  ///   原来这里取 `textCaretHeight(字号)` —— 那是**光标条的高度**（≈20px），不是"一行"；
+  ///   而正文行距是"行盒 + 段距"（≈38px），文末占位项还额外背一个段距 ⇒ 量出 38 / 31 / 20 三种值。
+  ///   ⇒ 一行就是一行：空行 = 38px，段距不再叠加。
+  double get _blankLineHeight =>
+      _s.bodyFontSize * _s.lineHeight + _gapBefore(BlockType.paragraph);
 
   /// 从 [from]（**必须是行首**）起的连续**空行**，返回每个空行的行首偏移。
   ///
@@ -2001,6 +2005,11 @@ class DocViewState extends State<DocView> {
     final warnings = <String>[];
     var bottom = 0.0;
     _Unit? prevUnit;
+    // 尾部区域第一行的缓冲区偏移（`#t#k` 的 k = 第几行；行首偏移 = tailAfter + k）
+    final int tailAfter =
+        _units.isEmpty ? -1 : _blankOffsetAfter(_units.last);
+    final int len = widget.buffer.buf.length;
+    var tailLinesOnPage = 0;
 
     for (final PageSlot s in slots) {
       final double gap = s.y - bottom;
@@ -2060,7 +2069,42 @@ class DocViewState extends State<DocView> {
           children.add(SizedBox(height: gap));
         }
       }
-      if (u == null) continue;
+      if (u == null) {
+        // ★★★ 2026-10-27（统一行高）：尾部/页尾空行现在是**一行一个 item**，
+        //   每一行都要**真的占版面**、并由它自己画光标 —— 否则"分页器算了高度、
+        //   页面视觉却不长"，光标会一路画到纸外（用户："进入异次元空间"）。
+        final String id = s.item.id;
+        if (id.startsWith(_kTailBlankItem)) {
+          final int pos = id.lastIndexOf('#');
+          final int? k = pos < 0 ? null : int.tryParse(id.substring(pos + 1));
+          if (k != null && tailAfter >= 0 && id.contains('#t#')) {
+            final int at = (tailAfter + k).clamp(0, len);
+            tailLinesOnPage++;
+            children.add(_BlankSlot(
+              id: 'tailline@$k',
+              height: s.item.height,
+              offset: at,
+              caretHere: !widget.hideCaretAndSelection &&
+                  widget.caretVisible &&
+                  _caret == at,
+              caretDy: 0,
+              caretHeight: textCaretHeight(_s.bodyFontSize),
+              caretWidth: 1.5,
+              caretColor: const Color(kCaretColorValue),
+              onTap: (int _, Offset __) => widget.buffer.setCaret(at),
+              onBox: (String bid, RenderBox box) => _blankBoxes[bid] = box,
+            ));
+          } else {
+            // `#b#`（硬分页之前的空行）：先只占高，光标由接缝槽负责
+            children.add(SizedBox(height: s.item.height));
+          }
+          bottom = s.y + s.item.height;
+          continue;
+        }
+        children.add(SizedBox(height: s.item.height));
+        bottom = s.y + s.item.height;
+        continue;
+      }
       // 外面套一层命中盒（子节点仍是池里缓存的同一实例 → 不破坏"整棵子树跳过"）
       children.add(_UnitHitBox(
         unit: u,
@@ -2151,14 +2195,14 @@ class DocViewState extends State<DocView> {
         // ★★ 2026-10-18 晚：**竖条要画在"新段落真正会落脚"的位置**。
         //   用户实测：「enter 之后光标在这儿，但打出来的字符比它低一截」——
         //   差的就是这一截**段距**（新段落在上一段底下再让开 `gapBefore`）。
-        caretHere: !widget.hideCaretAndSelection &&
+        caretHere: tailLinesOnPage == 0 &&
+            !widget.hideCaretAndSelection &&
             widget.caretVisible &&
             owned >= 0 &&
             (_caret ?? -1) >= owned,
-        // 文末的空行 = 下一个段落的行首 ⇒ 从段距处起画；**再按第几个空行往下叠一行**
-        caretDy: after >= 0
-            ? _gapBefore(BlockType.paragraph) + tailK * _blankLineHeight
-            : null,
+        // ★ 2026-10-27（统一行高）：尾部那几行现在**各自有槽、各自画光标**（`tailline@k`），
+        //   这个槽只负责"剩下的那片白"（点击 + 没有尾部行时的兜底光标），所以 dy 用旧的兜底值。
+        caretDy: after >= 0 ? tailK * _blankLineHeight : null,
         caretHeight: textCaretHeight(_s.bodyFontSize),
         caretWidth: 1.5,
         caretColor: const Color(kCaretColorValue),

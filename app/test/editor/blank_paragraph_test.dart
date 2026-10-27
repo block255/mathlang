@@ -68,9 +68,9 @@ void main() {
       await _pumpDocView(tester, '甲\n\n\n乙');
       final double two = _vGap(tester, '甲', '乙');
       // 多出来的应当≈一行高（正文 16 ⇒ textCaretHeight ≈ 20）
-      expect(two - one, greaterThan(12.0),
+      expect(two - one, greaterThan(30.0),
           reason: '`甲\\n\\n\\n乙` 中间那行空行必须真占高（实测差 ${two - one}）');
-      expect(two - one, lessThan(30.0), reason: '只该多**一行**，不是两行');
+      expect(two - one, lessThan(46.0), reason: '只该多**一行**，不是两行');
     });
 
     testWidgets('★ 三个空行 ⇒ 两行高（每多一个空行就多一行）', (WidgetTester tester) async {
@@ -99,7 +99,7 @@ void main() {
       final Rect slot = tester.getRect(_slots.first);
       // ★ 空行的行盒**从段距之后**起算（`gapBefore ≈ 11.2`，行高 ≈ 20）
       //   ⇒ 第二行落在 ~31..51 这段里
-      await tester.tapAt(Offset(slot.left + 40, slot.top + 40));
+      await tester.tapAt(Offset(slot.left + 40, slot.top + 60));
       await tester.pumpAndSettle();
       expect(got, 3, reason: '点在第二个空行上 ⇒ 光标落在第二个空行的行首（实际 $got）');
     });
@@ -130,7 +130,7 @@ void main() {
       final double one = tester.getTopLeft(find.textContaining('甲').first).dy;
       await _pumpDocView(tester, '\n\n甲');
       final double two = tester.getTopLeft(find.textContaining('甲').first).dy;
-      expect(two - one, greaterThan(12.0),
+      expect(two - one, greaterThan(30.0),
           reason: '文首多一个空行就多一整行（实测 ${two - one}）');
     });
   });

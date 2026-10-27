@@ -21,6 +21,10 @@ final Finder _blankSlot = find.byWidgetPredicate(
     (Widget w) => w.runtimeType.toString() == '_BlankSlot');
 
 Future<DocBuffer> _pump(WidgetTester tester, String doc) async {
+  tester.view.physicalSize = const Size(900, 1400);
+  tester.view.devicePixelRatio = 1.0;
+  addTearDown(tester.view.resetPhysicalSize);
+  addTearDown(tester.view.resetDevicePixelRatio);
   final DocBuffer buf = DocBuffer(doc)..setCaret(0);
   await tester.pumpWidget(MaterialApp(
     home: Scaffold(
@@ -39,8 +43,8 @@ void main() {
   testWidgets('★ 点文末空白 ⇒ 光标落到文末下一行，**文档一个字都不变**',
       (WidgetTester tester) async {
     final DocBuffer buf = await _pump(tester, '甲\n');
-    expect(_blankSlot, findsOneWidget, reason: '单行文档也要有"文末空白"这个槽');
-    await tester.tap(_blankSlot);
+    expect(_blankSlot, findsWidgets, reason: '单行文档也要有"文末空白"这个槽（尾部每一行各一个 + 末尾那片白）');
+    await tester.tap(_blankSlot.first);
     await tester.pumpAndSettle();
     expect(buf.buf, '甲\n', reason: '点击只移光标（改前会补 `\\n` ⇒ `甲\\n\\n`）');
     expect(buf.caret, 2, reason: '光标落在最后一行之后那一格（文末下一行行首）');
@@ -49,7 +53,7 @@ void main() {
   testWidgets('★ 连点三次 ⇒ 文档不变、光标不动（不越点越长）', (WidgetTester tester) async {
     final DocBuffer buf = await _pump(tester, '甲\n');
     for (var i = 0; i < 3; i++) {
-      await tester.tap(_blankSlot);
+      await tester.tap(_blankSlot.first);
       await tester.pumpAndSettle();
     }
     expect(buf.buf, '甲\n');
@@ -58,7 +62,7 @@ void main() {
 
   testWidgets('★ 点空白不产生编辑 ⇒ 撤销栈里没有东西可撤', (WidgetTester tester) async {
     final DocBuffer buf = await _pump(tester, '甲\n');
-    await tester.tap(_blankSlot);
+    await tester.tap(_blankSlot.first);
     await tester.pumpAndSettle();
     expect(buf.undo(), isFalse, reason: '点击没有改文档，自然没有可撤销的编辑');
     expect(buf.buf, '甲\n');
@@ -67,7 +71,7 @@ void main() {
   testWidgets('★ 点完之后**竖条要画出来**（用户实测："能到空行，但光标显示不出来"）',
       (WidgetTester tester) async {
     final DocBuffer buf = await _pump(tester, '甲\n');
-    await tester.tap(_blankSlot);
+    await tester.tap(_blankSlot.first);
     await tester.pumpAndSettle();
     expect(buf.caret, 2);
     expect(_bars(tester), isNotEmpty, reason: '文末下一行上必须看得见竖条');
