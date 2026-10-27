@@ -38,7 +38,42 @@ Future<void> _press(WidgetTester tester, LogicalKeyboardKey key, [int n = 1]) as
 
 String _vis(String s) => s.replaceAll('\n', '⏎');
 
+/// 光标条的纵坐标（用来量"看得见的一行"）
+double _caretY(WidgetTester tester) {
+  final List<double> ys = <double>[];
+  for (final Element e in find.byType(Container).evaluate()) {
+    final Container w = e.widget as Container;
+    final BoxConstraints? c = w.constraints;
+    if (c == null || c.minWidth != 1.5 || c.maxWidth != 1.5) continue;
+    final RenderObject? ro = e.renderObject;
+    if (ro is! RenderBox || !ro.hasSize) continue;
+    ys.add(ro.localToGlobal(Offset.zero).dy);
+  }
+  if (ys.isEmpty) return -1;
+  ys.sort();
+  return ys.last;
+}
+
 void main() {
+  // ★★ 2026-10-27 用户实测追加：「分页原页的文末下一个空行，继续按 Enter，光标位置看上去不变，
+  //   但退格次数会增加」⇒ 接缝槽原来没有 `caretDy`/`lineOffsets`，光标恒画在槽顶。
+  //   修完：每次 Enter 光标**往下走一行**（与末页同一条口径）。
+  testWidgets('页尾空行：连按 Enter 光标每次下移一行', (WidgetTester tester) async {
+    const String doc = '甲\n\n\n<!-- pagebreak -->\n乙\n';
+    final DocBuffer buf = await _mount(tester, doc, 2);
+    final List<double> ys = <double>[_caretY(tester)];
+    for (var i = 0; i < 3; i++) {
+      await _press(tester, LogicalKeyboardKey.enter);
+      ys.add(_caretY(tester));
+      // ignore: avoid_print
+      print('[seam#${i + 1}] y=${ys.last.toStringAsFixed(1)} | ${_vis(buf.buf)}');
+    }
+    for (var i = 1; i < ys.length; i++) {
+      expect(ys[i] - ys[i - 1], greaterThan(10),
+          reason: '第 $i 次 Enter 光标要往下走一行（改前一直是同一根位置）');
+    }
+  });
+
   testWidgets('文末：连按 4 次 Enter ⇒ 每次多一整行（不再封顶）', (WidgetTester tester) async {
     const String doc = '甲\n';
     final DocBuffer buf = await _mount(tester, doc, doc.length);

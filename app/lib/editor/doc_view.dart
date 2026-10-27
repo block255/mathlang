@@ -2166,14 +2166,24 @@ class DocViewState extends State<DocView> {
       //   ⇒ 起算点是 acceptTo + 1，右端是下一页第一个单元的左边界。
       final int ownedFrom =
           (prevUnit.acceptTo + 1).clamp(0, widget.buffer.buf.length);
+      // ★★★ 2026-10-27（用户实测：「分页原页的文末下一个空行，继续按 Enter，光标位置看上去不变，
+      //   但退格次数会增加」）：接缝槽原来**没有 `caretDy` / `lineOffsets`** ⇒ 光标恒画在槽顶，
+      //   缓冲区在长（Enter 生效、退格变多）而屏幕上看不出光标在动。
+      //   ⇒ 与末页槽同一条：`dy = 段距 + k × 行高`（k = 光标在这串空行里的第几个）。
+      final List<int> seamRun = _blankRunAfter(prevUnit);
+      final int seamK = _caretLineIndexInRun(seamRun) ?? 0;
       children.add(_BlankSlot(
         id: 'seam@p$p',
         height: free,
         offset: tapAt,
+        lineOffsets: seamRun,
+        gapBefore: _gapBefore(BlockType.paragraph),
+        lineHeight: _blankLineHeight,
         caretHere: !widget.hideCaretAndSelection &&
             widget.caretVisible &&
             (_caret ?? -1) >= ownedFrom &&
             (_caret ?? -1) < end,
+        caretDy: _gapBefore(BlockType.paragraph) + seamK * _blankLineHeight,
         caretHeight: textCaretHeight(_s.bodyFontSize),
         caretWidth: 1.5,
         caretColor: const Color(kCaretColorValue),
