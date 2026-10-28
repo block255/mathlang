@@ -202,14 +202,16 @@ class NativeUpdateGateway implements UpdateGateway {
   /// 为什么必须外挂：**Windows 不允许边跑边装**（实测 0x80073D02「资源正在使用中」）。
   /// 流程：等本进程退出 → `Add-AppxPackage -ForceApplicationShutdown` → 起新版。
   static String _installerScript(String msix, String version) => '''
-param([int]\$WaitPid = 0)
 \$ErrorActionPreference = 'Stop'
 \$result = Join-Path \$env:TEMP 'mathlang-update-result.txt'
 \$msix = '${msix.replaceAll("'", "''")}'
 \$log = Join-Path \$env:TEMP 'mathlang-update-log.txt'
-# 等主程序退出（最多 30 秒）——它自己会 exit(0)，这里只是兜底
-try { if (\$WaitPid -gt 0) { Wait-Process -Id \$WaitPid -Timeout 30 -ErrorAction SilentlyContinue } } catch {}
-Start-Sleep -Milliseconds 900
+# ★★ 2026-10-28 实测教训：**不要用 -File 传参数**！
+#   上一版是 `powershell -File x.ps1 -WaitPid \$pid` —— 那 `\$pid` 是**字面量**，
+#   `[int]\$WaitPid` 绑不上 ⇒ 参数绑定当场报错 ⇒ 脚本**一行都没跑**：
+#   没有安装、没有结果文件、没有自动打开，用户看到的就是"点了没反应"。
+#   ⇒ 现在脚本**不带任何参数**：主程序点【现在安装】后立刻 exit(0)，这里睡够 2.5 秒即可。
+Start-Sleep -Milliseconds 2500
 function Write-Result([string]\$text) {
   [IO.File]::WriteAllText(\$result, \$text, (New-Object System.Text.UTF8Encoding(\$false)))
 }
@@ -263,8 +265,6 @@ try {
           'Hidden',
           '-File',
           script.path,
-          '-WaitPid',
-          '$pid',
         ],
         mode: ProcessStartMode.detached,
       );
