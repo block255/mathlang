@@ -2569,14 +2569,20 @@ class DocViewState extends State<DocView> {
     return at;
   }
 
-  /// 点"文末那片空白" ⇒ **把光标放到最后一行下面那一行**（**不改文档**）。
+  /// 点"文末下方那片空白"（大片白、不在任何一行上）⇒ 落点按**只读基准 7** 的三级走。
   ///
-  /// ★★★ 2026-10-27（撤批 43 的"点击补一行"；用户："点击下部空白让光标落到文末下一个空行，
-  ///   这符合直觉和操作习惯 —— 但没必要和改文档冲突"）：
-  ///   "文末下一个空行"**不需要造出来** —— 它就是这个位置：最后一行之后那一格
-  ///   （= `buf.length`，也就是再按一次 Enter 会落脚的那一行）。
-  ///   ⇒ 点击只移光标；要真的多一行按 Enter（现在一次 Enter 正好一行）。
-  ///   两种口径在**看不见一个字符**上是等价的，区别只在"点一下会不会把文档改脏"。
+  /// 〔用户〕只读基准 7（原话）：
+  ///   「点击到文末下方的空白时 / 那里本来就有空行 ⇒ 落那个空行行首 /
+  ///     没有 ⇒ 向上找最下面一个存在的空行的行首 / 都没有 ⇒ 文末下一行那个空行的行首」
+  ///
+  /// * **第 1 级**（点在某个空行上）由**按行切分的子槽**（`tailline@k`）各自处理，不在这里；
+  /// * **第 2 级**（点在所有行下面那片白里）⇒ 向上找**整篇文档**里最下面一个**已存在的空行**
+  ///   —— ★ 2026-10-28 用户手测："点击到无空行处实际上回到了文末下一行那个空行，
+  ///     而不是向上最近的已有空行"。原来这里只在**文末那一串**空行里找（甚至直接落 `len`），
+  ///     所以"空行在两段之间、文末自己没空行"时就永远落到文末下一行 ⇒ 漏了第 2 级。
+  ///   ★ "已存在的空行" = 缓冲区里真有一整行空的行；**文末下一行那一格不是空行**
+  ///     （它是"下一段会落脚的位置"，没有实体）。
+  /// * **第 3 级**（整篇一个空行都没有）⇒ 文末下一行（= EOF）；文末紧跟分页符时是分页符行首。
   void _onTailBlankTap([int? at]) {
     final DocBuffer b = widget.buffer;
     final String s = b.buf;
@@ -2584,12 +2590,38 @@ class DocViewState extends State<DocView> {
       b.setCaret(0);
       return;
     }
-    // 槽给出了"第一个真实可落位置"（空行行首 / 分页符行首）⇒ 落到那儿，同样不改文档。
+    final int? lowestBlank = _lowestExistingBlankLine();
+    if (lowestBlank != null) {
+      b.setCaret(lowestBlank);   // 第 2 级
+      return;
+    }
+    // 第 3 级：槽给出的"文末可落位置"（分页符行首 / 空行首），没有就是文末下一行
     if (at != null && at >= 0 && at < s.length) {
       b.setCaret(at);
       return;
     }
     b.setCaret(s.length);
+  }
+
+  /// 整篇文档里**最下面一个已存在的空行**的行首偏移（一个都没有 ⇒ `null`）。
+  ///
+  /// "已存在的空行" = 缓冲区里一行内容 `trim()` 为空、且**真有行终止符**的那一行。
+  /// 文末那个"下一段会落脚"的位置**不算**（它不是一行）。
+  int? _lowestExistingBlankLine() {
+    final String s = widget.buffer.buf;
+    if (s.isEmpty) return null;
+    // 从最后一行往回扫：文档以 `\n` 收尾 ⇒ 最后一行是 [行首, len-1)
+    var end = s.length;
+    if (s[end - 1] == '\n') end -= 1;
+    while (end > 0) {
+      final int nl = s.lastIndexOf('\n', end - 1);
+      final int start = nl < 0 ? 0 : nl + 1;
+      final String line = s.substring(start, end);
+      if (line.trim().isEmpty) return start;
+      if (nl < 0) break;
+      end = nl;
+    }
+    return null;
   }
 
   /// 上一个单元之后如果跟着**空行**，返回那个空行的起点；否则 -1。

@@ -126,6 +126,30 @@ void main() {
       expect(ys.length, 1, reason: '只能有一根光标（不能文末行末与下一行各画一根）：$ys');
       expect(ys.single, closeTo(_caretY(tester), _eps));
     });
+
+    // 〔用户〕只读基准 7 第二级：「没有 ⇒ 向上找**最下面一个存在的空行**的行首」
+    testWidgets('★ 第 2 级：文末自己没空行、空行在两段之间 ⇒ 落到**那个空行的行首**',
+        (WidgetTester tester) async {
+      // `甲⏎⏎乙⏎`：唯一存在的空行在偏移 2（甲与乙之间）
+      final DocBuffer buf = await _mount(tester, '甲\n\n乙\n', 3);
+      final Rect page = _page0(tester);
+      await tester.tapAt(Offset(page.center.dx, page.top + page.height * 0.6));
+      await tester.pumpAndSettle();
+      expect(buf.caret, 2,
+          reason: '点文末下方空白 ⇒ 向上找最下面一个存在的空行（偏移 2），'
+              '不是"文末下一行"（用户 2026-10-28 手测抓到的正是这条）');
+      expect(_caretYs(tester).length, 1, reason: '一根光标');
+    });
+
+    testWidgets('★ 第 2 级：文末有一串空行 ⇒ 落到**最后那一行**（不是文末下一行）',
+        (WidgetTester tester) async {
+      // `甲⏎⏎⏎`：存在的空行在偏移 2、3；文末下一行是 4
+      final DocBuffer buf = await _mount(tester, '甲\n\n\n', 1);
+      final Rect page = _page0(tester);
+      await tester.tapAt(Offset(page.center.dx, page.top + page.height * 0.6));
+      await tester.pumpAndSettle();
+      expect(buf.caret, 3, reason: '最下面一个存在的空行 = 偏移 3（偏移 4 是"文末下一行"）');
+    });
   });
 
   group('基准 1/3 · Enter 与退格在文末 1:1，且永久行删不掉', () {

@@ -129,11 +129,14 @@ void main() {
           reason: '应当落在分页符行首；实际落在 ${buf.caret}');
     });
 
-    testWidgets('★ 点末页那片白 ⇒ 光标落到**文末下一行**，文档一个字都不变（2026-10-27 撤批 43）',
+    testWidgets('★ 点末页那片白 ⇒ 落**最下面一个存在的空行**，文档一个字都不变',
         (WidgetTester tester) async {
       // 用户 2026-10-27：「点击下部空白让光标落到文末下一个空行，符合直觉和操作习惯，
-      //   但没必要和改文档冲突」⇒ **那个位置本来就存在**（最后一行之后那一格），不必造一行。
-      // 判据：点完文档逐字不变、光标在 `buf.length`（= 再按 Enter 会落脚的那一行）。
+      //   但没必要和改文档冲突」⇒ **点击不改文档**（这条不变）。
+      // ★★ 2026-10-28：落点按**只读基准 7** 的三级走 —— 这份文档里"存在的空行"是
+      //   `甲⏎⏎乙⏎` 的偏移 2（甲与乙之间）⇒ 第二级"向上找最下面一个存在的空行"
+      //   落它，**不再**一律落 `buf.length`（用户手测：「点击到无空行处实际上回到了
+      //   文末下一行那个空行，而不是向上最近的已有空行」）。
       final DocBuffer buf = await _mount(tester, '甲\n\n乙\n');
       final String before = buf.buf;
       final List<Rect> slots = _slotRects(tester);
@@ -141,7 +144,7 @@ void main() {
       await tester.tapAt(slots.last.center);
       await tester.pumpAndSettle();
       expect(buf.buf, before, reason: '点击只移光标，不许改文档（改前会补一行空行）');
-      expect(buf.caret, buf.buf.length, reason: '光标落在文末下一行的行首');
+      expect(buf.caret, 2, reason: '落最下面一个存在的空行（偏移 2），不是文末下一行');
     });
 
     testWidgets('★ 分页符行内每格**只有一根**光标条（不许页尾槽与单元叠两根）',
