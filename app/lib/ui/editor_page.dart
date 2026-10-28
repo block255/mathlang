@@ -27,6 +27,8 @@ import '../core/block.dart';
 import '../core/doc_buffer.dart';
 import '../core/doc_settings.dart';
 import '../core/document_file.dart';
+import '../core/update_check.dart';
+import '../core/version_ref.dart';
 import '../editor/edit_view.dart';
 import '../io/pdf_builder.dart';
 import '../lang/block_ops.dart';
@@ -42,6 +44,7 @@ import '../io/desktop_shortcut.dart';
 import '../io/session_data.dart';
 import '../io/session_store.dart';
 import '../io/session_store_platform.dart';
+import '../io/update_gateway.dart';
 import '../layout/page_metrics.dart';
 import '../app_info.dart';
 import 'app_settings.dart';
@@ -52,6 +55,7 @@ import 'env_size_dialog.dart';
 import '../lang/env_resize.dart';
 import 'settings_page.dart';
 import 'symbol_panel.dart';
+import 'update_dialogs.dart';
 
 /// ★★ S4-c：**快捷键 → 符号库 id**（唯一的映射表；tex 一律取符号库里的那一份）。
 ///
@@ -90,6 +94,7 @@ class EditorPage extends StatefulWidget {
     this.buffer,
     this.gateway,
     this.session,
+    this.updateGateway,
   });
 
   /// 测试注入（不传则从 `assets/symbols.json` 加载）
@@ -103,6 +108,9 @@ class EditorPage extends StatefulWidget {
 
   /// ★ S4-e-①：本地暂存后端（不传就用当前平台的真实现 —— 桌面写 exe 同目录的 JSON）
   final SessionStore? session;
+
+  /// ★ D1：检查更新的通道（不传就用当前平台的真实现；测试注入假的，**不联网**）
+  final UpdateGateway? updateGateway;
 
   @override
   State<EditorPage> createState() => EditorPageState();
@@ -378,6 +386,155 @@ class EditorPageState extends State<EditorPage> {
     //   再挂上"变了就写进设置"的回调。
     DirMemory.load(_s.lastDir);
     DirMemory.onChanged = _rememberDir;
+    // ★★ D1（2026-10-28）：启动后**静默**查一次更新。
+    //   用户原话：「启动后静默检查，如果没发现就无异常，有发现才弹窗"」——
+    //   所以这里**绝不 await**（不阻塞启东），延后 3 秒、超时 6 秒，失败只留痕。
+    _scheduleStartupUpdateCheck();
+  }
+
+  // ═══════════════════════ D1 · 检查更新 ═══════════════════════
+
+  /// 检查更新的通道（不传 = 当前平台的真实现，会联网）
+  late final UpdateGateway _updates =
+      widget.updateGateway ?? platformUpdateGateway();
+
+  /// 正在检查 ⇒ 设置页按钮显示"检查中…"
+  bool _updateChecking = false;
+
+  /// 启动后静默检查：等首帧 + 3 秒，然后**不 await** 地发出去
+  void _scheduleStartupUpdateCheck() {
+    // ★ Web 与测试环境不查（`supportsAutoCheck`）——
+    //   测试里那个 3 秒定时器会让 `pumpAndSettle` 判"有挂着的定时器"而失败（实测 147 个测试）。
+    if (!_updates.supportsAutoCheck) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      Future<void>.delayed(const Duration(seconds: 3), () {
+        if (!mounted || _disposed) return;
+        // 限频在 `_checkUpdate` 里判（`shouldAutoCheck`：默认 24 小时一次）
+        unawaited(_checkUpdate(manual: false));
+      });
+    });
+  }
+
+  /// 查一次更新。
+  ///
+  /// [manual] = 用户自己点了「检查更新」（无视"已忽略"与限频，该答就答）。
+  Future<void> _checkUpdate({required bool manual}) async {
+    if (_updateChecking) return;
+    final DateTime now = DateTime.now();
+    final VersionRef? cur = VersionRef.tryParse(kAppVersion);
+    if (!manual &&
+        !shouldAutoCheck(
+          enabled: _s.autoCheckUpdate,
+          lastCheckAt: DateTime.tryParse(_s.updateLastCheckAt),
+          now: now,
+        )) {
+      return; // 限频：24 小时内查过 / 开关关着
+    }
+    if (mounted) setState(() => _updateChecking = true);
+    UpdateInfo? info;
+    try {
+      info = await _updates.checkLatest();
+    } catch (_) {
+      info = null;
+    }
+    if (!mounted || _disposed) return;
+    setState(() => _updateChecking = false);
+    final bool newer = shouldPromptUpdate(
+      current: cur,
+      latest: info?.version,
+      ignoredVersion: _s.updateIgnoredVersion,
+      manual: manual,
+    );
+    final UpdateCheck result =
+        info == null ? UpdateCheck.failed : (newer ? UpdateCheck.newer : UpdateCheck.upToDate);
+    setState(() => _s = _s.copyWith(
+          updateLastCheckAt: now.toIso8601String(),
+          updateLastResult: result.name,
+        ));
+    _schedulePersist();
+    if (result != UpdateCheck.newer || info == null) {
+      if (manual) {
+        _snack(result == UpdateCheck.failed
+            ? '检查失败：网络不可用（不影响使用）'
+            : '已是最新版本（$cur）');
+      }
+      return;
+    }
+    await _promptUpdate(info, cur);
+  }
+
+  /// 弹出「发现新版本」，按用户的选择落动作
+  Future<void> _promptUpdate(UpdateInfo info, VersionRef? cur) async {
+    final VersionRef? curV = cur ?? VersionRef.tryParse(kAppVersion);
+    if (curV == null) return;
+    final UpdateDecision? d = await showUpdateAvailableDialog(
+      context,
+      info: info,
+      current: curV,
+      canInstall: info.canInstall && _updates.isPackaged,
+      autoCheckEnabled: _s.autoCheckUpdate,
+    );
+    if (!mounted || _disposed || d == null) return;
+    // 勾了勾选 ⇒ 以后完全不再自动查（设置页同一个开关）
+    if (d.disableAuto) {
+      setState(() => _s = _s.copyWith(autoCheckUpdate: false));
+      _schedulePersist();
+    }
+    switch (d.choice) {
+      case UpdateChoice.later:
+        // 只跳过**这一个**版本（下次升版还会提示）
+        setState(() => _s = _s.copyWith(
+              updateIgnoredVersion: (info.version ?? curV).toString(),
+            ));
+        _schedulePersist();
+      case UpdateChoice.openPage:
+        await _updates.openReleasePage(info.pageUrl);
+      case UpdateChoice.install:
+        await _installUpdate(info);
+    }
+  }
+
+  /// 下载 → 装 → 问「立即重启 / 暂不重启」
+  Future<void> _installUpdate(UpdateInfo info) async {
+    _snack('正在下载更新…');
+    final String? path = await _updates.downloadMsix(info);
+    if (!mounted || _disposed) return;
+    if (path == null) {
+      _snack('下载失败 —— 已为你打开发布页，可以手动下载');
+      await _updates.openReleasePage(info.pageUrl);
+      return;
+    }
+    _snack('正在安装…');
+    final bool ok = await _updates.installMsix(path);
+    if (!mounted || _disposed) return;
+    if (!ok) {
+      // 诚实降级：装不上（多半是应用被占用）就去发布页，别假装成功
+      _snack('更新没装上（应用可能被占用）—— 已为你打开发布页');
+      await _updates.openReleasePage(info.pageUrl);
+      return;
+    }
+    final bool restart = await showUpdateDoneDialog(context, info: info);
+    if (!mounted || _disposed) return;
+    if (restart) await _updates.relaunch();
+  }
+
+  /// 设置页那一行状态文案（**失败也要看得见** —— 原则 5）
+  String _updateStatusText() {
+    if (_updateChecking) return '正在检查…';
+    final DateTime? at = DateTime.tryParse(_s.updateLastCheckAt);
+    if (at == null) return '';
+    final DateTime now = DateTime.now();
+    final String when = (at.year == now.year && at.month == now.month && at.day == now.day)
+        ? '上次检查：今天 ${at.hour.toString().padLeft(2, '0')}:${at.minute.toString().padLeft(2, '0')}'
+        : '上次检查：${at.month}-${at.day} '
+            '${at.hour.toString().padLeft(2, '0')}:${at.minute.toString().padLeft(2, '0')}';
+    final String what = switch (_s.updateLastResult) {
+      'newer' => '发现新版本 ${_s.updateIgnoredVersion.isEmpty ? '' : '（已跳过 ${_s.updateIgnoredVersion}）'}',
+      'ok' => '已是最新',
+      'failed' => '检查失败：网络不可用（不影响使用）',
+      _ => '',
+    };
+    return what.isEmpty ? when : '$when · $what';
   }
 
   /// 文件对话框用过某个目录 ⇒ 记进设置并落盘（下次打开/保存/导出从这儿开始）
@@ -1402,6 +1559,11 @@ class EditorPageState extends State<EditorPage> {
                       _schedulePersist();
                     },
                     shortcuts: _shortcuts,
+                    // ★ D1：更新那三条（检查更新 / 自动检查开关 / 发布页）
+                    onCheckUpdate: () => _checkUpdate(manual: true),
+                    onOpenReleasePage: () => _updates.openReleasePage(kUpdateReleasePage),
+                    updateStatusText: _updateStatusText(),
+                    updateChecking: _updateChecking,
                     // ★ U6：桌面快捷方式的状态与操作（设置 → 高级）
                     desktopShortcutExists: desktopShortcutExists(),
                     onDesktopShortcut: (bool create) async {

@@ -65,6 +65,10 @@ class AppSettings {
     this.autoShorthand = true,
     this.desktopShortcut = true, // ★ U6：启动时确保桌面有快捷方式
     this.lastDir = '', // ★ F19：上次用过的目录（打开/保存/导出图片集的初始地点）
+    this.autoCheckUpdate = true, // ★ D1：启动后静默检查更新
+    this.updateLastCheckAt = '', // ★ D1：上次检查时间（ISO 8601；空 = 没查过）
+    this.updateLastResult = '', // ★ D1：上次检查结果（ok / newer / failed；空 = 没查过）
+    this.updateIgnoredVersion = '', // ★ D1：「暂不更新」跳过的那一个版本（只跳过它）
   });
 
   /// ★ 页面在**可用空间**里的归一化位置：`0` 贴左 · `0.5` 居中 · `1` 贴右
@@ -126,6 +130,26 @@ class AppSettings {
   /// 与 `io/dir_memory.dart` 配合：那边管内存与对话框，这边管落盘。
   final String lastDir;
 
+  /// ★★ D1（2026-10-28）：**启动后静默检查更新**。
+  ///
+  /// 用户在弹窗里勾「以后不再自动检查更新」，或在本页关掉开关 ⇒ 完全不再自动联网查；
+  /// **手动「检查更新」按钮照旧可用**（那条不看这个开关）。
+  final bool autoCheckUpdate;
+
+  /// ★★ D1：上次检查时间（ISO 8601 字符串；空 = 从没查过）。
+  ///
+  /// 存字符串不存 `DateTime`：它要落盘进 JSON，而 `DateTime` 的序列化歧义太多。
+  /// 限频判据在 `core/update_check.dart: shouldAutoCheck`（间隔 ≥ 24 小时）。
+  final String updateLastCheckAt;
+
+  /// ★★ D1：上次检查结果 —— `ok`（已是最新）/ `newer`（发现新版）/ `failed`（网络或解析失败）。
+  /// 空串 = 从没查过。**失败也要留痕**（原则 5：静默失败必须可见）。
+  final String updateLastResult;
+
+  /// ★★ D1：「暂不更新」跳过的**那一个**版本（`1.2.0`；空 = 没有跳过任何版本）。
+  /// 只跳过它：下一个版本照样提示（用户 2026-10-28 拍板）。
+  final String updateIgnoredVersion;
+
   /// 手机默认值：状态栏隐藏、面板覆盖
   static const AppSettings forPhone = AppSettings(
     panelMode: PanelMode.overlay,
@@ -172,6 +196,10 @@ class AppSettings {
     bool? autoShorthand,
     bool? desktopShortcut,
     String? lastDir,
+    bool? autoCheckUpdate,
+    String? updateLastCheckAt,
+    String? updateLastResult,
+    String? updateIgnoredVersion,
   }) =>
       AppSettings(
         pageXDock: pageXDock ?? this.pageXDock,
@@ -191,6 +219,10 @@ class AppSettings {
         autoShorthand: autoShorthand ?? this.autoShorthand,
         desktopShortcut: desktopShortcut ?? this.desktopShortcut,
         lastDir: lastDir ?? this.lastDir,
+        autoCheckUpdate: autoCheckUpdate ?? this.autoCheckUpdate,
+        updateLastCheckAt: updateLastCheckAt ?? this.updateLastCheckAt,
+        updateLastResult: updateLastResult ?? this.updateLastResult,
+        updateIgnoredVersion: updateIgnoredVersion ?? this.updateIgnoredVersion,
       );
 
   /// 实际生效的面板形态（把 [autoPanelMode] 与窗口宽算进来）

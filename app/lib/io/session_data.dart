@@ -137,6 +137,11 @@ Map<String, dynamic> appSettingsToJson(AppSettings s) => <String, dynamic>{
   'desktopShortcut': s.desktopShortcut,
       // ★ F19：上次用过的目录（打开/保存/导出图片集的初始地点）
       'lastDir': s.lastDir,
+      // ★ D1：检查更新的四样状态（自动开关 / 上次检查时间 / 上次结果 / 跳过的那个版本）
+      'autoCheckUpdate': s.autoCheckUpdate,
+      'updateLastCheckAt': s.updateLastCheckAt,
+      'updateLastResult': s.updateLastResult,
+      'updateIgnoredVersion': s.updateIgnoredVersion,
     };
 
 AppSettings appSettingsFromJson(Map<String, dynamic> m) {
@@ -179,6 +184,10 @@ AppSettings appSettingsFromJson(Map<String, dynamic> m) {
     autoShorthand: pick('autoShorthand', d.autoShorthand),
     desktopShortcut: pick('desktopShortcut', d.desktopShortcut),
     lastDir: pick('lastDir', d.lastDir),
+    autoCheckUpdate: pick('autoCheckUpdate', d.autoCheckUpdate),
+    updateLastCheckAt: pick('updateLastCheckAt', d.updateLastCheckAt),
+    updateLastResult: pick('updateLastResult', d.updateLastResult),
+    updateIgnoredVersion: pick('updateIgnoredVersion', d.updateIgnoredVersion),
   );
 }
 

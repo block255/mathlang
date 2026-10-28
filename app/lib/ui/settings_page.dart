@@ -77,6 +77,10 @@ class SettingsOverlay extends StatefulWidget {
     this.autoWrappedCount = 0,
     this.desktopShortcutExists = false,
     this.onDesktopShortcut,
+    this.onCheckUpdate,
+    this.onOpenReleasePage,
+    this.updateStatusText = '',
+    this.updateChecking = false,
   });
 
   final AppSettings settings;
@@ -108,6 +112,17 @@ class SettingsOverlay extends StatefulWidget {
 
   /// 从"文件 ▾ → 设置"或"关于"进来时直接落到某一组
   final int initialGroup;
+
+  /// ★★ D1（2026-10-28）：「关于」组里的**更新**小节 ——
+  /// · [onCheckUpdate]：点「检查更新」（外壳去联网，超时 6 s，失败只留痕不弹窗）；
+  /// · [onOpenReleasePage]：点「前往发布页」（浏览器打开 GitHub Release）；
+  /// · [updateStatusText]：那一行状态（`上次检查：今天 14:20 · 已是最新` /
+  ///   `上次检查失败：网络不可用`）—— **失败必须看得见**（原则 5）；
+  /// · [updateChecking]：正在查 ⇒ 按钮换成"检查中…"并禁用。
+  final VoidCallback? onCheckUpdate;
+  final VoidCallback? onOpenReleasePage;
+  final String updateStatusText;
+  final bool updateChecking;
 
   /// ★★ 2026-10-19（U1）：「高级」组的三块外部件 ——
   /// · [diagnosticsText]：**诊断信息**（版本 / 平台 / 页面几何 / 文档规模 / 暂存位置），只读 + 一键复制；
@@ -1113,6 +1128,44 @@ class SettingsOverlayState extends State<SettingsOverlay> {
         '版本 $kAppVersionName · ${_platformLabel()}\n渲染引擎 $kMathEngine',
         key: const Key('about-version'),
         style: const TextStyle(fontSize: 11, height: 1.5, color: Color(0xFF718096)),
+      ),
+
+      // ─────────── 更新（D1，2026-10-28）───────────
+      //
+      // 口径（用户 2026-10-28 定）：
+      //   · 启动后**静默**查一次；没发现不打扰，**失败也只在这里留一行**（原则 5）；
+      //   · 只有发现新版本才弹窗（三个选项 + 「以后不再自动检查」勾选）；
+      //   · 关掉「自动检查更新」⇒ 完全不再自动联网；**手动「检查更新」照旧可用**。
+      const SettingSection(title: '更新'),
+      SettingRow(
+        title: '检查更新',
+        subtitle: widget.updateStatusText.isEmpty
+            ? '查一次 GitHub Release（约 2 KB）。没发现不打扰；失败也只在这里留一行。'
+            : widget.updateStatusText,
+        child: OutlinedButton(
+          key: const Key('check-update'),
+          onPressed: widget.updateChecking ? null : widget.onCheckUpdate,
+          child: Text(widget.updateChecking ? '检查中…' : '检查更新'),
+        ),
+      ),
+      SettingRow(
+        title: '自动检查更新',
+        subtitle: '启动后静默查一次；只提示没被忽略过的版本。关掉之后手动「检查更新」仍然可用。',
+        child: Switch(
+          key: const Key('auto-check-update'),
+          value: widget.settings.autoCheckUpdate,
+          onChanged: (bool v) =>
+              widget.onSettings(widget.settings.copyWith(autoCheckUpdate: v)),
+        ),
+      ),
+      SettingRow(
+        title: '发布页',
+        subtitle: 'github.com/block255/mathlang/releases',
+        child: OutlinedButton(
+          key: const Key('open-release-page'),
+          onPressed: widget.onOpenReleasePage,
+          child: const Text('前往发布页'),
+        ),
       ),
     ];
   }

@@ -1,4 +1,4 @@
-﻿# 数语引擎 · **MSIX 打包**（2026-10-19，方案 A）
+# 数语引擎 · **MSIX 打包**（2026-10-19，方案 A）
 #
 # 为什么做 MSIX：Windows 11（26200）对**文件级** exe 一律走 SmartScreen；
 #   而**已安装的 MSIX 应用启动时不走那道检查** ⇒ 这是"不花钱、分发也不弹"的现实解。
@@ -25,13 +25,21 @@ $publisherDisplay = '数语引擎'
 $exeName = '数语引擎.exe'
 
 # ---------- 版本 ----------
-if (-not $Version) {
+# ★★ 2026-10-28（用户拍板）：MSIX 的第 4 段 = **构建号**（`1.1.2+5` → `1.1.2.5`）。
+#   原来固定 `.0` ⇒ 同一版本名重打包**装不上**（MSIX 要求版本递增），
+#   而"构建号"本来就是"同版本名的修订"，正好对上第 4 段。
+#   ⇒ 不抬版本名也能反复覆盖安装；「关于」页仍只显示版本名（C2 生成）。
+$rawVer = $Version
+if (-not $rawVer) {
     $line = Select-String -Path (Join-Path $app 'pubspec.yaml') -Pattern '^version:\s*(\S+)' | Select-Object -First 1
-    $Version = ($line.Matches[0].Groups[1].Value -split '\+')[0]
+    $rawVer = $line.Matches[0].Groups[1].Value
 }
+$verParts = "$rawVer" -split '\+'
+$Version = $verParts[0]
+$buildNo = if ($verParts.Count -gt 1 -and $verParts[1] -match '^\d+$') { $verParts[1] } else { '0' }
 $appxVersion = "$Version".Split('.')
 if ($appxVersion.Count -lt 3) { throw "版本号要形如 1.0.0（实际 $Version）" }
-$appxVersion = "$($appxVersion[0]).$($appxVersion[1]).$($appxVersion[2]).0"
+$appxVersion = "$($appxVersion[0]).$($appxVersion[1]).$($appxVersion[2]).$buildNo"
 
 # ---------- SDK 工具 ----------
 $sdkRoot = 'C:\Program Files (x86)\Windows Kits\10\bin'
