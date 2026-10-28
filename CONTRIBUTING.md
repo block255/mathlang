@@ -106,12 +106,27 @@ git config core.hooksPath .githooks
 
 ## 8. 发布
 
+> ★★★ **不是每次改完都发布**（2026-10-28 用户定，**默认节奏**）：
+>
+> ```
+> 改完 → 需要重新构建时，先构建**绿色开发版**（dist\v<版本>\mathlang.exe）
+>      → 用户直接在开发版上验手感
+>      → 一次周期更新**完成并确认后**，才打包发布
+> ```
+>
+> 理由：发布要过一遍 msix 签名 / 三个附件 / Release / 装机器，成本远高于 `build_exe.ps1`；
+> 而**手感类**问题只有用户上手才知道对不对（这一天连改了三轮）。开发版验过再发，
+> 一次就对上。版本号可以**先抬**（开发版与最终发布用同一个号，产物一致），
+> 但 **tag / Release 只在确认之后**。
+
 1. bump [`app/pubspec.yaml`](app/pubspec.yaml) 的 `version`。
-2. `scripts/build_exe.ps1` → `scripts/pack_release.ps1` → `scripts/pack_msix.ps1`（先设置 `MATHLANG_PFX_PASSWORD`）。
-3. 校验签名与 `SHA256SUMS.txt`；`git tag -a vX.Y.Z` 并 push tag。
-4. GitHub Release 正文从 `notes/release/vX.Y.Z.md` **逐字**复制；资产名用 ASCII。
-5. 更新 [`notes/README.md`](notes/README.md)、[`notes/后优化清单.md`](notes/后优化清单.md)、README 的版本/状态。
-6. 发布后核对资产名、大小、签名；把本轮结论写进 `notes/dev_log/`。
+2. **（新）先构建开发版给用户验**：`scripts/build_exe.ps1 -SkipTests` ⇒ `dist\v<版本>\mathlang.exe`；
+   用户确认手感无误再走下一步。
+3. `scripts/build_exe.ps1` → `scripts/pack_release.ps1` → `scripts/pack_msix.ps1`（先设置 `MATHLANG_PFX_PASSWORD`）。
+4. 校验签名与 `SHA256SUMS.txt`；`git tag -a vX.Y.Z` 并 push tag。
+5. GitHub Release 正文从 `notes/release/vX.Y.Z.md` **逐字**复制；资产名用 ASCII。
+6. 更新 [`notes/README.md`](notes/README.md)、[`notes/后优化清单.md`](notes/后优化清单.md)、README 的版本/状态。
+7. 发布后核对资产名、大小、签名；把本轮结论写进 `notes/dev_log/`。
 
 ## 9. 许可
 

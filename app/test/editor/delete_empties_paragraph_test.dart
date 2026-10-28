@@ -99,6 +99,23 @@ void main() {
       expect(r.buf.contains('-'), isFalse);
     });
 
+    // ★ 2026-10-28 用户手测第二轮：删完标题留下那个空段落，变成**两个**空行
+    test('文首的空标题删光后再退格 ⇒ 1 个空行（不是 2 个）', () {
+      final ({String buf, int caret}) r = _apply('# \n\n正文\n', 2);
+      expect(r.buf, '\n正文\n',
+          reason: '标记去掉之后剩 ⏎⏎ 会被文首口径算成 2 行 ⇒ 收掉一格');
+      expect(r.caret, 0);
+      expect(r.buf.contains('#'), isFalse);
+    });
+
+    test('中间的空标题删光后再退格 ⇒ 段间 1 个空行', () {
+      // A(0)⏎(1)⏎(2)#(3)⏎空格(4)⏎(5)⏎(6)B(7)⏎(8) —— 内容起点 = 5
+      final ({String buf, int caret}) r = _apply('A\n\n# \n\nB\n', 5);
+      expect(r.buf, 'A\n\n\nB\n');
+      expect(r.caret, 3);
+      expect(_blankRows(r.buf), 1.0);
+    });
+
     test('普通正文行内删字不受影响（没有标记）', () {
       // offset 6 = `xyz` 的 `z` 之前（offset 3 是段落边界那一格，那是另一条判据）
       final ({String buf, int caret}) r = _apply('A\n\nxyz\n\nB\n', 6);

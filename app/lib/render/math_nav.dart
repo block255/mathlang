@@ -841,27 +841,58 @@ SmartEdit _visibleObjectDelete(String source, int at, int caret) {
   // ② 行首标记：整块降级（绝不留下半个标记）
   final int ml = BlockMarkers.markerLength(line);
   if (ml > 0 && at < ls + ml) {
-    return SmartEdit.remove(ls, ls + ml, ls);
+    return _normalizeEmptyParagraph(source, SmartEdit.remove(ls, ls + ml, ls));
   }
 
-  // ③ 普通字符；顺手做"空段落归一化"
-  final String out = source.replaceRange(at, at + 1, '');
-  final int ls2 = at == 0 ? 0 : out.lastIndexOf('\n', at - 1) + 1;
-  final int nl2 = out.indexOf('\n', at);
-  if (nl2 >= 0 && out.substring(ls2, nl2).trim().isEmpty) {
-    final bool twoBefore =
-        ls2 >= 2 && out[ls2 - 1] == '\n' && out[ls2 - 2] == '\n';
-    final bool atStart = ls2 == 0;
-    final bool atEnd = nl2 + 1 >= out.length;
-    if ((twoBefore || atStart) && (atEnd || out[nl2 + 1] == '\n')) {
-      final int to = at + 2;
-      if (to <= source.length) {
-        // 文末：收掉那一格之后光标要退一格（否则站在"文末下一行"上，看起来掉了一行）
-        return SmartEdit.remove(at, to, atEnd ? (at == 0 ? 0 : at - 1) : at);
-      }
-    }
+  // ③ 普通字符
+  return _normalizeEmptyParagraph(
+      source, SmartEdit.remove(at, at + 1, caret));
+}
+
+/// ★★★ 2026-10-28（用户手测第二轮）：**行被删空之后，把并置出来的那个段界收掉**。
+///
+/// md 里两段之间恒有一个 `⏎⏎`（段界）。把一段的内容删光之后，它两边的段界会**并置**：
+///   · 中间段 ⇒ `A⏎⏎⏎⏎B`
+///   · 文首段 ⇒ `⏎⏎B`（用户实测："删完标题留下的那个空段落，变成了两个空行"）
+/// 而版面口径是「第一个空行是段界(0 高)、之后每多一个 `⏎` 算一行」/「文首每个空行都是一行」
+/// ⇒ 这两处都会算成 **2 行**，可空段落只有 **1 行**。
+///
+/// 判据（四件事同时成立才收）：
+///   ① 这一下删完，**光标所在那一行变空了**（还有字就不是"删空一段"）；
+///   ② 它前面是**两个换行**（段界并置）**或者**它是**文首**（文首没有上一段，
+///      但第一个空行同样是段界性质 —— 用户 2026-10-28 拍板"文首也收"）；
+///   ③ 它后面也是**两个换行**（否则后面还有字，不构成"并置"），或者是**文末**；
+///   ④ 收完之后，剩下的字节正好是 `⏎⏎⏎`（段界 + 1 空行）。
+///
+/// 收哪一格：**收这一行自己的那个换行**（即删掉的那段之后紧跟的那格），
+/// 于是它与"删字符/删标记"合成**一次编辑**（一步撤销），光标不用挪。
+/// 文末例外：收完之后光标**退一格**，否则会站在"文末下一行"上、看起来掉了一行。
+SmartEdit _normalizeEmptyParagraph(String source, SmartEdit e) {
+  if (e.isNone || !e.deletes) return e;
+  final String out = source.replaceRange(e.from!, e.to!, '');
+  final int p = e.from!;
+  final int ls2 = p == 0 ? 0 : out.lastIndexOf('\n', p - 1) + 1;
+  final int nl2 = out.indexOf('\n', p);
+  if (nl2 < 0) return e; // 文末没有换行 ⇒ 不归这条管
+  if (out.substring(ls2, nl2).trim().isNotEmpty) return e; // 行里还有字
+  // ★ 判据落在"这一格换行所在的那一串换行"上：**只有 ≥2 个换行才可能并置**
+  //   （单个换行 = 普通软换行/行尾，收它就成了"删结构"）。
+  var runFrom = nl2;
+  while (runFrom > 0 && out[runFrom - 1] == '\n') {
+    runFrom--;
   }
-  return SmartEdit.remove(at, at + 1, caret);
+  var runTo = nl2;
+  while (runTo < out.length && out[runTo] == '\n') {
+    runTo++;
+  }
+  if (runTo - runFrom < 2) return e;
+  // out 里的第 nl2 格换行 → 换回 source 的绝对偏移（删掉的那一整块都在它前面）
+  final int at = nl2 + (e.to! - e.from!);
+  if (at < 0 || at + 1 > source.length) return e;
+  // 文末（收完之后后面什么都没有）⇒ 光标退一格，否则会站在"文末下一行"上、看起来掉一行
+  final bool atEnd = nl2 + 1 >= out.length;
+  final int caret2 = atEnd ? (e.from! == 0 ? 0 : e.caret - 1) : e.caret;
+  return SmartEdit.remove(e.from!, at + 1, caret2 < 0 ? 0 : caret2);
 }
 
 /// [o] 所在行的行首（绝对偏移）
