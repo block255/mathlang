@@ -56,7 +56,8 @@ void main() {
     final (EditViewState _, DocBuffer buf) = await _mount(tester, 'abc', caret: 3);
     await _enter(tester);
     expect(buf.buf, 'abc\n\n');
-    expect(buf.caret, 5);
+    // ★ 2026-10-28：文末行表不再 skip 第一个空行 ⇒ 插入点（偏移 4）就是那一行
+    expect(buf.caret, 4);
   });
 
   testWidgets('★ 任何位置按 Enter，光标都不能消失', (WidgetTester tester) async {

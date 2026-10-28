@@ -608,12 +608,23 @@ SmartEdit? _paragraphBreakDelete(String source, int o, {required bool forward}) 
   //   那个已经被收成"段距"的位置上（它在屏幕上是空的，接着打字会显得矮一截）。
   //   判据：收掉之后光标前面紧挨着的**就是**上一行内容末尾那个换行符
   //   （`source[o-2] == '\n'` 且再往前不是换行 ⇒ 只剩一个空行 ⇒ 它是"段距"不是行）。
+  //   ★★ 2026-10-28 追加：**文末那一串空行不走这条**。那里每个空行都是一行（行表不 skip），
+  //     退格就是把这一行收掉、光标落到**上一格**（= 上一行）；再退一格会一下跳两行，
+  //     Enter/退格就不再 1:1。判据：收掉之后光标**之后全是换行符** ⇒ 在文末。
+  bool onlyNewlinesAfter(int p) {
+    for (var i = p; i < source.length; i++) {
+      if (source[i] != '\n') return false;
+    }
+    return true;
+  }
+
   final bool backToPrevLine = !forward &&
       n == 1 &&
       onBlankLine &&
       o - 3 >= 0 &&
       source[o - 2] == '\n' &&
-      source[o - 3] != '\n';
+      source[o - 3] != '\n' &&
+      !onlyNewlinesAfter(o - n);
   final int caretBack = backToPrevLine ? o - 2 : (o - n);
   final SmartEdit full = forward
       ? (o + n > source.length

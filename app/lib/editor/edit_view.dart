@@ -346,11 +346,17 @@ class EditViewState extends State<EditView> {
   ///
   /// 判据：光标在文末、文档以**恰好一个**换行符收尾、且这次插入的是单行文本。
   /// （`甲⏎⏎` 已经有一个空行隔开了，字插进去本来就是新段，不用再补。）
+  /// ★ 2026-10-28：判据扩成"**在文末的空行上打字**"：
+  ///   · 光标之后全是换行符（在文末那一串空行里），**且**
+  ///   · 光标这一行是**空的**（行首==行尾）。
+  ///   为什么：文末每个空行都是**一行**（行表不 skip）⇒ 在那行上打字要落成**新段**才不矮一截。
+  ///   ★ 只判"之后全是换行符"会把**正常在文末打字**也当成空行（那时光标在文字行末）⇒ 每打一个字
+  ///     都多一个空行（实测：`sqrt` 变成 `s⏎q⏎r⏎t`）。所以必须再要求"这一行是空的"。
   bool _needsLineHeadPad(String text) {
     if (text.contains('\n') || _buf.hasSelection) return false;
-    final String s = _buf.buf;
-    if (s.isEmpty || _buf.caret != s.length) return false;
-    return s.endsWith('\n') && !s.endsWith('\n\n');
+    if (_buf.buf.isEmpty) return false;
+    final (int ls, int le) = _lineBounds();
+    return ls == le && _inTailBlanks();
   }
 
   String _enterPayload() {
@@ -396,24 +402,37 @@ class EditViewState extends State<EditView> {
       return;
     }
     final String payload = _enterPayload();
-    // ★ 换行符插在**下一行行首**，光标才会落到"新造出来的那一行"上：
+    // ★ 换行符插在**下一行行首**，光标才会落到"新造出来的那一行"上 —— 但**文末例外**：
     //   · 行末（这一行有字）⇒ 一定要挪（插在本行行末的话光标停在本行，屏上看起来没动）；
-    //   · 文末（光标已经在末行的行末/EOF 上）⇒ 也要挪（否则光标落在刚插出来的那个
-    //     "段距那一格"上，接着打字会矮 11 px）；
+    //   · 文末（光标之后只剩换行符）⇒ **不挪**：文末的行表是"空行串 + [EOF]"，
+    //     插在末尾正好落进"文末下一行"那一行（挪一格会跳过它）；
     //   · 空行上（中间那些空行）⇒ **不挪**（挪了就跳过一整行）。
     final bool onLineEnd = c == le;
-    final bool atDocEnd = c == s.length;
-    if (payload == '\n' && onLineEnd && (!emptyLine || atDocEnd)) {
+    if (payload == '\n' && onLineEnd && !_inTailBlanks() && !emptyLine) {
       _buf.setCaret((c + 1).clamp(0, _buf.length));
     }
     _commitText(payload, isEnter: true);
+  }
+
+  /// 光标是不是在**文末那一串空行**里 —— 判据：光标之后**全是换行符**（含光标已在 EOF）。
+  ///
+  /// 文末与"段与段之间"必须分开：文末后面没有下一段来占那一行 ⇒ **每个空行都是一行**
+  /// （`trailingBlankHeight(n) = n × 行高`）；而段与段之间第一个空行只是段距。
+  bool _inTailBlanks() {
+    final String s = _buf.buf;
+    final int c = _buf.caret.clamp(0, s.length);
+    for (var i = c; i < s.length; i++) {
+      if (s[i] != '\n') return false;
+    }
+    return true;
   }
 
   /// 平台（含 IME 提交）的一段文本 → **一次**编辑写进缓冲区。
   ///
   /// ★ 这里**不碰输入设备**（不再有"回写镜像框"这一步）：
   ///   输入设备的内容由 [TextInputSurfaceController] 自己维持成"空的"。
-  void _commitText(String rawText, {int autoWrapped = 0, bool isEnter = false}) {
+  void _commitText(String rawText,
+      {int autoWrapped = 0, bool isEnter = false, bool padDone = false}) {
     if (rawText.isEmpty) return;
     // ★★★ 2026-10-28：**两条 Enter 通道汇到这里**（键事件走 `_onKey` → `_enter()`；
     //   平台文本通道 / IME 提交到达时就是一段裸 `\n`）。
@@ -429,9 +448,10 @@ class EditViewState extends State<EditView> {
     //   一个 `\n` —— 直接把字插进去会**并进上一段**（变成"段内行"，少一截段距，
     //   探针实测差 11.4 px：光标在 137.4，字却出现在 126.0）。所以先补一个空行，
     //   让这个字落成一个**段**。补的那个 `\n` 与本字合并成一步撤销。
-    if (_needsLineHeadPad(rawText)) {
+    if (!padDone && _needsLineHeadPad(rawText)) {
       _mutate(() => _buf.replace(_buf.caret, _buf.caret, '\n', coalesce: true));
-      _commitText(rawText, autoWrapped: autoWrapped, isEnter: isEnter);
+      _commitText(rawText,
+          autoWrapped: autoWrapped, isEnter: isEnter, padDone: true);
       return;
     }
     // ★★ PC-1b（2026-10-18）：**行内数学里按 Enter ⇒ 在光标处断栅栏**（原子一个不动）。

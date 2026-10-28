@@ -193,7 +193,8 @@ void main() {
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pumpAndSettle();
       expect(buf.buf, '甲\n\n', reason: '一次 Enter = 一个换行 = 看得见的一行');
-      expect(buf.caret, 3);
+      // ★ 2026-10-28：文末行表不再 skip 第一个空行 ⇒ 插入点就是**新造出来的那一行**（偏移 2）
+      expect(buf.caret, 2);
     });
 
     testWidgets('★★ 空行上按 Enter ⇒ 再长一行（不再封顶）',

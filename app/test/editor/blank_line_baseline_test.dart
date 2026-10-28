@@ -141,14 +141,15 @@ void main() {
       expect(_caretYs(tester).length, 1, reason: '一根光标');
     });
 
-    testWidgets('★ 第 2 级：文末有一串空行 ⇒ 落到**最后那一行**（不是文末下一行）',
+    testWidgets('★ 第 1 级：文末本来就有空行 ⇒ 落**最下面那一行**（不是倒数第二个）',
         (WidgetTester tester) async {
-      // `甲⏎⏎⏎`：存在的空行在偏移 2、3；文末下一行是 4
+      // `甲⏎⏎⏎`：屏幕上是两行空行（偏移 3 与 4）；点更下面的空白 ⇒ 落最后那一行（4）
+      // ★ 2026-10-28 用户第二次手验：「我造了多个空行，点更下面，光标落在倒数第二个空行」
       final DocBuffer buf = await _mount(tester, '甲\n\n\n', 1);
       final Rect page = _page0(tester);
       await tester.tapAt(Offset(page.center.dx, page.top + page.height * 0.6));
       await tester.pumpAndSettle();
-      expect(buf.caret, 3, reason: '最下面一个存在的空行 = 偏移 3（偏移 4 是"文末下一行"）');
+      expect(buf.caret, 4, reason: '文末已有空行 ⇒ 落最下面那一行（偏移 4 = 文末下一行）');
     });
   });
 
@@ -166,6 +167,27 @@ void main() {
         prev = now;
       }
       expect(buf.buf, '甲\n\n\n\n\n', reason: '一下 Enter = 一个换行符');
+    });
+
+    // ★★ 2026-10-28（用户复现过的缺陷，本批修掉）：光标**已经站在**"文末下一行"那一格上时，
+    //   再按 Enter 必须真的多一行、光标下移一行（改前：行表 skip 第一个空行 ⇒ 原地不动）。
+    testWidgets('★ 站在文末下一行上按 Enter ⇒ 真的多一行、光标下移一行（不再原地不动）',
+        (WidgetTester tester) async {
+      final DocBuffer buf = await _mount(tester, '甲\n', 2); // 偏移 2 = 文末下一行
+      final double before = _caretY(tester);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(buf.buf, '甲\n\n', reason: '一下 Enter = 一个换行符');
+      expect(buf.caret, 3);
+      final double after = _caretY(tester);
+      expect(after - before, closeTo(_row, _eps),
+          reason: '光标必须真的下移一行（实测走了 ${(after - before).toStringAsFixed(1)}px）');
+      // 退格是逆操作：一下收掉这一行（1:1）
+      await tester.sendKeyEvent(LogicalKeyboardKey.backspace);
+      await tester.pumpAndSettle();
+      expect(buf.buf, '甲\n');
+      expect(buf.caret, 2);
+      expect(_caretY(tester), closeTo(before, _eps), reason: '退格回到原来那一格');
     });
 
     testWidgets('永久行上退格：只回文末行末，**不改字节**', (WidgetTester tester) async {

@@ -163,7 +163,10 @@ class DocBuffer {
         m++;
       }
       // `m < _buf.length` ⇒ 文末**真有内容行**（整篇都是空行的文档照常删）
-      if (m < _buf.length && m <= 2) {
+      // ★ 2026-10-28：判据从"m <= 2"收紧成 **m == 1** —— 文末的行表改成"每个空行都是一行"
+      //   之后，只有 `甲⏎` 那一格是"文末下一行"（删了就没位置承接光标）；
+      //   `甲⏎⏎` 的 EOF 已经是**第二行**，退格该把这一行收掉（与 Enter 1:1）。
+      if (m < _buf.length && m == 1) {
         _setCaretRaw(_buf.length - m); // = 文末那一行的行末
         _notify();
         return;
@@ -176,9 +179,22 @@ class DocBuffer {
     //     · 上一行有字 ⇒ 它的**行末**（"按退格回到 A-B，并且光标回到 A 行末"）；
     //     · 上一行是空行 ⇒ 那个空行的行首（行首==行末，同一格）。
     //   判据：删完之后光标**前面紧跟着的还是换行符** ⇒ 说明光标还在换行串里，退一格。
-    if (wasNewline && _caret > 0 && _buf[_caret - 1] == '\n') {
+    //   ★ 文末那一串空行**不退**：那里每个空行都是一行（行表不 skip）⇒ 退格就是把这一行
+    //     收掉、光标落到**上一行**（= 上一格），再退一格就跳了两行（Enter/退格不再 1:1）。
+    if (wasNewline &&
+        _caret > 0 &&
+        !_onlyNewlinesFrom(_caret) &&
+        _buf[_caret - 1] == '\n') {
       _setCaretRaw(_caret - 1);
     }
+  }
+
+  /// 从 [p] 起到末尾是不是**全是换行符**（= 光标在"文末那一串空行"里）
+  bool _onlyNewlinesFrom(int p) {
+    for (var i = p; i < _buf.length; i++) {
+      if (_buf[i] != '\n') return false;
+    }
+    return true;
   }
 
   void deleteForward() {

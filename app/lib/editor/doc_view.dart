@@ -1983,20 +1983,15 @@ class DocViewState extends State<DocView> {
     //   Word 里那个总是存在的段落标记），**一行一个 item**、每行 = 一个正文行距。
     //   文档没有尾换行时（`甲` 打字的中间态）当前行就是正文那一行 ⇒ 不额外占位。
     if (_units.isNotEmpty && widget.buffer.buf.endsWith('\n')) {
-      // ★ 2026-10-27：行数与 `_rowsAfter` **同一条规则**（空行串[1..] + 一个待写行），
-      //   `#t#k` 的 k 就是 `tailRows` 的下标。
-      //   ★ 每一项 = **一个段**：行盒（拍照）+ 段间距（`leadingGap`）——
-      //   这就是"拆行高/段间距"：一行占 行盒 + 段距，而不是一个 38.4 的整块。
-      final int nTailRows = _rowsAfter(_units.last).length;
+      // ★ 2026-10-28：行表与 `_rowsAfter(tail: true)` **同一条规则**
+      //   = `空行串 + [EOF]`（文末每个空行都是一行，最后一个待写行在 EOF）。
+      //   ★ 每一项 = **一个段**：行盒（行高）+ 段间距（`leadingGap`）。
+      final int nTailRows = _rowsAfter(_units.last, tail: true).length;
       for (var k = 0; k < nTailRows; k++) {
-        // ★ 第 0 个盒子 = 行盒 + 段距（它同时承接"段距那一格"的位置），其余 = 行盒 + 段间距。
-        items.add(k == 0
-            ? FlowItem(
-                id: '$_kTailBlankItem#t#$k', height: _lineBox + _paraGap)
-            : FlowItem(
-                id: '$_kTailBlankItem#t#$k',
-                height: _lineBox,
-                leadingGap: _paraGap));
+        items.add(FlowItem(
+            id: '$_kTailBlankItem#t#$k',
+            height: _lineBox,
+            leadingGap: _paraGap));
       }
     }
     return items;
@@ -2035,20 +2030,28 @@ class DocViewState extends State<DocView> {
 
   /// [prev] 之后**这一页底部那些"行"**的行首偏移（只读基准 4：末页与分页原页同一条规则）。
   ///
-  /// = 已有的空行（每行一个偏移）＋ **一个待写行**：
+  /// = 已有的空行 ＋ **一个待写行**：
   ///   · 后面紧跟**分页符** ⇒ 待写行 = **分页符行的行首**（那 19 格本来就存在，零像素）；
   ///   · 否则 ⇒ 待写行 = **文末**（EOF）。`DocBuffer` 保证非空文档以 `\n` 收尾，
   ///     所以 EOF 与"文末行的行末"是**两个不同的整数偏移**，这一行不是假位置。
   ///
   /// 为什么必须补这一行：分页符块不产单元、文末后面没有下一段 ⇒ 两边都"没人画这一行"，
   /// 而用户要的是"文末下一行这个空行**永远**能承接光标"（基准 3 最后一句）。
-  List<int> _rowsAfter(_Unit prev) {
+  ///
+  /// ★★★ 2026-10-28（修"在文末下一行上按 Enter 第一下不动"）：**文末的行表不 skip**。
+  ///   `[tail] = true`（末页）⇒ 行表 = `空行串 + [EOF]`：q**每个空行都是一行**；
+  ///   `[tail] = false`（分页原页）⇒ 行表 = `空行串[1..] + [待写行]`：第一个空行只是段距。
+  ///   为什么文末不跳过第一个：文末后面**没有下一段**来占那一行 ⇒ 那一个空行本身就是一行
+  ///   （这正是 `blank_runs.trailingBlankHeight(n) = n × 行高` 一直在说的口径；
+  ///   在此之前"高度表"与"行表"两套口径不一致，才导致 Enter 后光标不动）。
+  ///   而段与段之间必须跳过：那一行由**下一段自己**占（`extraBlankHeight(n) = (n-1) × 行高`）。
+  List<int> _rowsAfter(_Unit prev, {bool tail = false}) {
     final String buf = widget.buffer.buf;
     final List<int> blanks = _blankRunAfter(prev);
     // ★ 空行串里**第一个**只是"段距那一截"（它属于上一段的行盒之后、下一段之前），
     //   从第二个起才是真正的**行**（探针坐实：`A⏎⏎⏎B` 只有 1 个空行是行，第 2 个 `⏎` 之前那格
-    //   在上面一行的行盒里）。所以行表 = `blanks.skip(1)`。
-    final List<int> rows = <int>[...blanks.skip(1)];
+    //   在上面一行的行盒里）。所以"段与段之间"的行表 = `blanks.skip(1)`。
+    final List<int> rows = <int>[if (tail) ...blanks else ...blanks.skip(1)];
     final int at = prev.acceptTo.clamp(0, buf.length);
     int next = at;
     if (at < buf.length && buf[at] == '\n') next = at + 1;
@@ -2156,7 +2159,7 @@ class DocViewState extends State<DocView> {
         _units.isEmpty ? -1 : _blankOffsetAfter(_units.last);
     // ★ 2026-10-27：尾部那些"行"的行首偏移 —— 与分页原页**同一个函数**（`_rowsAfter`）。
     final List<int> tailRows =
-        _units.isEmpty ? const <int>[] : _rowsAfter(_units.last);
+        _units.isEmpty ? const <int>[] : _rowsAfter(_units.last, tail: true);
     final int len = widget.buffer.buf.length;
     var tailLinesOnPage = 0;
     // ★ 2026-10-27：本页上"硬分页之前那些行"的个数（> 0 ⇒ 接缝槽不再画光标，避免一像素两主）
@@ -2254,11 +2257,11 @@ class DocViewState extends State<DocView> {
               }
               breakRowsOnPage++;
             }
-            // k == 0 的盒子还背着"**段距那一格**"（空行串里第一个位置）：
-            // 它紧贴上一段的行盒底，不是一整行，但**也是一个真实位置**（光标得看得见）。
+            // k == 0 的盒子：文末（`#t#`）**就是第一行**（行表不 skip）；
+            // 分页原页（`#b`）还背着"段距那一格"（第一个空行只是段距 ⇒ 它也是一个真实位置）。
             final List<int> offs = <int>[];
             final List<double> dys = <double>[];
-            if (k == 0) {
+            if (k == 0 && !isTail) {
               if (run.isNotEmpty) {
                 offs.add(run.first);
                 dys.add(_caretInset);
@@ -2269,7 +2272,11 @@ class DocViewState extends State<DocView> {
               }
             } else if (k < rows.length) {
               offs.add(rows[k]);
-              dys.add(_caretInset);
+              // ★ 盒子的 y 已经含 `leadingGap`（= 段间距）⇒ 盒内只补行内内缩；
+              //   只有分页原页的第 0 个盒子**没有** leadingGap（它同时承接"段距那一格"）。
+              dys.add(isTail
+                  ? _caretInset
+                  : (k == 0 ? _paraGap + _caretInset : _caretInset));
             }
             // ★ 分页符行内部的格：那一行**零像素、不可见**，屏幕上就是同一格 ——
             //   所以它们与"分页符行首"共用同一个 y（批 38 的口径：那 19 格不许是死区）。
@@ -2590,17 +2597,32 @@ class DocViewState extends State<DocView> {
       b.setCaret(0);
       return;
     }
-    final int? lowestBlank = _lowestExistingBlankLine();
-    if (lowestBlank != null) {
-      b.setCaret(lowestBlank);   // 第 2 级
+    // ★★ 2026-10-28（用户第二次手验："我造了多个空行，点更下面的空白，光标落在
+    //   倒数第二个空行"）：**文末本来就有空行**时（最后一行是空行）走第 1 级 ——
+    //   "那里本来就有空行" ⇒ 落**最下面那一行**（= 文末下一行/最后一个空行那一格），
+    //   而不是"最后一个**已存**空行"（它在屏幕上是倒数第二行）。
+    if (_docEndsWithBlankLine()) {
+      b.setCaret(s.length);
       return;
     }
-    // 第 3 级：槽给出的"文末可落位置"（分页符行首 / 空行首），没有就是文末下一行
+    // 第 2 级：文末没有空行 ⇒ 向上找**整篇**最下面一个已存在的空行（可能在两段之间）
+    final int? lowestBlank = _lowestExistingBlankLine();
+    if (lowestBlank != null) {
+      b.setCaret(lowestBlank);
+      return;
+    }
+    // 第 3 级：整篇一个空行都没有 ⇒ 文末下一行（文末紧跟分页符时 = 分页符行首）
     if (at != null && at >= 0 && at < s.length) {
       b.setCaret(at);
       return;
     }
     b.setCaret(s.length);
+  }
+
+  /// 文末是不是**本来就有空行**（最后一"行"是空的）
+  bool _docEndsWithBlankLine() {
+    final String s = widget.buffer.buf;
+    return s.length >= 2 && s.endsWith('\n') && s[s.length - 2] == '\n';
   }
 
   /// 整篇文档里**最下面一个已存在的空行**的行首偏移（一个都没有 ⇒ `null`）。
