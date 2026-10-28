@@ -255,17 +255,27 @@ try {
       // 上次的结果先清掉，免得下一次启动读到旧结论
       final File result = File('$temp${sep}mathlang-update-result.txt');
       if (result.existsSync()) result.deleteSync();
+
+      // ★★★ 2026-10-28 **第二次实测纠正（关键）**：
+      //   上一版用 `Process.start('powershell', …, detached)` 起小助手 —— 脚本写出了，
+      //   但**一次都没被执行**（result.txt / log.txt 都不存在）；而**手动从控制台跑同一个
+      //   脚本就成功**（result.txt 立刻变成 ok:1.2.4）⇒ 不是脚本的问题，是"谁当它的爸爸"。
+      //   根因：**MSIX 打包应用的进程跑在 Job 对象里，应用退出会连带杀掉所有子进程**
+      //   ⇒ 我们起的 PowerShell 跟着我们一起死。
+      //   ⇒ 现在改成**让 explorer 去启动**：先写一个 .cmd 中转，再用
+      //     `explorer.exe <cmd>` —— explorer 把请求转交给已运行的 shell，
+      //     新进程的父是 explorer、不在我们的 Job 里 ⇒ 我们退出它照样活着。
+      //   代价：会闪一下 cmd 控制台（约 2~4 秒）；这是"能装上"的必要代价。
+      final File cmd = File('$temp${sep}mathlang-update-$version.cmd');
+      await cmd.writeAsString(
+        '@echo off\r\n'
+        'powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden '
+        '-File "%~dp0mathlang-update-$version.ps1"\r\n',
+        flush: true,
+      );
       await Process.start(
-        'powershell',
-        <String>[
-          '-NoProfile',
-          '-ExecutionPolicy',
-          'Bypass',
-          '-WindowStyle',
-          'Hidden',
-          '-File',
-          script.path,
-        ],
+        'explorer.exe',
+        <String>[cmd.path],
         mode: ProcessStartMode.detached,
       );
       return true;
