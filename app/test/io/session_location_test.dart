@@ -1,12 +1,13 @@
-// 1.2.3 守卫：**设置/草稿到底存哪儿**（2026-10-28 实测事故）
+// 1.2.4 守卫：**设置/草稿到底存哪儿**（2026-10-28 两次实测事故）
 //
-// 事故现场：打包版（MSIX）的 exe 在 `C:\Program Files\WindowsApps\...`（只读），
-// 往它旁边写会被 Windows 虚拟化到 `%LOCALAPPDATA%\Packages\<包族名>\LocalCache\Roaming\`。
-// 看着"存上了"（关掉重开设置还在），但那是**包内私有数据，卸载即删** ——
-// 用户实测：卸载重装后页位/字号全丢（选"N 保留数据"也没用）。
+// ① 打包版的 exe 在 `C:\Program Files\WindowsApps\...`（只读）⇒ 写旁边会被 Windows
+//    虚拟化到 `Packages\<包族名>\LocalCache\...`；
+// ② **`%APPDATA%` 也一样被虚拟化**（实测：应用以为写到
+//    `C:\Users\me\AppData\Roaming\mathlang\...`，可那个真文件不存在，字节全在包内）。
 //
-// ⇒ 口径：**打包版优先 `%APPDATA%\mathlang\`**（卸载不动、升级继承）；
-//         绿色版仍优先 exe 同目录（便携就该跟着文件夹走）。
+// ⇒ 口径：**打包版首选 `%USERPROFILE%\mathlang\`**（用户配置根下的自定义文件夹，
+//   不在虚拟化名单里 ⇒ 真文件、卸载不删、升级继承）；绿色版仍首选 exe 同目录。
+//   `%APPDATA%` 与 exe 同目录**留着当读取候选**，老数据靠它们读出来再迁移。
 
 import 'dart:io';
 
@@ -19,54 +20,85 @@ String _exeDirCandidate() =>
     '${Platform.pathSeparator}$kSessionFileName';
 
 void main() {
-  late Directory tmp;
-  setUp(() => tmp = Directory.systemTemp.createTempSync('mathlang-loc-'));
+  late Directory tmp; // 冒充 %USERPROFILE%
+  late Directory fakeAppData; // 冒充 %APPDATA%
+  setUp(() {
+    tmp = Directory.systemTemp.createTempSync('mathlang-profile-');
+    fakeAppData = Directory.systemTemp.createTempSync('mathlang-appdata-');
+  });
   tearDown(() {
-    try {
-      tmp.deleteSync(recursive: true);
-    } catch (_) {}
+    for (final Directory d in <Directory>[tmp, fakeAppData]) {
+      try {
+        d.deleteSync(recursive: true);
+      } catch (_) {}
+    }
   });
 
   SessionData sample() => SessionData(
       text: '甲\n', savedText: '甲\n', title: 't', savedAt: DateTime.now());
 
+  NativeSessionStore packaged() => NativeSessionStore(
+        forcePackaged: true,
+        profileOverride: tmp.path,
+        appDataOverride: fakeAppData.path,
+      );
+
   group('落点顺序', () {
-    test('打包版：首选 %APPDATA%\\mathlang\\（包外、卸载不动）', () async {
-      final NativeSessionStore s =
-          NativeSessionStore(forcePackaged: true, appDataOverride: tmp.path);
-      final String d = await s.describe();
+    test('打包版：首选 %USERPROFILE%\\mathlang\\（不在虚拟化名单里）', () async {
+      final String d = await packaged().describe();
       expect(d, startsWith(tmp.path));
       expect(d, contains('mathlang'));
       expect(d, isNot(_exeDirCandidate()));
+      expect(d, isNot(startsWith(fakeAppData.path)),
+          reason: '%APPDATA% 会被打包版虚拟化 ⇒ 不能当首选');
     });
 
     test('绿色版：仍首选 exe 同目录（便携跟着文件夹走）', () async {
-      final NativeSessionStore s =
-          NativeSessionStore(forcePackaged: false, appDataOverride: tmp.path);
+      final NativeSessionStore s = NativeSessionStore(
+        forcePackaged: false,
+        profileOverride: tmp.path,
+        appDataOverride: fakeAppData.path,
+      );
       expect(await s.describe(), _exeDirCandidate());
     });
   });
 
   group('打包版真的写在包外', () {
-    test('save ⇒ 文件落在 %APPDATA%\\mathlang\\，且 describe 指向它', () async {
-      final NativeSessionStore s =
-          NativeSessionStore(forcePackaged: true, appDataOverride: tmp.path);
+    test('save ⇒ 文件落在 %USERPROFILE%\\mathlang\\，且 describe 指向它', () async {
+      final NativeSessionStore s = packaged();
       expect(await s.save(sample()), isTrue);
       final String d = await s.describe();
       expect(d, startsWith(tmp.path));
-      expect(File(d).existsSync(), isTrue, reason: '落点必须真的有文件');
+      expect(File(d).existsSync(), isTrue, reason: '落点必须真的有文件（不是虚拟化幻觉）');
     });
 
-    test('已存在的旧文件能被读出来（升级/迁移后的正常路径）', () async {
-      final NativeSessionStore first =
-          NativeSessionStore(forcePackaged: true, appDataOverride: tmp.path);
-      await first.save(sample());
-
-      final NativeSessionStore second =
-          NativeSessionStore(forcePackaged: true, appDataOverride: tmp.path);
-      final SessionData? back = await second.load();
+    test('已存在的旧文件能被读出来（升级后的正常路径）', () async {
+      await packaged().save(sample());
+      final SessionData? back = await packaged().load();
       expect(back, isNotNull);
       expect(back!.text, '甲\n');
+    });
+
+    test('老数据在 %APPDATA%（虚拟化那份）⇒ 读出来并迁到 %USERPROFILE%', () async {
+      // 造一份"老位置"的文件：%APPDATA%\mathlang\mathlang-session.json
+      final Directory oldDir =
+          Directory('${fakeAppData.path}${Platform.pathSeparator}mathlang')
+            ..createSync(recursive: true);
+      final File oldFile =
+          File('${oldDir.path}${Platform.pathSeparator}$kSessionFileName');
+      oldFile.writeAsStringSync(
+          '{"text":"老内容\\n","savedText":"老内容\\n","title":"t",'
+          '"savedAt":"${DateTime.now().toIso8601String()}"}');
+
+      final NativeSessionStore fresh = packaged();
+      final SessionData? back = await fresh.load();
+      expect(back, isNotNull, reason: '老的 %APPDATA% 那份必须能读出来');
+      expect(back!.text, '老内容\n');
+      // 迁移：读完之后应当已经写到首选位置
+      final String now = await fresh.describe();
+      expect(now, startsWith(tmp.path), reason: '读到老位置后要迁到 %USERPROFILE%');
+      expect(File(now).existsSync(), isTrue);
+      expect(oldFile.existsSync(), isFalse, reason: '迁移成功后旧的删掉（它已不权威）');
     });
   });
 
