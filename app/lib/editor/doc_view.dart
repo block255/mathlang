@@ -603,6 +603,38 @@ class DocViewState extends State<DocView> {
   int get renderPoolSize => _renderPool.size;
   int get pageCount => _layout?.pageCount ?? 0;
 
+  /// ★★★ 2026-10-28（A1）：**导出页数** —— 末尾那些"只由文末永久空行撑出来"的纯空行页不算。
+  ///
+  /// 判据用**单元**、不用像素（用户 2026-10-27 提的后续优化）：
+  /// 一页上**一个 `_Unit` 都没有**（只有尾部/分页前的空行占位项 `#t#` / `#b#`）
+  /// ⇒ 那一页是空行撑出来的白纸，导出 PDF / 图片集时丢掉。
+  ///
+  /// 三条边界：
+  ///   · **只从末尾连续裁** —— 中间那种"只有空行但后面还有内容"的页不动（那是用户真的空出来的）；
+  ///   · **至少留 1 页** —— 空文档在导出入口就被拒了，这里只保证不返回 0；
+  ///   · **屏幕上的页数不变** —— 用户还要在那几张白纸上点、在上面按 Enter。
+  ///
+  /// ★ 页码不会跟着错：`PageSheet` 里那行「第 x / y 页」画在 `RepaintBoundary` **外面**
+  ///   （`page_sheet.dart:51-59`），抓图抓不到它 ⇒ 裁页之后不需要改分母。
+  int get exportPageCount {
+    final PageLayout? l = _layout;
+    if (l == null) return 0;
+    var n = l.pageCount;
+    while (n > 1 && !_pageHasContentAt(l, n - 1)) {
+      n--;
+    }
+    return n;
+  }
+
+  /// 第 [p] 页有没有**真实单元**（尾部/分页前的空行占位项不算内容）。
+  bool _pageHasContentAt(PageLayout l, int p) {
+    if (p < 0 || p >= l.pages.length) return false;
+    for (final PageSlot s in l.pages[p]) {
+      if (!s.item.id.startsWith(_kTailBlankItem)) return true;
+    }
+    return false;
+  }
+
   /// ★★ S4-d③：每页那张 `RepaintBoundary` 的句柄（图片集 / 图片式 PDF 抓的就是它）
   final List<GlobalKey> _sheetKeys = <GlobalKey>[];
 
@@ -630,11 +662,15 @@ class DocViewState extends State<DocView> {
   ///
   /// 返回的列表长度 = **实际抓到的页数**（某一页还没上屏时会少，调用方按需报错）。
   ///
+  /// ★ [count] ⇒ 只抓前几页（A1：导出时用 [exportPageCount] 把末尾的纯空行页挡掉）；
+  ///   不传 = 全部（编辑区 / 测试沿用旧口径）。
+  ///
   /// ★★ 用 `toImageSync` 而不是 `await toImage`：后者在"这一帧还没画"时会
   ///   **等下一帧**，而调用方（导出按钮 / 测试）并不一定在出帧 —— 实测会把整个流程挂死。
   ///   `toImageSync` 取的是**上一次画好的那一层**，正是"所见即所得"要的东西。
-  Future<List<Uint8List>> capturePages({double pixelRatio = 2.0}) async {
-    final int n = pageCount;
+  Future<List<Uint8List>> capturePages({double pixelRatio = 2.0, int? count}) async {
+    final int total = pageCount;
+    final int n = count == null ? total : count.clamp(0, total);
     final bool prevHide = _hideForCapture;
     // ★★ 2026-10-20（用户实测：导出的 PDF 里 `M_x` 前面多了一根光标条）：
     //   `capturePages` 抓的是**屏幕上那一层**，所以必须先把光标与选区藏起来、

@@ -760,10 +760,17 @@ class EditViewState extends State<EditView> {
   ///
   /// 语义完全对齐原则 4「编辑时的分页预览 = 导出的 PDF 页 = 图片集的一张图」：
   /// 抓的就是屏幕上那棵 `PageSheet` 子树（外面套了 `RepaintBoundary`）。
-  Future<List<Uint8List>> capturePages({double pixelRatio = 2.0}) async {
+  Future<List<Uint8List>> capturePages({double pixelRatio = 2.0, int? count}) async {
     final State<StatefulWidget>? st = _docKey.currentState;
     if (st is! DocViewState) return const <Uint8List>[];
-    return st.capturePages(pixelRatio: pixelRatio);
+    return st.capturePages(pixelRatio: pixelRatio, count: count);
+  }
+
+  /// ★★ 2026-10-28（A1）：**导出页数** —— 末尾那些"只由文末永久空行撑出来"的纯空行页不算。
+  /// 判据在 `DocView.exportPageCount`（用单元、不用像素）。
+  int get exportPageCount {
+    final State<StatefulWidget>? st = _docKey.currentState;
+    return st is DocViewState ? st.exportPageCount : 0;
   }
 
   /// 本机 UI 是否已经分好页（导出前判断"有没有东西可抓"，测试也用它）

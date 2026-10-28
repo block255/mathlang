@@ -939,7 +939,10 @@ class EditorPageState extends State<EditorPage> {
     //   无条件等会把调用方**永远挂住**（测试里没有自动出帧；真机上点导出时页面早就画好了）。
     final List<Uint8List> pages;
     try {
-      pages = await st.capturePages();
+      // ★★ 2026-10-28（A1）：**末尾的纯空行页不进产物**（只由文末永久空行撑出来的那几张）。
+      //   判据在 `DocView.exportPageCount`：一页上一个真实单元都没有 ⇒ 不算。
+      //   页码不受影响 —— 「第 x / y 页」那行画在 `RepaintBoundary` **外面**，抓不到。
+      pages = await st.capturePages(count: st.exportPageCount);
     } catch (e) {
       await _showFileError(action, e);
       return null;
