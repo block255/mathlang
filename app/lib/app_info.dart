@@ -1,19 +1,19 @@
-// 数语引擎 · **应用身份与版本**（2026-10-19，U1）
+// 数语引擎 · 应用身份与版本（**生成物：不要手改**）
 //
-// ★ 为什么单独一个文件：设置页「关于」与「诊断信息」都要显示版本，
-//   而 Dart **读不到 pubspec 的 version**（没有运行时 API）。
-//   ⇒ 这里是**唯一来源**：改版本时两边一起改（`pubspec.yaml` 的 `version:` 与本文件）。
-//   （以后若让构建脚本生成它，签名不变 —— 仍是这份 const。）
+// 由 scripts\gen_app_info.ps1 从 app\pubspec.yaml 的 version 生成。
+// 唯一来源 = pubspec.yaml；改版本只改那一处，然后跑一次脚本（或跑 build_exe.ps1）。
+// 守卫：test\core\version_single_source_test.dart（两者不一致就红）。
+//
+// ★ 为什么必须有这个文件：Dart 读不到 pubspec 的 version（没有运行时 API），
+//   而「关于」页与「诊断信息」都要显示版本。
 
-/// ★★ 2026-10-19（U2，用户问"这个 +1 是什么意思"）：
-/// **版本名**与**构建号**分开放 —— 「关于」只显示版本名（1.0.0），
-/// 「诊断信息」里才拼成 `1.0.0+1`（我定位问题时要看构建号）。
-const String kAppVersionName = '1.0.0';
+/// 版本名（「关于」只显示这个，例如 1.1.2）
+const String kAppVersionName = '1.1.2';
 
-/// 构建号（Flutter 的 `version: 1.0.0+1` 里 `+` 后面那个）
-const String kAppBuildNumber = '1';
+/// 构建号（pubspec 的 version 里 + 后面那个；只有「诊断信息」看它）
+const String kAppBuildNumber = '4';
 
-/// 拼好的完整版本（与 `pubspec.yaml` 的 `version:` 逐字一致）
+/// 拼好的完整版本（与 pubspec.yaml 的 version 逐字一致）
 const String kAppVersion = '$kAppVersionName+$kAppBuildNumber';
 
 /// 产品名（窗口标题也用它）

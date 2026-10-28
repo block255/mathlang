@@ -37,6 +37,12 @@ if ($pubspec -match '(?m)^version:\s*([0-9]+\.[0-9]+\.[0-9]+)') {
 }
 Write-Host "   版本: $version"
 
+# ★★ C2（2026-10-28）：**版本号单一来源** —— 从 pubspec.yaml 生成 app/lib/app_info.dart。
+#   原来那是个手写常量，结果「关于」页一直停在 1.0.0（三个 tag 都没跟），比包版本慢两版多。
+#   生成物仍然提交进仓库（保证不跑脚本时 analyze / test 也能过）；
+#   守卫 test\core\version_single_source_test.dart 会比对两者 —— 忘了生成就红。
+& (Join-Path $PSScriptRoot 'gen_app_info.ps1')
+
 & (Join-Path $PSScriptRoot 'ensure_plugin_links.ps1') -Quiet
 
 Push-Location $app

@@ -195,6 +195,18 @@ Copy-Item $msix (Join-Path $stage '数语引擎.msix') -Force
 Copy-Item (Join-Path $signing '数语引擎-自签证书.cer') (Join-Path $stage '证书-数语引擎.cer') -Force
 
 $thumbStr = $cert.Thumbprint
+
+# ★★ C1（2026-10-28，用户 2026-10-26 报「安装时先报错、然后重试、然后弹 UAC，还弹了两次」）：
+#   根因三条（调查稿 handover\公测反馈-20261026-草稿.md §五 逐行对得上）：
+#     ① **当前用户证书存储对 MSIX 校验无效** —— 校验发生在 AppXSVC（SYSTEM 上下文），只认本机存储；
+#     ② 提升分支是**两条** Start-Process -RunAs ⇒ **两次 UAC**；
+#     ③ **先装、失败后再提升** ⇒ 每个新用户必然先看到一次 0x800B0109 大段报错。
+#   改法：
+#     ① 先用 Test-Path 查【本机 TrustedPeople】有没有这把证书 —— 有就**跳过全部证书动作**
+#        （老用户重装 / 升级 ⇒ **零 UAC**）；
+#     ② 没有就弹**一次** UAC，在**同一个**提升进程里把本机 Root + TrustedPeople 都装上
+#        （提升进程跑同目录的 `装证书-管理员一次.ps1`，比在 bat 里拼引号稳）；
+#     ③ **只装一次包**（不再"先失败一次"），失败才打印失败信息。
 $installCmd = @"
 @echo off
 setlocal
@@ -204,33 +216,31 @@ echo ============================================
 echo    数语引擎  $Version   （Windows 64 位）
 echo ============================================
 echo.
+rem ── 1. 本机受信任存储里已经有这把证书吗？（重装 / 升级 -> 零 UAC）──
+powershell -NoProfile -Command "if (Test-Path ('Cert:\LocalMachine\TrustedPeople\' + '%THUMB%')) { exit 0 } else { exit 1 }"
+if not errorlevel 1 goto install
+rem ── 2. 没有就只弹一次管理员授权（同一个提升进程里把 Root + TrustedPeople 一起装上）──
 echo 第一次安装需要让系统信任本软件的自签证书（只影响这台电脑、只信任这一把）。
+echo 系统会弹一次管理员授权，请点 [是]。只这一次 —— 以后升级不再问。
+powershell -NoProfile -Command "Start-Process powershell -Verb RunAs -Wait -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','\"%HERE%装证书-管理员一次.ps1\"'"
+rem 装完再查一次：还是没有就不硬装（硬装必然 0x800B0109 大段报错）
+powershell -NoProfile -Command "if (Test-Path ('Cert:\LocalMachine\TrustedPeople\' + '%THUMB%')) { exit 0 } else { exit 1 }"
+if not errorlevel 1 goto install
 echo.
-rem ── ① 先试"当前用户"信任：不需要管理员，系统最多问一次"是否信任" ──
-rem    ★ 2026-10-25 修：原来这步"查 user 存储、写 machine 存储"，且失败被静默吞掉，
-rem      证书没装上时脚本照样继续装包 ⇒ Add-AppxPackage 报 0x800B0109（根证书不受信任）。
-rem      现在：两个存储都装、都 -f 覆盖、失败不再静默；装不上就明确报出来。
-certutil -user -addstore -f Root "%HERE%证书-数语引擎.cer" >nul 2>&1
-certutil -user -addstore -f TrustedPeople "%HERE%证书-数语引擎.cer" >nul 2>&1
+echo   [失败] 证书没装进"本机"受信任存储（刚才可能点了 [否]）。
+echo   临时办法：改用绿色版，双击「启动数语引擎.cmd」直接运行。
+pause
+exit /b 1
+:install
 echo 正在安装…
-powershell -NoProfile -Command "Add-AppxPackage -Path '%HERE%数语引擎.msix' -ForceApplicationShutdown"
-if not errorlevel 1 goto ok
-echo.
-rem ── ② 当前用户不够 ⇒ 用管理员装到"本机"受信任存储（MSIX 校验更认这个）──
-echo   当前用户的信任还不够，需要管理员把证书装到"本机"存储。
-echo   系统会弹一次管理员授权，请点 [是]。
-powershell -NoProfile -Command "Start-Process certutil -Verb RunAs -Wait -ArgumentList '-addstore','-f','Root','\"%HERE%证书-数语引擎.cer\"'"
-powershell -NoProfile -Command "Start-Process certutil -Verb RunAs -Wait -ArgumentList '-addstore','-f','TrustedPeople','\"%HERE%证书-数语引擎.cer\"'"
-echo 正在重试安装…
 powershell -NoProfile -Command "Add-AppxPackage -Path '%HERE%数语引擎.msix' -ForceApplicationShutdown"
 if errorlevel 1 (
   echo.
-  echo   [失败] 还是没装上。请把这句话连同上面的报错一起截图。
+  echo   [失败] 没装上。请把这句话连同上面的报错一起截图。
   echo   临时办法：改用绿色版（portable 包），双击「启动数语引擎.cmd」就能直接运行。
   pause
   exit /b 1
 )
-:ok
 echo 装好了，正在打开…
 powershell -NoProfile -Command "`$p=(Get-AppxPackage MathLang.Editor).PackageFamilyName; Start-Process ('shell:AppsFolder\'+`$p+'!App')"
 echo.
@@ -238,6 +248,21 @@ echo 完成。以后从桌面或开始菜单的「数语引擎」打开即可。
 pause
 "@
 [System.IO.File]::WriteAllText((Join-Path $stage '双击我安装数语引擎.cmd'), ($installCmd -replace "`r?`n", "`r`n"), [System.Text.Encoding]::GetEncoding(936))
+
+# 提升进程跑的小脚本（C1）：一次 UAC 里把 Root + TrustedPeople 都装到**本机**存储。
+$certHelper = @"
+`$ErrorActionPreference = 'Stop'
+`$here = Split-Path -Parent `$MyInvocation.MyCommand.Path
+`$cer = Join-Path `$here '证书-数语引擎.cer'
+if (-not (Test-Path `$cer)) { Write-Host "找不到证书：`$cer"; exit /b 1 }
+Write-Host ''
+Write-Host '正在把证书装进「本机」受信任存储（Root + TrustedPeople）…'
+certutil -f -addstore -machine Root "`$cer" | Out-Null
+certutil -f -addstore -machine TrustedPeople "`$cer" | Out-Null
+Write-Host '完成。'
+Start-Sleep -Milliseconds 800
+"@
+[System.IO.File]::WriteAllText((Join-Path $stage '装证书-管理员一次.ps1'), ($certHelper -replace "`r?`n", "`r`n"), (New-Object System.Text.UTF8Encoding($true)))
 
 $uninstallCmd = @"
 @echo off
@@ -302,6 +327,12 @@ if (Test-Path $setupZip) { Remove-Item $setupZip -Force }
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 [System.IO.Compression.ZipFile]::CreateFromDirectory((Join-Path $root 'dist\_setup'), $setupZip, [System.IO.Compression.CompressionLevel]::Optimal, $false)
 Remove-Item (Join-Path $root 'dist\_setup') -Recurse -Force
+
+# ★★ 2026-10-28（D1 的前置）：**再留一份 ASCII 文件名的 msix**。
+#   GitHub 会直接丢弃非 ASCII 附件名（全局笔记「Flutter 开发实战经验」#60：中文名会被吞成 `-v1.0.0.apk`），
+#   而 D1「检查更新」要按 asset 名找安装包 ⇒ 发布用的那一份必须叫 mathlang-<ver>-x64.msix。
+$msixAscii = Join-Path $root ("dist\mathlang-" + $Version + "-x64.msix")
+Copy-Item $msix $msixAscii -Force
 
 # ★★ P3'（2026-10-21）：`dist\安装包\` 原来是我**手工**建的一次性目录，脚本从不产出
 #   ⇒ 里面的 msix 会一直是旧包（分发出去的就是旧代码）。现在由脚本每次重建它。
