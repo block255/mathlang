@@ -339,7 +339,7 @@ Remove-Item (Join-Path $root 'dist\_setup') -Recurse -Force
 # ★★ 2026-10-28（D1 的前置）：**再留一份 ASCII 文件名的 msix**。
 #   GitHub 会直接丢弃非 ASCII 附件名（全局笔记「Flutter 开发实战经验」#60：中文名会被吞成 `-v1.0.0.apk`），
 #   而 D1「检查更新」要按 asset 名找安装包 ⇒ 发布用的那一份必须叫 mathlang-<ver>-x64.msix。
-$msixAscii = Join-Path $root ("dist\mathlang-" + $Version + "-x64.msix")
+$msixAscii = Join-Path $root ("dist\mathlang-v" + $Version + "-x64.msix")
 Copy-Item $msix $msixAscii -Force
 
 # ★★ P3'（2026-10-21）：`dist\安装包\` 原来是我**手工**建的一次性目录，脚本从不产出
