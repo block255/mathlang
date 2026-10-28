@@ -364,6 +364,21 @@ try {
   }
 
   @override
+  Future<String> describeChannel() async {
+    try {
+      final List<InternetAddress> addrs = await InternetAddress.lookup(
+        'api.github.com',
+      ).timeout(const Duration(seconds: 3));
+      if (addrs.any((InternetAddress a) => a.isLoopback)) {
+        return '网络通道：本机加速工具（api.github.com → 127.0.0.1）';
+      }
+    } catch (_) {
+      // 解析不了也算"正在尝试"
+    }
+    return '网络通道：正在尝试连接 GitHub';
+  }
+
+  @override
   Future<void> openReleasePage(String url) async {
     try {
       await Process.start(

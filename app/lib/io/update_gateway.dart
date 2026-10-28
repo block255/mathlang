@@ -86,6 +86,13 @@ abstract class UpdateGateway {
   /// 成本 = 列一次目录 + 几个删除；**不联网、不碰用户文档**。
   Future<void> sweepOldUpdateFiles({int olderThanDays = 3});
 
+  /// **当前网络通道**的一句话说明（给下载弹窗显示）。
+  ///
+  /// ★ 只报**能看见**的东西：`api.github.com` 解析到 loopback ⇒ 说明 hosts 被本地加速
+  ///   工具劫持；否则**不许**猜"裸连还是 VPN"（VPN 在应用眼里和直连一样）——
+  ///   用户 2026-10-28 拍板：非劫持就写「正在尝试连接 GitHub」，不要写"或"。
+  Future<String> describeChannel();
+
   /// 用系统浏览器打开发布页。
   Future<void> openReleasePage(String url);
 }

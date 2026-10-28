@@ -181,6 +181,7 @@ Future<UpdateChoice?> showUpdateDownloadDialog(
   required UpdateInfo info,
   required ValueListenable<DownloadUiState> state,
   required VoidCallback onCancelDownload,
+  String channelText = '',
 }) {
   return showDialog<UpdateChoice>(
     context: context,
@@ -219,9 +220,12 @@ Future<UpdateChoice?> showUpdateDownloadDialog(
                     style: const TextStyle(fontSize: 12, color: Color(0xFF4A5568)),
                   ),
                   const SizedBox(height: 10),
-                  const Text(
-                    '走的是本机的 GitHub 加速通道；中途断了会自动重试一次。',
-                    style: TextStyle(fontSize: 11, color: Color(0xFF718096)),
+                  Text(
+                    channelText.isEmpty
+                        ? '正在尝试连接 GitHub；中途断了会自动重试一次。'
+                        : '$channelText；中途断了会自动重试一次。',
+                    key: const Key('update-channel-text'),
+                    style: const TextStyle(fontSize: 11, color: Color(0xFF718096)),
                   ),
                 ] else if (failed) ...<Widget>[
                   Text('原因：${s.error ?? '未知'}',

@@ -329,6 +329,9 @@ class EditorPageState extends State<EditorPage> {
 
   /// 暂存落点与上次写入时间（设置页「高级」里显示 —— 让「存到哪了」可见）
   String _sessionPath = '';
+
+  /// 上一次写暂存有没有失败（设置页「暂存位置」那一行据此标出来）
+  bool _persistFailed = false;
   DateTime? _sessionSavedAt;
 
   /// 启动时是否从暂存里恢复过（顶栏提示用）
@@ -504,11 +507,21 @@ class EditorPageState extends State<EditorPage> {
   Future<void> _installUpdate(UpdateInfo info) async {
     final ValueNotifier<DownloadUiState> st =
         ValueNotifier<DownloadUiState>(const DownloadUiState());
+    // ★ 通道说明只报"能看见的"：hosts 劫持到 127.0.0.1 ⇒ 本机加速工具；否则写"正在尝试连接"
+    String channelText = '';
+    try {
+      channelText = await _updates.describeChannel();
+    } catch (_) {}
+    if (!mounted || _disposed) {
+      st.dispose();
+      return;
+    }
     var cancelled = false;
     final Future<UpdateChoice?> deciding = showUpdateDownloadDialog(
       context,
       info: info,
       state: st,
+      channelText: channelText,
       onCancelDownload: () => cancelled = true,
     );
     final String? path = cancelled
@@ -760,8 +773,10 @@ class EditorPageState extends State<EditorPage> {
       savedAt: DateTime.now(),
     );
     final bool ok = await _session.save(data);
-    if (!ok) return;
-    _sessionSavedAt = data.savedAt;
+    // ★ 1.2.3：**存不下去也要说出来**（原来这里 `return` 掉了，界面永远显示上一次成功的路径
+    //   ⇒ 用户以为存住了）。现在无论如何都刷新落点，并把"写入失败"带给设置页。
+    _persistFailed = !ok;
+    if (ok) _sessionSavedAt = data.savedAt;
     try {
       _sessionPath = await _session.describe();
     } catch (_) {
@@ -1680,6 +1695,7 @@ class EditorPageState extends State<EditorPage> {
                     triggers: _triggers,
                     // ★ S4-e-①：本地暂存的可见性（「高级」组）
                     sessionPath: _sessionPath,
+                    sessionSaveFailed: _persistFailed,
                     sessionSavedAt: _sessionSavedAt,
                     onClearSession: clearSession,
                     // ★★ 2026-10-19（U1）：「高级」组的三块 —— 诊断清单 / 诊断信息 / 只读源码

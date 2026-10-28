@@ -13,6 +13,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'install_kind.dart';
 import 'session_data.dart';
 import 'session_store.dart';
 
@@ -36,10 +37,22 @@ const int kSessionMaxBytes = 8 * 1024 * 1024;
 SessionStore createSessionStore() => NativeSessionStore();
 
 class NativeSessionStore implements SessionStore {
-  NativeSessionStore({String? overridePath}) : _overridePath = overridePath; // ignore: prefer_initializing_formals
+  NativeSessionStore({
+    String? overridePath,
+    bool? forcePackaged,
+    String? appDataOverride,
+  })  : _overridePath = overridePath, // ignore: prefer_initializing_formals
+        _forcePackaged = forcePackaged, // ignore: prefer_initializing_formals
+        _appDataOverride = appDataOverride; // ignore: prefer_initializing_formals
 
   /// 测试可以钉死一个路径
   final String? _overridePath;
+
+  /// 测试用：强制"打包版 / 绿色版"两种形态（真机上是 [isPackagedApp] 判的）
+  final bool? _forcePackaged;
+
+  /// 测试用：把 `%APPDATA%` 换成临时目录（**绝不要在测试里真写用户的 APPDATA**）
+  final String? _appDataOverride;
 
   String? _resolved;
   int _saveCount = 0;
@@ -47,23 +60,33 @@ class NativeSessionStore implements SessionStore {
   @override
   int get saveCount => _saveCount;
 
-  /// 候选路径（按优先级）：exe 同目录 → `%APPDATA%\mathlang\`
+  /// 落点候选（**顺序按形态走**，见 [_candidates] 的注释）。
+  ///
+  /// ★★ 2026-10-28 实测纠正：打包版原来"优先 exe 同目录"，而 exe 在
+  /// `C:\Program Files\WindowsApps\...`（只读）⇒ 写入被 Windows **虚拟化**到
+  /// `%LOCALAPPDATA%\Packages\<包族名>\LocalCache\Roaming\...`。
+  /// 看着"存上了"（关掉重开设置还在），但那是**包内私有数据，卸载即删** ——
+  /// 用户实测"卸载重装后页位/字号全丢"。
+  /// ⇒ 打包版改成**优先 `%APPDATA%\mathlang\`**（用户漫游目录，卸载不动、升级继承）；
+  ///   绿色版仍优先 exe 同目录（便携就该跟着文件夹走，那是用户 2026-10-18 拍板的）。
   List<String> _candidates() {
     final String? o = _overridePath;
     if (o != null && o.isNotEmpty) return <String>[o];
-    final List<String> out = <String>[];
+    final List<String> exe = <String>[];
     try {
       final String exeDir = File(Platform.resolvedExecutable).parent.path;
-      if (exeDir.isNotEmpty) out.add('$exeDir${Platform.pathSeparator}$kSessionFileName');
+      if (exeDir.isNotEmpty) exe.add('$exeDir${Platform.pathSeparator}$kSessionFileName');
     } catch (_) {
       // 忽略：拿不到 exe 目录就只剩兜底
     }
-    final String? appData = Platform.environment['APPDATA'];
-    if (appData != null && appData.isNotEmpty) {
-      out.add('$appData${Platform.pathSeparator}mathlang'
+    final List<String> appData = <String>[];
+    final String? base = _appDataOverride ?? Platform.environment['APPDATA'];
+    if (base != null && base.isNotEmpty) {
+      appData.add('$base${Platform.pathSeparator}mathlang'
           '${Platform.pathSeparator}$kSessionFileName');
     }
-    return out;
+    final bool packaged = _forcePackaged ?? isPackagedApp();
+    return packaged ? <String>[...appData, ...exe] : <String>[...exe, ...appData];
   }
 
   /// 已经确定下来的落点（第一次写成功之后就不再变）
@@ -106,6 +129,21 @@ class NativeSessionStore implements SessionStore {
           } catch (_) {}
           continue;
         }
+        // ★★ 1.2.3：**从"非首选"落点读到的 ⇒ 迁移到首选落点**。
+        //   现场：打包版的设置在 `Packages\<包族名>\LocalCache\Roaming\mathlang\`
+        //   （exe 目录被虚拟化的结果），卸载就删。现在首选是 `%APPDATA%\mathlang\`
+        //   ⇒ 老用户第一次跑新版时把旧文件**搬**出来，然后删掉旧的（它已不权威）。
+        final String preferred = _candidates().first;
+        if (path != preferred) {
+          if (await _writeAtomic(preferred, src)) {
+            _resolved = preferred;
+            try {
+              await f.delete();
+            } catch (_) {}
+            return d;
+          }
+          // 搬不过去也没关系：这次先按老位置用，下次 save 会再试首选
+        }
         _resolved = path;
         return d;
       } catch (_) {
@@ -143,6 +181,7 @@ class NativeSessionStore implements SessionStore {
         return true;
       }
     }
+    // 所有候选都写不进去 ⇒ 返回 false（调用方据此把"写入失败"显示出来）
     return false;
   }
 

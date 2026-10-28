@@ -70,6 +70,7 @@ class SettingsOverlay extends StatefulWidget {
     this.pageSpace,
     this.sessionPath = '',
     this.sessionSavedAt,
+    this.sessionSaveFailed = false,
     this.onClearSession,
     this.diagnosticsText = '',
     this.onShowDiagnostics,
@@ -106,6 +107,9 @@ class SettingsOverlay extends StatefulWidget {
   /// ★ S4-e-①：本地暂存的落点与上次写入时间（「高级」组里显示 —— 让"存到哪了"可见）
   final String sessionPath;
   final DateTime? sessionSavedAt;
+
+  /// ★ 1.2.3：上一次写暂存**失败了** —— 那一行要标出来，不许假装存住了
+  final bool sessionSaveFailed;
 
   /// 「清除本地暂存」
   final VoidCallback? onClearSession;
@@ -487,6 +491,17 @@ class SettingsOverlayState extends State<SettingsOverlay> {
             Text(when,
                 key: const Key('session-when'),
                 style: const TextStyle(fontSize: 11, color: Color(0xFF718096))),
+            // ★ 1.2.3：写不下去就**明说**（原则 5）—— 以前这里永远只显示"上次保存 14:20"，
+            //   而实际所有候选都写失败时用户完全看不出来。
+            if (widget.sessionSaveFailed) ...<Widget>[
+              const SizedBox(height: 4),
+              const Text(
+                '⚠ 写入失败：这次改动没有存到磁盘（设置/草稿可能丢）。'
+                '请检查上面这个目录是否可写，或用绿色版。',
+                key: Key('session-save-failed'),
+                style: TextStyle(fontSize: 11, color: Color(0xFFC53030)),
+              ),
+            ],
           ],
         ),
       ),
