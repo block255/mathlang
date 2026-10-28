@@ -198,16 +198,72 @@ void main() {
     });
   });
 
-  group('弹窗 ② 更新完成', () {
-    Future<bool?> pumpDone(WidgetTester tester) async {
-      bool? restart;
+  group('弹窗 ② 下载进度 / 安装确认（一个窗口两态）', () {
+    Future<void> pumpProgress(
+      WidgetTester tester,
+      ValueNotifier<DownloadUiState> st,
+    ) async {
       await tester.pumpWidget(MaterialApp(
         home: Builder(
           builder: (BuildContext ctx) => Center(
             child: ElevatedButton(
-              onPressed: () async {
-                restart = await showUpdateDoneDialog(ctx, info: _info);
-              },
+              onPressed: () => showUpdateDownloadDialog(ctx,
+                  info: _info, state: st, onCancelDownload: () {}),
+              child: const Text('open'),
+            ),
+          ),
+        ),
+      ));
+      await tester.tap(find.text('open'));
+      await tester.pump();
+    }
+
+    testWidgets('下载中：进度条 + 已下/总量 + 「取消」', (WidgetTester tester) async {
+      final ValueNotifier<DownloadUiState> st = ValueNotifier<DownloadUiState>(
+          const DownloadUiState(got: 5 * 1024 * 1024, total: 14 * 1024 * 1024));
+      addTearDown(st.dispose);
+      await pumpProgress(tester, st);
+      expect(find.byKey(const Key('update-progress-bar')), findsOneWidget);
+      expect(find.textContaining('5.0 / 14.0 MB'), findsOneWidget);
+      expect(find.byKey(const Key('update-cancel-download')), findsOneWidget);
+    });
+
+    testWidgets('下载完 ⇒ 同一窗口变成"准备安装"，两个按钮', (WidgetTester tester) async {
+      final ValueNotifier<DownloadUiState> st =
+          ValueNotifier<DownloadUiState>(const DownloadUiState());
+      addTearDown(st.dispose);
+      await pumpProgress(tester, st);
+      st.value = st.value.copyWith(
+          phase: DownloadPhase.ready, got: 14 * 1024 * 1024, path: r'C:\t\x.msix');
+      await tester.pumpAndSettle();
+      expect(find.textContaining('准备安装'), findsOneWidget);
+      expect(find.textContaining('关闭本程序'), findsOneWidget);
+      expect(find.byKey(const Key('update-install-now')), findsOneWidget);
+      expect(find.byKey(const Key('update-install-later')), findsOneWidget);
+    });
+
+    testWidgets('下载失败 ⇒ 显示**真实原因** + 去发布页', (WidgetTester tester) async {
+      final ValueNotifier<DownloadUiState> st =
+          ValueNotifier<DownloadUiState>(const DownloadUiState());
+      addTearDown(st.dispose);
+      await pumpProgress(tester, st);
+      st.value = st.value.copyWith(
+          phase: DownloadPhase.failed, error: '连接被拒绝 —— 本机 127.0.0.1 上没有代理在应答');
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('update-failed-reason')), findsOneWidget);
+      expect(find.textContaining('连接被拒绝'), findsOneWidget);
+      expect(find.byKey(const Key('update-open-page')), findsOneWidget);
+    });
+  });
+
+  group('弹窗 ③ 已更新 / ④ 上次没装成', () {
+    testWidgets('已更新：显示版本与更新说明', (WidgetTester tester) async {
+      await tester.pumpWidget(MaterialApp(
+        home: Builder(
+          builder: (BuildContext ctx) => Center(
+            child: ElevatedButton(
+              onPressed: () =>
+                  showUpdateInstalledDialog(ctx, version: '1.2.0', notes: '· 修了 A'),
               child: const Text('open'),
             ),
           ),
@@ -215,24 +271,37 @@ void main() {
       ));
       await tester.tap(find.text('open'));
       await tester.pumpAndSettle();
-      expect(find.byKey(const Key('update-done-dialog')), findsOneWidget);
-      return restart;
-    }
-
-    testWidgets('两个选项都在；「暂不重启」返回 false', (WidgetTester tester) async {
-      await pumpDone(tester);
-      expect(find.text('暂不重启'), findsOneWidget);
-      expect(find.text('立即重启'), findsOneWidget);
-      await tester.tap(find.byKey(const Key('update-restart-later')));
-      await tester.pumpAndSettle();
-      expect(find.byKey(const Key('update-done-dialog')), findsNothing);
+      expect(find.byKey(const Key('update-installed-dialog')), findsOneWidget);
+      expect(find.textContaining('已更新到 1.2.0'), findsOneWidget);
+      expect(find.textContaining('修了 A'), findsOneWidget);
     });
 
-    testWidgets('「立即重启」⇒ 弹窗关掉（重启动作由外壳执行）', (WidgetTester tester) async {
-      await pumpDone(tester);
-      await tester.tap(find.byKey(const Key('update-restart-now')));
+    testWidgets('上次没装成：显示原因 + **安装包路径** + 复制按钮', (WidgetTester tester) async {
+      await tester.pumpWidget(MaterialApp(
+        home: Builder(
+          builder: (BuildContext ctx) => Center(
+            child: ElevatedButton(
+              onPressed: () => showUpdateFailedDialog(
+                ctx,
+                reason: '0x80073D02 资源正在使用中',
+                currentVersion: '1.1.2',
+                msixPath: r'C:\Users\me\AppData\Local\Temp\mathlang-update-1.2.0.msix',
+              ),
+              child: const Text('open'),
+            ),
+          ),
+        ),
+      ));
+      await tester.tap(find.text('open'));
       await tester.pumpAndSettle();
-      expect(find.byKey(const Key('update-done-dialog')), findsNothing);
+      expect(find.byKey(const Key('update-failed-dialog')), findsOneWidget);
+      expect(find.byKey(const Key('update-failed-msix-path')), findsOneWidget);
+      expect(find.textContaining('mathlang-update-1.2.0.msix'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('update-failed-copy-path')));
+      await tester.pumpAndSettle();
+      // ★ 这里不断言那条 snack：剪贴板在测试里没有平台实现，而且 snack 需要一个
+      //   Scaffold 才能上屏（本用例的 home 没套 Scaffold）。只断言"点了不炸"。
+      expect(tester.takeException(), isNull);
     });
   });
 }

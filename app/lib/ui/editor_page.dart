@@ -390,6 +390,8 @@ class EditorPageState extends State<EditorPage> {
     //   用户原话：「启动后静默检查，如果没发现就无异常，有发现才弹窗"」——
     //   所以这里**绝不 await**（不阻塞启东），延后 3 秒、超时 6 秒，失败只留痕。
     _scheduleStartupUpdateCheck();
+    // ★ D1：**上一次更新的结果**（成功/失败都要说）＋ 顺手清 3 天前的残留
+    _scheduleStartupUpdateResultCheck();
   }
 
   // ═══════════════════════ D1 · 检查更新 ═══════════════════════
@@ -494,28 +496,126 @@ class EditorPageState extends State<EditorPage> {
     }
   }
 
-  /// 下载 → 装 → 问「立即重启 / 暂不重启」
+  /// 下载（**带进度**）→ 确认 → 交给外挂小助手 → 自己退出
+  ///
+  /// ★★ 2026-10-28 实测 0x80073D02：**Windows 不允许边跑边装**（"资源正在使用中，
+  /// 需要关闭 MathLang.Editor"）⇒ 安装只能外挂：我们退出，小助手装完再起新版。
+  /// 于是"更新完成"只能在**下一次启动**时告诉他们（结果落在 `%TEMP%` 的结果文件里）。
   Future<void> _installUpdate(UpdateInfo info) async {
-    _snack('正在下载更新…');
-    final String? path = await _updates.downloadMsix(info);
-    if (!mounted || _disposed) return;
+    final ValueNotifier<DownloadUiState> st =
+        ValueNotifier<DownloadUiState>(const DownloadUiState());
+    var cancelled = false;
+    final Future<UpdateChoice?> deciding = showUpdateDownloadDialog(
+      context,
+      info: info,
+      state: st,
+      onCancelDownload: () => cancelled = true,
+    );
+    final String? path = cancelled
+        ? null
+        : await _updates.downloadMsix(
+            info,
+            onProgress: (int got, int total) {
+              if (cancelled) return;
+              st.value = st.value.copyWith(got: got, total: total);
+            },
+          );
+    if (!mounted || _disposed) {
+      st.dispose();
+      return;
+    }
     if (path == null) {
-      _snack('下载失败 —— 已为你打开发布页，可以手动下载');
-      await _updates.openReleasePage(info.pageUrl);
-      return;
+      st.value = st.value.copyWith(
+          phase: DownloadPhase.failed, error: _updates.lastError ?? '下载失败');
+    } else {
+      st.value = st.value.copyWith(phase: DownloadPhase.ready, path: path);
     }
-    _snack('正在安装…');
-    final bool ok = await _updates.installMsix(path);
+    final UpdateChoice? choice = await deciding;
+    st.dispose();
     if (!mounted || _disposed) return;
-    if (!ok) {
-      // 诚实降级：装不上（多半是应用被占用）就去发布页，别假装成功
-      _snack('更新没装上（应用可能被占用）—— 已为你打开发布页');
-      await _updates.openReleasePage(info.pageUrl);
-      return;
+    switch (choice) {
+      case null:
+      case UpdateChoice.later:
+        break; // 稍后再说 / 取消：下载好的文件留着（3 天后由扫描兜底清掉）
+      case UpdateChoice.openPage:
+        await _updates.openReleasePage(info.pageUrl);
+      case UpdateChoice.install:
+        final String ver = (info.version ?? info.tag).toString();
+        if (path == null) return;
+        final bool ok = await _updates.launchInstaller(
+          path,
+          version: ver,
+          notes: info.notes,
+          pageUrl: info.pageUrl,
+        );
+        if (!mounted || _disposed) return;
+        if (!ok) {
+          // 诚实降级：起不来就把原因 + **安装包在哪** 都摆出来，别假装成功
+          await showDialog<void>(
+            context: context,
+            builder: (BuildContext ctx) => AlertDialog(
+              title: const Text('启动安装程序失败'),
+              content: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    Text(_updates.lastError ?? '未知原因'),
+                    const SizedBox(height: 10),
+                    const Text('安装包已经下载好了，就在这里（可以复制后手动安装）：',
+                        style: TextStyle(fontSize: 11, color: Color(0xFF718096))),
+                    const SizedBox(height: 4),
+                    SelectableText(path,
+                        key: const Key('update-install-failed-msix-path'),
+                        style: const TextStyle(fontSize: 11, height: 1.5)),
+                  ],
+                ),
+              ),
+              actions: <Widget>[
+                FilledButton(
+                  onPressed: () => Navigator.of(ctx).pop(),
+                  child: const Text('知道了'),
+                ),
+              ],
+            ),
+          );
+          return;
+        }
+        // 交给小助手了 ⇒ 我们退出，让出文件占用（这是它能不能装上的**前提**）
+        exit(0);
     }
-    final bool restart = await showUpdateDoneDialog(context, info: info);
-    if (!mounted || _disposed) return;
-    if (restart) await _updates.relaunch();
+  }
+
+  /// 上次更新的结果：**下一次启动**时告诉用户（成功 / 失败都别沉默）
+  ///
+  /// 同时做"启动时顺手清"的第 ② 条：删掉 3 天前的 `mathlang-update-*` 残留。
+  void _scheduleStartupUpdateResultCheck() {
+    if (!_updates.supportsAutoCheck) return; // Web / 测试不做
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      Future<void>.delayed(const Duration(milliseconds: 600), () async {
+        if (!mounted || _disposed) return;
+        await _updates.sweepOldUpdateFiles();
+        final String? r = await _updates.takeLastUpdateResult();
+        if (!mounted || _disposed || r == null) return;
+        if (r.startsWith('ok:')) {
+          final String ver = r.substring(3).trim();
+          final PendingUpdate? pend = await _updates.takePendingInfo();
+          if (!mounted || _disposed) return;
+          await showUpdateInstalledDialog(context, version: ver, notes: pend?.notes);
+        } else if (r.startsWith('fail:')) {
+          // ★ 用户 2026-10-28：安装失败时要把**下好的文件在哪**摆出来（可复制、手动装）
+          final PendingUpdate? pend = await _updates.takePendingInfo();
+          if (!mounted || _disposed) return;
+          final bool go = await showUpdateFailedDialog(
+            context,
+            reason: r.substring(5).trim(),
+            currentVersion: kAppVersionName,
+            msixPath: pend?.msixPath,
+          );
+          if (go) await _updates.openReleasePage(kUpdateReleasePage);
+        }
+      });
+    });
   }
 
   /// 设置页那一行状态文案（**失败也要看得见** —— 原则 5）
@@ -531,7 +631,8 @@ class EditorPageState extends State<EditorPage> {
     final String what = switch (_s.updateLastResult) {
       'newer' => '发现新版本 ${_s.updateIgnoredVersion.isEmpty ? '' : '（已跳过 ${_s.updateIgnoredVersion}）'}',
       'ok' => '已是最新',
-      'failed' => '检查失败：网络不可用（不影响使用）',
+      // ★ 具体原因（用户 2026-10-28：网络明明好的却只说"网络不可用"）
+      'failed' => '检查失败：${_updates.lastError ?? '未知原因'}',
       _ => '',
     };
     return what.isEmpty ? when : '$when · $what';

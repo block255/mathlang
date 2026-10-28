@@ -18,16 +18,35 @@ class WebUpdateGateway implements UpdateGateway {
   bool get supportsAutoCheck => false;
 
   @override
+  String? get lastError => 'Web 端不做更新';
+
+  @override
   Future<UpdateInfo?> checkLatest() async => null;
 
   @override
-  Future<String?> downloadMsix(UpdateInfo info) async => null;
+  Future<String?> downloadMsix(
+    UpdateInfo info, {
+    void Function(int got, int total)? onProgress,
+  }) async =>
+      null;
 
   @override
-  Future<bool> installMsix(String path) async => false;
+  Future<bool> launchInstaller(
+    String msixPath, {
+    required String version,
+    String notes = '',
+    String pageUrl = '',
+  }) async =>
+      false;
 
   @override
-  Future<void> relaunch() async {}
+  Future<String?> takeLastUpdateResult() async => null;
+
+  @override
+  Future<PendingUpdate?> takePendingInfo() async => null;
+
+  @override
+  Future<void> sweepOldUpdateFiles({int olderThanDays = 3}) async {}
 
   @override
   Future<void> openReleasePage(String url) async {}
