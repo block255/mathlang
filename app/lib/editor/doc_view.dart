@@ -2597,53 +2597,25 @@ class DocViewState extends State<DocView> {
       b.setCaret(0);
       return;
     }
-    // ★★ 2026-10-28（用户第二次手验："我造了多个空行，点更下面的空白，光标落在
-    //   倒数第二个空行"）：**文末本来就有空行**时（最后一行是空行）走第 1 级 ——
-    //   "那里本来就有空行" ⇒ 落**最下面那一行**（= 文末下一行/最后一个空行那一格），
-    //   而不是"最后一个**已存**空行"（它在屏幕上是倒数第二行）。
-    if (_docEndsWithBlankLine()) {
-      b.setCaret(s.length);
-      return;
-    }
-    // 第 2 级：文末没有空行 ⇒ 向上找**整篇**最下面一个已存在的空行（可能在两段之间）
-    final int? lowestBlank = _lowestExistingBlankLine();
-    if (lowestBlank != null) {
-      b.setCaret(lowestBlank);
-      return;
-    }
-    // 第 3 级：整篇一个空行都没有 ⇒ 文末下一行（文末紧跟分页符时 = 分页符行首）
-    if (at != null && at >= 0 && at < s.length) {
-      b.setCaret(at);
-      return;
-    }
+    // ★★★ 2026-10-28（用户第三次手验纠正）：**点在所有行下面 ⇒ 夹到最下面那一行**。
+    //
+    //   〔用户〕只读基准 7 的三级，在"文末下一行是**常驻行**"（基准 4）的前提下**合并成一条**：
+    //     · 它本身就是一条空行（空段、占一行、能站光标）；
+    //     · 它是最下面那一条；
+    //     ⇒ "向上找最下面一个存在的空行"永远有答案，就是它 ⇒ ② 与 ③ 是同一件事。
+    //   ⇒ 点在行上落那一行（按行切分的子槽各自处理），点在行外落**最下面那一行**。
+    //
+    //   ★ 这条不是新结论：2026-10-27 那轮（`d788b26`/`2dffb43`/`e299dc0`/`fdff5c1`，
+    //     "文末下一行 = 真行、一行一个行盒、一把尺子"）的代码里就写着
+    //     「它就是这个位置：最后一行之后那一格（= `buf.length`）」。
+    //     2026-10-28 早上我把"已存在的空行"错误地定义成"存出来那一行、不含常驻行" ⇒
+    //     于是扫全篇找到**两段之间**那一行，而它没有自己的行（只占段间距）⇒
+    //     光标被画在"槽顶 + 3.6"的间距里（用户：「点下部空白，光标落在文末那行上面的间距处」）。
+    //     ⇒ 撤回那次"扫全篇"，落点改回"最下面那一行"。
+    //
+    //   ★ 末页与分页原页**同一套**：原页最下面那一行本来就是**分页符行首**（待写行），
+    //     所以统一之后原页的行为一个字都不变（批 47 那条成了本条的特例）。
     b.setCaret(s.length);
-  }
-
-  /// 文末是不是**本来就有空行**（最后一"行"是空的）
-  bool _docEndsWithBlankLine() {
-    final String s = widget.buffer.buf;
-    return s.length >= 2 && s.endsWith('\n') && s[s.length - 2] == '\n';
-  }
-
-  /// 整篇文档里**最下面一个已存在的空行**的行首偏移（一个都没有 ⇒ `null`）。
-  ///
-  /// "已存在的空行" = 缓冲区里一行内容 `trim()` 为空、且**真有行终止符**的那一行。
-  /// 文末那个"下一段会落脚"的位置**不算**（它不是一行）。
-  int? _lowestExistingBlankLine() {
-    final String s = widget.buffer.buf;
-    if (s.isEmpty) return null;
-    // 从最后一行往回扫：文档以 `\n` 收尾 ⇒ 最后一行是 [行首, len-1)
-    var end = s.length;
-    if (s[end - 1] == '\n') end -= 1;
-    while (end > 0) {
-      final int nl = s.lastIndexOf('\n', end - 1);
-      final int start = nl < 0 ? 0 : nl + 1;
-      final String line = s.substring(start, end);
-      if (line.trim().isEmpty) return start;
-      if (nl < 0) break;
-      end = nl;
-    }
-    return null;
   }
 
   /// 上一个单元之后如果跟着**空行**，返回那个空行的起点；否则 -1。

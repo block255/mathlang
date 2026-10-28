@@ -127,17 +127,18 @@ void main() {
       expect(ys.single, closeTo(_caretY(tester), _eps));
     });
 
-    // 〔用户〕只读基准 7 第二级：「没有 ⇒ 向上找**最下面一个存在的空行**的行首」
-    testWidgets('★ 第 2 级：文末自己没空行、空行在两段之间 ⇒ 落到**那个空行的行首**',
+    // 〔用户〕只读基准 7：三级在"文末下一行是**常驻行**"（基准 4）下**合并成一条** ——
+    //   它就是最下面那一条空行 ⇒ "向上找"永远有答案，就是它（② 与 ③ 是同一件事）。
+    testWidgets('★ 点在所有行下面 ⇒ 落**最下面那一行**（末页 = 文末下一行）',
         (WidgetTester tester) async {
-      // `甲⏎⏎乙⏎`：唯一存在的空行在偏移 2（甲与乙之间）
+      // `甲⏎⏎乙⏎`：文末下方没有空行；最下面那一行 = 偏移 5（EOF）
       final DocBuffer buf = await _mount(tester, '甲\n\n乙\n', 3);
       final Rect page = _page0(tester);
       await tester.tapAt(Offset(page.center.dx, page.top + page.height * 0.6));
       await tester.pumpAndSettle();
-      expect(buf.caret, 2,
-          reason: '点文末下方空白 ⇒ 向上找最下面一个存在的空行（偏移 2），'
-              '不是"文末下一行"（用户 2026-10-28 手测抓到的正是这条）');
+      expect(buf.caret, 5,
+          reason: '落最下面那一行（= 文末下一行，偏移 5）；2026-10-28 用户纠正：'
+              '常驻行本身就是一条空行、而且是最下面那一条');
       expect(_caretYs(tester).length, 1, reason: '一根光标');
     });
 
