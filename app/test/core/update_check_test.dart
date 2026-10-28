@@ -40,8 +40,7 @@ void main() {
     });
   });
 
-  group('Release JSON 解析', () {
-    Map<String, dynamic> release({String tag = 'v1.2.0', List<Object?>? assets}) =>
+  group('Release JSON 解析', () {    Map<String, dynamic> release({String tag = 'v1.2.0', List<Object?>? assets}) =>
         <String, dynamic>{
           'tag_name': tag,
           'body': '· 修了 A\n· 修了 B',
@@ -90,41 +89,43 @@ void main() {
       expect(UpdateInfo.tryParse('not a map'), isNull);
       expect(UpdateInfo.tryParse(null), isNull);
     });
+
+    // ★ 2026-10-28 晚：**探针用的假 release** 也必须能被解析 —— 否则"伪造一个检测到新版本"
+    // 这条验证手段本身就不成立。JSON 与 `_cache/tmp/probe/latest.json` 同形。
+    test('探针假 release（v9.9.9 + 假 msix 资产）照样能解析', () {
+      final UpdateInfo? u = UpdateInfo.tryParse(<String, dynamic>{
+        'tag_name': 'v9.9.9',
+        'name': '9.9.9 探针版（假的，只为验弹窗）',
+        'body': '## 这是探针造的假版本',
+        'html_url': 'https://github.com/block255/mathlang/releases',
+        'assets': <Object?>[
+          <String, dynamic>{
+            'name': 'probe-fake-x64.msix',
+            'browser_download_url': 'http://127.0.0.1:8765/probe-fake-x64.msix',
+            'size': 1,
+          },
+        ],
+      });
+      expect(u, isNotNull);
+      expect(u!.version, const VersionRef(9, 9, 9));
+      expect(u.canInstall, isTrue, reason: '有 msix 资产 ⇒ 一键更新按钮可用');
+      expect(u.notes, contains('探针'));
+    });
   });
 
-  group('限频 · 该不该自动查', () {
-    final DateTime now = DateTime(2026, 10, 28, 14, 0);
-
-    test('关掉开关 ⇒ 一次都不查', () {
-      expect(
-        shouldAutoCheck(enabled: false, lastCheckAt: null, now: now),
-        isFalse,
-      );
+  group('启动检查 · 该不该自动查', () {
+    // ★★★ 2026-10-28 晚（用户实测推翻限频）：原来按"距上次 ≥24 小时"限频，
+    //   结果装完新版启动查过一次（已是最新），几分钟后发了新版本，用户再启动时
+    //   **24 小时内不再查** ⇒ 自动弹窗一次都没出现过。
+    //   用户原话：「这个软件数学编辑的定位就注定一天之内不会频繁多次打开」
+    //   ⇒ **去掉限频，每次启动查一次**。判据函数从此**没有时间参数** ——
+    //   这就是最强的守卫：想再塞回限频，必须先改这个签名（会红在这里）。
+    test('开关开着 ⇒ 每次启动都查（没有时间参数 = 不可能被限频挡住）', () {
+      expect(shouldAutoCheck(enabled: true), isTrue);
     });
 
-    test('从没查过 ⇒ 查', () {
-      expect(shouldAutoCheck(enabled: true, lastCheckAt: null, now: now), isTrue);
-    });
-
-    test('24 小时内查过 ⇒ 不查；超过 24 小时 ⇒ 查', () {
-      expect(
-        shouldAutoCheck(
-            enabled: true, lastCheckAt: now.subtract(const Duration(hours: 23)), now: now),
-        isFalse,
-      );
-      expect(
-        shouldAutoCheck(
-            enabled: true, lastCheckAt: now.subtract(const Duration(hours: 25)), now: now),
-        isTrue,
-      );
-    });
-
-    test('时钟被往回调过（上次检查在未来）⇒ 还是查，别卡死', () {
-      expect(
-        shouldAutoCheck(
-            enabled: true, lastCheckAt: now.add(const Duration(hours: 5)), now: now),
-        isTrue,
-      );
+    test('关掉开关 ⇒ 一次都不查（这是用户明确意愿，不是限频）', () {
+      expect(shouldAutoCheck(enabled: false), isFalse);
     });
   });
 

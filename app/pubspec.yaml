@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 1.2.8+14
+version: 1.2.9+15
 environment:
   sdk: ^3.13.1
 
@@ -62,6 +62,9 @@ flutter:
   # ★ S4-b：符号库（面板与符号表的**唯一数据源**，见《符号面板与符号表.md》§二）
   assets:
     - assets/symbols.json
+    # 桌面快捷方式用的**多尺寸图标**（2026-10-28：随包带一份，装/更新时拷到稳定路径；
+    # 不再引用 WindowsApps 里带版本号的 exe —— 那样每次升级图标都会失效）
+    - assets/icon/app.ico
 
   # To add assets to your application, add an assets section, like this:
   # assets:

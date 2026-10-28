@@ -251,8 +251,13 @@ if errorlevel 1 (
 )
 echo 装好了，正在打开…
 powershell -NoProfile -Command "`$p=(Get-AppxPackage MathLang.Editor).PackageFamilyName; Start-Process ('shell:AppsFolder\'+`$p+'!App')"
+rem ★ 2026-10-28：开始菜单里那份**我们自己写的 .lnk 是历史遗留**（早期开发版指向 dist\v1.0.0，
+rem 目标早已不存在）。MSIX 安装后开始菜单的「所有应用」由**包清单**提供（AppListEntry=default）
+rem ⇒ 那个 .lnk 是多余的死链，顺手删掉；以后也不再往开始菜单写。
+del /q "%APPDATA%\Microsoft\Windows\Start Menu\Programs\数语引擎.lnk" 2>nul
+rem 桌面快捷方式由**应用首次启动**自己建（MSIX 不允许安装包创建桌面快捷方式）
 echo.
-echo 完成。以后从桌面或开始菜单的「数语引擎」打开即可。
+echo 完成。桌面图标会在第一次打开后出现（开始菜单的「数语引擎」由系统提供）。
 pause
 "@
 [System.IO.File]::WriteAllText((Join-Path $stage '双击我安装数语引擎.cmd'), ($installCmd -replace "`r?`n", "`r`n"), [System.Text.Encoding]::GetEncoding(936))
@@ -286,9 +291,13 @@ if errorlevel 1 (
   pause
   exit /b 1
 )
-echo   已卸载。桌面/开始菜单的图标会消失。
+rem ★ 2026-10-28：**桌面快捷方式是我们自己建的**（MSIX 不允许安装包建），
+rem   Remove-AppxPackage 不会动它 ⇒ 必须在这里删，否则会留一张白纸图标。
+del /q "%USERPROFILE%\Desktop\数语引擎.lnk" 2>nul
+del /q "%APPDATA%\Microsoft\Windows\Start Menu\Programs\数语引擎.lnk" 2>nul
+echo   已卸载，桌面与开始菜单里我们建的那个图标已删掉。
 echo.
-set /p PURGE=要顺带删掉设置与暂存（%USERPROFILE%\mathlang）吗？保留可重装接着用 [y/N]: 
+set /p PURGE=要顺带删掉设置、暂存与图标（%USERPROFILE%\mathlang）吗？保留可重装接着用 [y/N]: 
 if /i "%PURGE%"=="y" (
   rmdir /s /q "%USERPROFILE%\mathlang"
   if exist "%APPDATA%\mathlang" rmdir /s /q "%APPDATA%\mathlang"

@@ -100,28 +100,28 @@ enum UpdateCheck {
   failed,
 }
 
-/// 启动时**该不该自动查**：开关打开 + 距上次 ≥ [minInterval]（没查过 ⇒ 查）。
+/// 启动时**该不该自动查**。
 ///
-/// 为什么要限频：不加的话每次开机都弹一次，比不更新还烦（用户 2026-10-28 同意这条）。
-bool shouldAutoCheck({
-  required bool enabled,
-  required DateTime? lastCheckAt,
-  required DateTime now,
-  Duration minInterval = const Duration(hours: 24),
-}) {
-  if (!enabled) return false;
-  if (lastCheckAt == null) return true;
-  // 时钟被往回调过（lastCheckAt 在未来）⇒ 也让它查，卡死更糟
-  final Duration since = now.difference(lastCheckAt);
-  if (since.isNegative) return true;
-  return since >= minInterval;
-}
+/// ★★★ 2026-10-28 晚（用户实测推翻"限频"）：原来按"距上次 ≥24 小时"限频，
+///   结果是 —— 装完新版启动查过一次（当时已是最新），我几分钟后发了更新的版本，
+///   用户再启动时**24 小时内不再查** ⇒ **自动弹窗一次都没出现过**。
+///   用户的原话：「这个软件数学编辑的定位就注定一天之内不会频繁多次打开」⇒
+///   **去掉限频，每次启动查一次**。
+///   代价只是一个 HTTPS GET（~1 KB）、静默、不阻塞；已是最新时一声不吭。
+///   真不想查就关掉「以后不再自动检查更新」（那是明确意愿，不是限频）。
+///
+/// `updateLastCheckAt` 从此**只用来显示**"上次检查 X"，不再参与判断。
+bool shouldAutoCheck({required bool enabled}) => enabled;
 
 /// 查到了最新版，**该不该弹窗**。
 ///
 /// · 不比当前版本新 ⇒ 不弹（已是最新，静默）；
 /// · [manual]（用户自己点了「检查更新」）⇒ **只要更新就弹**（他主动问的，无视"忽略过"）；
-/// · 自动检查 ⇒ 已经「暂不更新」过的那个版本**不再弹**（只跳过这一个版本）。
+/// · 自动检查 ⇒ 只跳过**用户点过「忽略此版本」**的那一个版本。
+///
+/// ★ 2026-10-28 晚（用户拍板）：弹窗拆成两个"不更"的理由 ——
+///   · **暂不更新** = 只关这次，**下次启动依旧弹**（什么都不记）；
+///   · **忽略此版本** = 记进 `updateIgnoredVersion`，等下一个版本再说。
 bool shouldPromptUpdate({
   required VersionRef? current,
   required VersionRef? latest,

@@ -19,8 +19,11 @@ import '../core/version_ref.dart';
 
 /// 用户在「发现新版本」里选了什么
 enum UpdateChoice {
-  /// 这次不更（记住这个版本，下次升版再说）
+  /// **只关这次弹窗** —— 什么都不记，下次启动照样弹（2026-10-28 晚用户拍板）
   later,
+
+  /// **忽略这一个版本** —— 记进 `updateIgnoredVersion`，出更新的版本再弹
+  ignoreVersion,
 
   /// 去 GitHub 发布页自己下
   openPage,
@@ -75,6 +78,12 @@ Future<UpdateDecision?> showUpdateAvailableDialog(
                 ),
               ],
               const SizedBox(height: 8),
+              // ★ 两个"不更"按钮的区别要写在按钮**旁边**，否则用户以为它们一样
+              const Text(
+                '暂不更新 = 只关掉这一次（下次启动还会提醒）\n'
+                '忽略此版本 = 这一个版本不再提醒（出了更新的版本还会提醒）',
+                style: TextStyle(fontSize: 11, height: 1.5, color: Color(0xFF718096)),
+              ),
               InkWell(
                 key: const Key('update-disable-auto'),
                 onTap: () => setSt(() => disableAuto = !disableAuto),
@@ -101,12 +110,23 @@ Future<UpdateDecision?> showUpdateAvailableDialog(
             ],
           ),
         ),
+        // ★ 2026-10-28 晚（用户拍板）：两个"不更"的理由必须**看得见地区别开** ——
+        //   · 暂不更新 = 只关这次，下次启动照样弹；
+        //   · 忽略此版本 = 跳过这一个版本，出更新的再说。
+        //   四个按钮一行太挤 ⇒ 左边两个用文字按钮、右边两个是主操作。
+        actionsPadding: const EdgeInsets.fromLTRB(8, 0, 12, 12),
         actions: <Widget>[
           TextButton(
             key: const Key('update-later'),
             onPressed: () => Navigator.of(ctx)
                 .pop(UpdateDecision(UpdateChoice.later, disableAuto: disableAuto)),
             child: const Text('暂不更新'),
+          ),
+          TextButton(
+            key: const Key('update-ignore-version'),
+            onPressed: () => Navigator.of(ctx).pop(
+                UpdateDecision(UpdateChoice.ignoreVersion, disableAuto: disableAuto)),
+            child: const Text('忽略此版本'),
           ),
           TextButton(
             key: const Key('update-open-page'),

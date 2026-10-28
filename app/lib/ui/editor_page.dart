@@ -427,13 +427,8 @@ class EditorPageState extends State<EditorPage> {
     if (_updateChecking) return;
     final DateTime now = DateTime.now();
     final VersionRef? cur = VersionRef.tryParse(kAppVersion);
-    if (!manual &&
-        !shouldAutoCheck(
-          enabled: _s.autoCheckUpdate,
-          lastCheckAt: DateTime.tryParse(_s.updateLastCheckAt),
-          now: now,
-        )) {
-      return; // 限频：24 小时内查过 / 开关关着
+    if (!manual && !shouldAutoCheck(enabled: _s.autoCheckUpdate)) {
+      return; // 用户勾了「以后不再自动检查更新」
     }
     if (mounted) setState(() => _updateChecking = true);
     UpdateInfo? info;
@@ -487,7 +482,10 @@ class EditorPageState extends State<EditorPage> {
     }
     switch (d.choice) {
       case UpdateChoice.later:
-        // 只跳过**这一个**版本（下次升版还会提示）
+        // ★ 2026-10-28 晚（用户拍板）：**只关这次弹窗**，什么都不记 ⇒ 下次启动照样弹。
+        break;
+      case UpdateChoice.ignoreVersion:
+        // 跳过**这一个**版本（发了更新的版本仍会弹）
         setState(() => _s = _s.copyWith(
               updateIgnoredVersion: (info.version ?? curV).toString(),
             ));
@@ -549,6 +547,7 @@ class EditorPageState extends State<EditorPage> {
     switch (choice) {
       case null:
       case UpdateChoice.later:
+      case UpdateChoice.ignoreVersion:
         break; // 稍后再说 / 取消：下载好的文件留着（3 天后由扫描兜底清掉）
       case UpdateChoice.openPage:
         await _updates.openReleasePage(info.pageUrl);
@@ -642,7 +641,10 @@ class EditorPageState extends State<EditorPage> {
         : '上次检查：${at.month}-${at.day} '
             '${at.hour.toString().padLeft(2, '0')}:${at.minute.toString().padLeft(2, '0')}';
     final String what = switch (_s.updateLastResult) {
-      'newer' => '发现新版本 ${_s.updateIgnoredVersion.isEmpty ? '' : '（已跳过 ${_s.updateIgnoredVersion}）'}',
+      // ★ 2026-10-28 晚：只提"忽略过哪个版本"；「暂不更新」什么都不记
+      'newer' => _s.updateIgnoredVersion.isEmpty
+          ? '发现新版本'
+          : '发现新版本（已忽略 ${_s.updateIgnoredVersion}）',
       'ok' => '已是最新',
       // ★ 具体原因（用户 2026-10-28：网络明明好的却只说"网络不可用"）
       'failed' => '检查失败：${_updates.lastError ?? '未知原因'}',
@@ -669,14 +671,15 @@ class EditorPageState extends State<EditorPage> {
       //   否则 `Process.run(powershell)` 会留下 pending timer，把无关的 widget 测试打红。
       if (Platform.environment['FLUTTER_TEST'] == 'true') return;
       if (_disposed || !_s.desktopShortcut) return;
-      if (desktopShortcutExists()) {
-        if (mounted) setState(() {}); // 让设置页显示"已创建"
-        return;
-      }
+      // ★★ 2026-10-28 晚（用户实测"更新后桌面图标变白纸"）：**不再"存在就跳过"** ——
+      //   `ensureDesktopShortcut()` 现在是**幂等自愈**：印戳对得上且三样都在就零开销返回，
+      //   否则重写（安装后 / 一键更新后 / 被手工改坏，都会在下次启动自动修好）。
       final bool ok = await ensureDesktopShortcut();
       if (!mounted) return;
       setState(() {});
-      if (!ok) _snack('桌面快捷方式没建成（可以在 设置 → 高级 里重试）');
+      if (!ok && !desktopShortcutExists()) {
+        _snack('桌面快捷方式没建成（可以在 设置 → 高级 里重试）');
+      }
     });
   }
 

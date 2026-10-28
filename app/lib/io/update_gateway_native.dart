@@ -57,15 +57,27 @@ class NativeUpdateGateway implements UpdateGateway {
     return null;
   }
 
+  /// 检查更新用的地址。
+  ///
+  /// ★★ **探针钩子**（2026-10-28 用户提议）：绿色版可以用环境变量
+  ///   `MATHLANG_UPDATE_API` 把地址指到一个**本地假 release**，
+  ///   于是"启动 → 3 秒后静默查 → 发现新版 → 弹窗"这条真实路径可以**不发版**就验一遍。
+  ///   **只在非打包版（绿色版/开发版）生效** —— 打包版永远走真地址，避免变成安全口子。
+  String _apiUrl() {
+    if (!isPackaged) {
+      final String probe = Platform.environment['MATHLANG_UPDATE_API'] ?? '';
+      if (probe.isNotEmpty) return probe;
+    }
+    return 'https://api.github.com/repos/$kUpdateRepoSlug/releases/latest';
+  }
+
   Future<UpdateInfo?> _checkOnce() async {
     final HttpClient client = HttpClient()
       ..connectionTimeout = _timeout
       ..userAgent = 'mathlang-updater/1 (+https://github.com/$kUpdateRepoSlug)';
     try {
-      final HttpClientRequest req = await client
-          .getUrl(Uri.parse(
-              'https://api.github.com/repos/$kUpdateRepoSlug/releases/latest'))
-          .timeout(_timeout);
+      final HttpClientRequest req =
+          await client.getUrl(Uri.parse(_apiUrl())).timeout(_timeout);
       req.headers.set(HttpHeaders.acceptHeader, 'application/vnd.github+json');
       final HttpClientResponse res = await req.close().timeout(_timeout);
       if (res.statusCode != 200) {

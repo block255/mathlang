@@ -137,10 +137,12 @@ void main() {
       return got;
     }
 
-    testWidgets('三个按钮都在，说明里带当前/最新版本与 Release 原文',
+    testWidgets('四个按钮都在，说明里带当前/最新版本与 Release 原文',
         (WidgetTester tester) async {
       await pumpDialog(tester);
+      // ★ 2026-10-28 晚：两个"不更"的理由必须**分开且都可见**
       expect(find.text('暂不更新'), findsOneWidget);
+      expect(find.text('忽略此版本'), findsOneWidget);
       expect(find.text('前往发布页'), findsOneWidget);
       expect(find.text('一键更新'), findsOneWidget);
       expect(find.textContaining('发现新版本 1.2.0'), findsOneWidget);
@@ -148,13 +150,42 @@ void main() {
       expect(find.byKey(const Key('update-disable-auto')), findsOneWidget);
     });
 
-    testWidgets('「暂不更新」⇒ later，且默认不带「不再自动检查」',
+    testWidgets('「暂不更新」⇒ later（只关这次，什么都不记）',
         (WidgetTester tester) async {
       await pumpDialog(tester);
       await tester.tap(find.byKey(const Key('update-later')));
       await tester.pumpAndSettle();
       // 结果由 pumpDialog 里的 got 捕获 —— 这里靠"弹窗关掉了"间接确认
       expect(find.byKey(const Key('update-available-dialog')), findsNothing);
+    });
+
+    testWidgets('「忽略此版本」⇒ ignoreVersion（与 later 是两回事）',
+        (WidgetTester tester) async {
+      UpdateDecision? got;
+      await tester.pumpWidget(MaterialApp(
+        home: Builder(
+          builder: (BuildContext ctx) => Center(
+            child: ElevatedButton(
+              onPressed: () async {
+                got = await showUpdateAvailableDialog(
+                  ctx,
+                  info: _info,
+                  current: const VersionRef(1, 1, 2),
+                  canInstall: true,
+                );
+              },
+              child: const Text('open'),
+            ),
+          ),
+        ),
+      ));
+      await tester.tap(find.text('open'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('update-ignore-version')));
+      await tester.pumpAndSettle();
+      expect(got, isNotNull);
+      expect(got!.choice, UpdateChoice.ignoreVersion);
+      expect(got!.disableAuto, isFalse, reason: '忽略一个版本 ≠ 关掉自动检查');
     });
 
     testWidgets('勾上「以后不再自动检查更新」再选 ⇒ disableAuto = true',
