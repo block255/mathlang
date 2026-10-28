@@ -27,8 +27,21 @@ class WebUpdateGateway implements UpdateGateway {
   Future<String?> downloadMsix(
     UpdateInfo info, {
     void Function(int got, int total)? onProgress,
+    DownloadCancelToken? cancel,
   }) async =>
       null;
+
+  @override
+  String get downloadsHint => '';
+
+  @override
+  Future<int> downloadedUpdateFiles() async => 0;
+
+  @override
+  Future<int> downloadedUpdateBytes() async => 0;
+
+  @override
+  Future<int> clearDownloadedUpdates() async => 0;
 
   @override
   Future<bool> launchInstaller(
@@ -50,6 +63,9 @@ class WebUpdateGateway implements UpdateGateway {
 
   @override
   Future<String> describeChannel() async => '网络通道：Web 端不做更新';
+
+  @override
+  Future<void> revealFile(String path) async {}
 
   @override
   Future<void> openReleasePage(String url) async {}

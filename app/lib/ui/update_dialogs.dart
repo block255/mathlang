@@ -48,6 +48,8 @@ Future<UpdateDecision?> showUpdateAvailableDialog(
   required UpdateInfo info,
   required VersionRef current,
   required bool canInstall,
+  /// 有安装包可下（绿色版：能下不能装 ⇒ 按钮写"下载更新包"）
+  bool canDownload = false,
   bool autoCheckEnabled = true,
 }) {
   bool disableAuto = false;
@@ -72,9 +74,11 @@ Future<UpdateDecision?> showUpdateAvailableDialog(
               _NotesBox(notes: info.notes),
               if (!canInstall) ...<Widget>[
                 const SizedBox(height: 8),
-                const Text(
-                  '这一版没有可一键安装的包 —— 用「前往发布页」下载后手动安装。',
-                  style: TextStyle(fontSize: 11, color: Color(0xFFB7791F)),
+                Text(
+                  canDownload
+                      ? '绿色版没有包身份，不能自动安装 —— 点【下载更新包】会下好并把路径给你。'
+                      : '这一版没有可安装的包 —— 用「前往发布页」下载后手动安装。',
+                  style: const TextStyle(fontSize: 11, color: Color(0xFFB7791F)),
                 ),
               ],
               const SizedBox(height: 8),
@@ -136,11 +140,11 @@ Future<UpdateDecision?> showUpdateAvailableDialog(
           ),
           FilledButton(
             key: const Key('update-install'),
-            onPressed: canInstall
+            onPressed: (canInstall || canDownload)
                 ? () => Navigator.of(ctx)
                     .pop(UpdateDecision(UpdateChoice.install, disableAuto: disableAuto))
                 : null,
-            child: const Text('一键更新'),
+            child: Text(canInstall ? '一键更新' : '下载更新包'),
           ),
         ],
       ),
@@ -156,6 +160,7 @@ class DownloadUiState {
     this.phase = DownloadPhase.downloading,
     this.got = 0,
     this.total = -1,
+    this.speed = 0,
     this.error,
     this.path,
   });
@@ -167,6 +172,9 @@ class DownloadUiState {
 
   /// 总字节（未知 ⇒ -1）
   final int total;
+
+  /// 当前速度（字节/秒，滑动平均；0 = 还算不出来）
+  final double speed;
 
   /// 失败原因（[phase] == failed 时有值）
   final String? error;
@@ -180,6 +188,7 @@ class DownloadUiState {
     DownloadPhase? phase,
     int? got,
     int? total,
+    double? speed,
     String? error,
     String? path,
   }) =>
@@ -187,6 +196,7 @@ class DownloadUiState {
         phase: phase ?? this.phase,
         got: got ?? this.got,
         total: total ?? this.total,
+        speed: speed ?? this.speed,
         error: error ?? this.error,
         path: path ?? this.path,
       );
@@ -235,8 +245,8 @@ Future<UpdateChoice?> showUpdateDownloadDialog(
                   Text(
                     s.total > 0
                         ? '${_mb(s.got)} / ${_mb(s.total)} MB · '
-                            '${(s.ratio * 100).toStringAsFixed(0)}%'
-                        : '${_mb(s.got)} MB（总大小未知）',
+                            '${(s.ratio * 100).toStringAsFixed(0)}%${_speedText(s)}'
+                        : '${_mb(s.got)} MB（总大小未知）${_speedText(s)}',
                     style: const TextStyle(fontSize: 12, color: Color(0xFF4A5568)),
                   ),
                   const SizedBox(height: 10),
@@ -459,3 +469,17 @@ class _NotesBox extends StatelessWidget {
 
 String _mb(int bytes) =>
     bytes <= 0 ? '0' : (bytes / 1024 / 1024).toStringAsFixed(1);
+
+/// 速度 / 剩余时间（算不出来就空着，不显示 "0 KB/s" 那种噪音）
+String _speedText(DownloadUiState s) {
+  if (s.speed <= 0) return '';
+  final String sp = s.speed >= 1024 * 1024
+      ? '${(s.speed / 1024 / 1024).toStringAsFixed(1)} MB/s'
+      : '${(s.speed / 1024).toStringAsFixed(0)} KB/s';
+  if (s.total <= s.got) return ' · $sp';
+  final double left = (s.total - s.got) / s.speed;
+  final String eta = left >= 60
+      ? '剩余约 ${(left / 60).ceil()} 分'
+      : '剩余约 ${left.ceil()} 秒';
+  return ' · $sp · $eta';
+}

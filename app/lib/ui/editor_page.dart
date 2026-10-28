@@ -472,6 +472,7 @@ class EditorPageState extends State<EditorPage> {
       info: info,
       current: curV,
       canInstall: info.canInstall && _updates.isPackaged,
+      canDownload: info.canInstall,
       autoCheckEnabled: _s.autoCheckUpdate,
     );
     if (!mounted || _disposed || d == null) return;
@@ -515,22 +516,49 @@ class EditorPageState extends State<EditorPage> {
       return;
     }
     var cancelled = false;
+    // ★ 2026-10-28 晚：**真取消**（以前只让进度条别再更新，后台照样下完）
+    final DownloadCancelToken cancelToken = DownloadCancelToken();
+    // 速度：用"滑动窗口"算，抖一下就跳的数字没法看
+    final Stopwatch sw = Stopwatch()..start();
+    int lastBytes = 0;
+    int lastMs = 0;
     final Future<UpdateChoice?> deciding = showUpdateDownloadDialog(
       context,
       info: info,
       state: st,
       channelText: channelText,
-      onCancelDownload: () => cancelled = true,
+      onCancelDownload: () {
+        cancelled = true;
+        cancelToken.cancel();
+      },
     );
     final String? path = cancelled
         ? null
         : await _updates.downloadMsix(
             info,
+            cancel: cancelToken,
             onProgress: (int got, int total) {
               if (cancelled) return;
-              st.value = st.value.copyWith(got: got, total: total);
+              // 每 ~400ms 更新一次速度（太频繁反而看不清）
+              final int ms = sw.elapsedMilliseconds;
+              double speed = st.value.speed;
+              if (ms - lastMs >= 400) {
+                final int dB = got - lastBytes;
+                final int dMs = ms - lastMs;
+                if (dMs > 0) speed = dB * 1000 / dMs;
+                lastBytes = got;
+                lastMs = ms;
+              }
+              st.value =
+                  st.value.copyWith(got: got, total: total, speed: speed);
             },
           );
+    if (cancelled) {
+      // ★ 用户点了取消：**不弹任何窗**（用户 2026-10-28 明确要求），
+      //   已下的那部分留在 `%TEMP%\…msix.part`，下次点更新接着下。
+      st.dispose();
+      return;
+    }
     if (!mounted || _disposed) {
       st.dispose();
       return;
@@ -554,6 +582,12 @@ class EditorPageState extends State<EditorPage> {
       case UpdateChoice.install:
         final String ver = (info.version ?? info.tag).toString();
         if (path == null) return;
+        // ★ 2026-10-28 晚：**绿色版只能下载、不能自动装**（没有包身份）。
+        //   以前这里直接禁用按钮、把绿色版用户赶去发布页；现在正经给他下载 + 路径。
+        if (!_updates.isPackaged) {
+          await _showDownloadedPackage(path, ver);
+          return;
+        }
         final bool ok = await _updates.launchInstaller(
           path,
           version: ver,
@@ -598,8 +632,54 @@ class EditorPageState extends State<EditorPage> {
     }
   }
 
-  /// 上次更新的结果：**下一次启动**时告诉用户（成功 / 失败都别沉默）
+  /// 绿色版专用：**下载好了**，把包摆到用户眼前（定位到文件 + 可复制路径）
   ///
+  /// 为什么不直接装：绿色版没有 MSIX 包身份，`Add-AppxPackage` 对它没意义。
+  /// 以前的做法是"按钮置灰 + 叫去发布页"，等于把绿色版用户丢在门口。
+  Future<void> _showDownloadedPackage(String path, String ver) async {
+    final bool reveal = await showDialog<bool>(
+          context: context,
+          builder: (BuildContext ctx) => AlertDialog(
+            key: const Key('update-downloaded-dialog'),
+            title: Text('更新包已下载（$ver）'),
+            content: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  const Text('绿色版不能自动安装。安装包已经下好了，就在这儿：',
+                      style: TextStyle(fontSize: 12)),
+                  const SizedBox(height: 6),
+                  SelectableText(path,
+                      key: const Key('update-downloaded-path'),
+                      style: const TextStyle(fontSize: 11, height: 1.5)),
+                  const SizedBox(height: 8),
+                  const Text(
+                    '想升级：解压发布页的 setup 包，或用「前往发布页」下载后手动安装。',
+                    style: TextStyle(fontSize: 11, color: Color(0xFF718096)),
+                  ),
+                ],
+              ),
+            ),
+            actions: <Widget>[
+              TextButton(
+                key: const Key('update-downloaded-ok'),
+                onPressed: () => Navigator.of(ctx).pop(false),
+                child: const Text('知道了'),
+              ),
+              FilledButton(
+                key: const Key('update-downloaded-reveal'),
+                onPressed: () => Navigator.of(ctx).pop(true),
+                child: const Text('打开所在文件夹'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+    if (reveal) await _updates.revealFile(path);
+  }
+
+  /// 上次更新的结果：**下一次启动**时告诉用户（成功 / 失败都别沉默）  ///
   /// 同时做"启动时顺手清"的第 ② 条：删掉 3 天前的 `mathlang-update-*` 残留。
   void _scheduleStartupUpdateResultCheck() {
     if (!_updates.supportsAutoCheck) return; // Web / 测试不做
@@ -628,6 +708,32 @@ class EditorPageState extends State<EditorPage> {
         }
       });
     });
+  }
+
+  /// 已下载的更新包占多少（打开设置时刷新一次；断点续传之后它是"资产"不是垃圾）
+  int _downloadedUpdateBytes = 0;
+  int _downloadedUpdateFiles = 0;
+
+  /// 设置页「清理」：把临时目录里的更新包（含 `.part` 半截）删掉
+  Future<void> _clearUpdateDownloads() async {
+    int freed = 0;
+    try {
+      freed = await _updates.clearDownloadedUpdates();
+    } catch (_) {}
+    int now = 0;
+    int files = 0;
+    try {
+      now = await _updates.downloadedUpdateBytes();
+      files = await _updates.downloadedUpdateFiles();
+    } catch (_) {}
+    if (!mounted || _disposed) return;
+    setState(() {
+      _downloadedUpdateBytes = now;
+      _downloadedUpdateFiles = files;
+    });
+    _snack(freed > 0
+        ? '已清理 ${(freed / 1024 / 1024).toStringAsFixed(1)} MB'
+        : '没有可清理的');
   }
 
   /// 设置页那一行状态文案（**失败也要看得见** —— 原则 5）
@@ -853,10 +959,30 @@ class EditorPageState extends State<EditorPage> {
     });
   }
 
-  void openSettings({int group = 0}) => setState(() {
-        _settingsOpen = true;
-        _settingsGroup = group;
-      });
+  void openSettings({int group = 0}) {
+    setState(() {
+      _settingsOpen = true;
+      _settingsGroup = group;
+    });
+    // 「已下载的更新包」那一行要显示真实占用量 ⇒ 打开设置时刷一次（异步，不阻塞）
+    unawaited(_refreshDownloadedUpdateBytes());
+  }
+
+  /// 刷一次"已下载的更新包占多少"
+  Future<void> _refreshDownloadedUpdateBytes() async {
+    int n = 0;
+    int files = 0;
+    try {
+      n = await _updates.downloadedUpdateBytes();
+      files = await _updates.downloadedUpdateFiles();
+    } catch (_) {}
+    if (!mounted || _disposed) return;
+    if (n == _downloadedUpdateBytes && files == _downloadedUpdateFiles) return;
+    setState(() {
+      _downloadedUpdateBytes = n;
+      _downloadedUpdateFiles = files;
+    });
+  }
 
   void closeSettings() => setState(() {
         _settingsOpen = false;
@@ -1683,6 +1809,10 @@ class EditorPageState extends State<EditorPage> {
                     onOpenReleasePage: () => _updates.openReleasePage(kUpdateReleasePage),
                     updateStatusText: _updateStatusText(),
                     updateChecking: _updateChecking,
+                    downloadedUpdateBytes: _downloadedUpdateBytes,
+                    downloadedUpdateFiles: _downloadedUpdateFiles,
+                    onClearDownloads: _clearUpdateDownloads,
+                    downloadsHint: _updates.downloadsHint,
                     // ★ U6：桌面快捷方式的状态与操作（设置 → 高级）
                     desktopShortcutExists: desktopShortcutExists(),
                     onDesktopShortcut: (bool create) async {

@@ -28,6 +28,36 @@ class PendingUpdate {
   final String? msixPath;
 }
 
+/// **下载取消令牌**（2026-10-28 晚）
+///
+/// 为什么要有它：以前弹窗上的【取消】只是"让进度条别再更新"，后台照样把 13.8 MB
+/// 下完、照样写出文件 —— **界面说取消，实际没停**。
+/// 现在取消会真 `client.close(force: true)` 掐断连接；已经下到的部分**故意保留**成
+/// `.part`，下次点更新**接着下**（断点续传）。
+class DownloadCancelToken {
+  bool _cancelled = false;
+  Object? _client; // 实体是 dart:io 的 HttpClient（这里不引 dart:io，Web 也要能编译）
+
+  bool get isCancelled => _cancelled;
+
+  /// 实现方把连接挂进来，取消时才掐得断
+  void attach(Object client) => _client = client;
+  void detach() => _client = null;
+
+  void cancel() {
+    if (_cancelled) return;
+    _cancelled = true;
+    final Object? c = _client;
+    if (c == null) return;
+    try {
+      // ignore: avoid_dynamic_calls
+      (c as dynamic).close(force: true);
+    } catch (_) {
+      // 已经关掉了 ⇒ 无所谓，isCancelled 已置位
+    }
+  }
+}
+
 /// 检查更新要用的几件事（界面只调这些）。
 abstract class UpdateGateway {
   /// 这台机器上是不是 **MSIX 安装**（决定"一键更新"走不走得通）。
@@ -58,7 +88,20 @@ abstract class UpdateGateway {
   Future<String?> downloadMsix(
     UpdateInfo info, {
     void Function(int got, int total)? onProgress,
+    DownloadCancelToken? cancel,
   });
+
+  /// 已下载的更新包占多少字节（`.part` 半截 + 完整包，一起算）
+  Future<int> downloadedUpdateBytes();
+
+  /// 清掉已下载的更新包（`.part` 与完整包一起），返回删掉多少字节
+  Future<int> clearDownloadedUpdates();
+
+  /// 有几个半截/完整文件（0 字节的空 `.part` 也算一个 —— 那是"取消得太早"的痕迹）
+  Future<int> downloadedUpdateFiles();
+
+  /// **我们在哪个目录里找更新包**（给设置页显示 —— 让"看不到残留"这件事可诊断）
+  String get downloadsHint;
 
   /// 生成并**启动外挂小助手**：它等本进程退出 → `Add-AppxPackage` → 起新版。
   /// 返回 true ⇒ 调用方应当**立刻退出**（`exit(0)`），把舞台让给它。
@@ -92,6 +135,10 @@ abstract class UpdateGateway {
   ///   工具劫持；否则**不许**猜"裸连还是 VPN"（VPN 在应用眼里和直连一样）——
   ///   用户 2026-10-28 拍板：非劫持就写「正在尝试连接 GitHub」，不要写"或"。
   Future<String> describeChannel();
+
+  /// 在资源管理器里**定位到某个文件**（选中它）——
+  /// 绿色版"下载好了"之后用它把安装包摆到用户眼前（2026-10-28 晚）。
+  Future<void> revealFile(String path);
 
   /// 用系统浏览器打开发布页。
   Future<void> openReleasePage(String url);

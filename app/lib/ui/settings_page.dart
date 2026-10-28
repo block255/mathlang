@@ -82,6 +82,10 @@ class SettingsOverlay extends StatefulWidget {
     this.onOpenReleasePage,
     this.updateStatusText = '',
     this.updateChecking = false,
+    this.downloadedUpdateBytes = 0,
+    this.downloadedUpdateFiles = 0,
+    this.onClearDownloads,
+    this.downloadsHint = '',
   });
 
   final AppSettings settings;
@@ -127,6 +131,18 @@ class SettingsOverlay extends StatefulWidget {
   final VoidCallback? onOpenReleasePage;
   final String updateStatusText;
   final bool updateChecking;
+
+  /// 已下载的更新包占了多少字节（`.part` 半截 + 完整包）——「更新」组里那行 + 清理按钮
+  final int downloadedUpdateBytes;
+
+  /// 有几个这样的文件（0 字节的空 `.part` 也算 —— 那是"取消得太早"的痕迹）
+  final int downloadedUpdateFiles;
+
+  /// 点「清理」：把临时目录里的更新包删掉
+  final VoidCallback? onClearDownloads;
+
+  /// 我们在哪个目录里找更新包（空 = 不显示）——让"没有残留"这件事可诊断
+  final String downloadsHint;
 
   /// ★★ 2026-10-19（U1）：「高级」组的三块外部件 ——
   /// · [diagnosticsText]：**诊断信息**（版本 / 平台 / 页面几何 / 文档规模 / 暂存位置），只读 + 一键复制；
@@ -1182,6 +1198,33 @@ class SettingsOverlayState extends State<SettingsOverlay> {
           child: const Text('前往发布页'),
         ),
       ),
+      // ★ 2026-10-28 晚：一键更新会先把安装包下到临时目录。断点续传之后半截文件
+      //   **故意保留**（那是白下的带宽），所以必须让"它占了多少"看得见、也能一键清。
+      SettingRow(
+        title: '已下载的更新包',
+        subtitle: widget.downloadedUpdateFiles <= 0
+            ? '没有残留。更新中断/取消时下到的部分会留在这里，下次点更新接着下。'
+            : widget.downloadedUpdateBytes <= 0
+                // ★ 0 字节的半截文件 = "取消得太早"（第一块数据还没到就取消了）
+                ? '有 ${widget.downloadedUpdateFiles} 个空文件（取消得太早，没来得及下）—— 可清理'
+                : '占 ${(widget.downloadedUpdateBytes / 1024 / 1024).toStringAsFixed(1)} MB'
+                    '（${widget.downloadedUpdateFiles} 个文件；下次点更新会从断点接着下）',
+        child: OutlinedButton(
+          key: const Key('clear-update-downloads'),
+          onPressed: widget.downloadedUpdateFiles > 0 ? widget.onClearDownloads : null,
+          child: const Text('清理'),
+        ),
+      ),
+      // ★ 2026-10-28 晚：把"我们在哪个目录里找"写出来 ——
+      //   出现"我明明下了一半却说没有残留"时，第一件事就是看这个路径对不对。
+      if (widget.downloadsHint.isNotEmpty)
+        Padding(
+          padding: const EdgeInsets.only(left: 16, right: 16, bottom: 6),
+          child: SelectableText('扫描目录：${widget.downloadsHint} · 构建 $kAppVersion',
+              key: const Key('update-downloads-hint'),
+              style: const TextStyle(
+                  fontSize: 10, fontFamily: 'monospace', color: Color(0xFFA0AEC0))),
+        ),
     ];
   }
 

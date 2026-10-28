@@ -7,6 +7,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import '../app_info.dart';
 import '../core/update_check.dart';
 import 'update_gateway.dart';
 
@@ -138,16 +139,23 @@ class NativeUpdateGateway implements UpdateGateway {
   Future<String?> downloadMsix(
     UpdateInfo info, {
     void Function(int got, int total)? onProgress,
+    DownloadCancelToken? cancel,
   }) async {
     _lastError = null;
     final String? url = info.msixUrl;
+    _log('downloadMsix 进入 url=$url tag=${info.tag} '
+        'packaged=$isPackaged temp=${Directory.systemTemp.path}');
     if (url == null) {
       _lastError = '这个 Release 没有 msix 附件';
       return null;
     }
     for (var attempt = 0; attempt < 2; attempt++) {
+      if (cancel?.isCancelled ?? false) {
+        _lastError = '已取消';
+        return null;
+      }
       try {
-        return await _downloadOnce(info, url, onProgress);
+        return await _downloadOnce(info, url, onProgress, cancel);
       } on _UpdateFailure catch (e) {
         _lastError = e.reason;
         if (!e.retryable || attempt == 1) break;
@@ -157,54 +165,112 @@ class NativeUpdateGateway implements UpdateGateway {
     return null;
   }
 
+  /// 下载到 `<ver>.msix.part`，**断了能续**（2026-10-28 晚）。
+  ///
+  /// 三点行为：
+  /// ① **分段续传**：有 `.part` 就发 `Range: bytes=<已下>-`；
+  ///    服务器回 206 ⇒ 接着写；回 200 ⇒ 说明它不支持断点，**截断重下**（不会拼出坏文件）；
+  /// ② **完成才改名**：长度校验通过才把 `.part` 改成 `.msix` ——
+  ///    半截文件永远不会被当成"下好了"（这是续传最容易踩的坑）；
+  /// ③ **取消是真取消**：[cancel] 会 `client.close(force: true)`，立刻停、不再吃带宽；
+  ///    已经下到的部分**故意保留**（那是白下的带宽，下次接着用）。
   Future<String?> _downloadOnce(
     UpdateInfo info,
     String url,
     void Function(int got, int total)? onProgress,
+    DownloadCancelToken? cancel,
   ) async {
     final HttpClient client = HttpClient()..connectionTimeout = _timeout;
-    File? out;
+    cancel?.attach(client);
+    final String tag = (info.version ?? 'new').toString();
+    final String sep = Platform.pathSeparator;
+    final Directory temp = _downloadDir();
+    final File part = File('${temp.path}${sep}mathlang-update-$tag.msix.part');
+    final File done = File('${temp.path}${sep}mathlang-update-$tag.msix');
     IOSink? sink;
     try {
-      final HttpClientRequest req = await client.getUrl(Uri.parse(url)).timeout(_timeout);
+      // 已有多少？（只有它比目标小时才有意义）
+      int have = 0;
+      try {
+        if (part.existsSync()) have = part.lengthSync();
+      } catch (_) {}
+
+      final HttpClientRequest req =
+          await client.getUrl(Uri.parse(url)).timeout(_timeout);
+      if (have > 0) req.headers.set(HttpHeaders.rangeHeader, 'bytes=$have-');
       final HttpClientResponse res = await req.close().timeout(_timeout);
-      if (res.statusCode != 200) {
+      final bool resumed = res.statusCode == HttpStatus.partialContent;
+      if (res.statusCode != 200 && !resumed) {
         throw _UpdateFailure('下载失败：HTTP ${res.statusCode}', retryable: false);
       }
-      final int expect = res.contentLength;
-      final String tag = (info.version ?? 'new').toString();
-      out = File('${Directory.systemTemp.path}${Platform.pathSeparator}'
-          'mathlang-update-$tag.msix');
-      sink = out.openWrite();
-      // ★ 流式读：这样界面才有**真进度**（用户 2026-10-28 要进度条）。
-      //   原来的 `res.pipe(sink)` 一行到位，但报不了进度。
-      var got = 0;
+      // 总长度：206 从 `Content-Range: bytes a-b/total` 拿；200 就是 Content-Length
+      int total = res.contentLength;
+      if (resumed) {
+        final String? cr = res.headers.value('content-range');
+        final int slash = cr == null ? -1 : cr.lastIndexOf('/');
+        if (slash >= 0 && cr != null) {
+          total = int.tryParse(cr.substring(slash + 1)) ?? -1;
+        }
+      } else {
+        have = 0; // 服务器没理 Range ⇒ 从头来（下面用 write 截断）
+      }
+
+      sink = resumed ? part.openWrite(mode: FileMode.append) : part.openWrite();
+      _log('open part=${part.path} resumed=$resumed have=$have total=$total '
+          'realfile=${part.existsSync()}');
+      var got = have;
+      onProgress?.call(got, total);
       await for (final List<int> chunk in res.timeout(const Duration(minutes: 5))) {
+        if (cancel?.isCancelled ?? false) {
+          throw _UpdateFailure('已取消', retryable: false);
+        }
         sink.add(chunk);
         got += chunk.length;
-        onProgress?.call(got, expect);
+        // 临时诊断：每 2 MB 记一次磁盘上的真实大小（看 IOSink 到底写没写下去）
+        if (got ~/ (2 * 1024 * 1024) != (got - chunk.length) ~/ (2 * 1024 * 1024)) {
+          _log('progress got=$got diskLen=${part.existsSync() ? part.lengthSync() : -1}');
+        }
+        onProgress?.call(got, total);
       }
       await sink.flush();
       await sink.close();
       sink = null;
-      // 下载被掐断时 Dart 通常抛异常；但有的代理会"正常结束"却只给半截 ⇒ 长度自检
-      if (expect > 0 && got != expect) {
-        throw _UpdateFailure('下载不完整（$got / $expect 字节）', retryable: true);
+
+      // 长度自检：有的代理会"正常结束"却只给半截 ⇒ 宁可留 .part 也不改名
+      if (total > 0 && got != total) {
+        throw _UpdateFailure('下载不完整（$got / $total 字节）', retryable: true);
       }
       if (got == 0) throw _UpdateFailure('下载到 0 字节', retryable: true);
-      return out.path;
+      if (done.existsSync()) {
+        try {
+          done.deleteSync();
+        } catch (_) {}
+      }
+      await part.rename(done.path);
+      return done.path;
     } on _UpdateFailure {
       rethrow;
     } on SocketException catch (e) {
+      if (cancel?.isCancelled ?? false) {
+        throw _UpdateFailure('已取消', retryable: false);
+      }
       throw _UpdateFailure(_socketHint(e), retryable: true);
     } on TimeoutException {
       throw _UpdateFailure('下载超时', retryable: true);
     } catch (e) {
+      if (cancel?.isCancelled ?? false) {
+        throw _UpdateFailure('已取消', retryable: false);
+      }
       throw _UpdateFailure('下载失败：${e.runtimeType}: $e', retryable: true);
     } finally {
       try {
         await sink?.close();
-      } catch (_) {}
+        _log('finally close ok  partExists=${part.existsSync()} '
+            'partLen=${part.existsSync() ? part.lengthSync() : -1}');
+      } catch (e) {
+        _log('finally close 抛了: $e  partExists=${part.existsSync()}');
+      }
+      cancel?.detach();
       client.close(force: true);
     }
   }
@@ -239,6 +305,143 @@ try {
   (\$_ | Out-String) | Out-File -FilePath \$log -Encoding UTF8
 }
 ''';
+
+  /// 下载过程的**诊断日志**（2026-10-28 晚临时加，定位完就删）
+  ///
+  /// 依次尝试三个位置，第一个能写的就写（内容里带**版本号 + exe 路径**，
+  /// 这样"到底是不是这个构建在跑"一目了然）：
+  ///   ① exe 同级目录（最好找）  ② `%USERPROFILE%\mathlang\`  ③ `%TEMP%`
+  static void _log(String line) {
+    final List<String> dirs = <String>[];
+    try {
+      dirs.add(File(Platform.resolvedExecutable).parent.path);
+    } catch (_) {}
+    final String home = Platform.environment['USERPROFILE'] ?? '';
+    if (home.isNotEmpty) dirs.add('$home\\mathlang');
+    try {
+      dirs.add(Directory.systemTemp.path);
+    } catch (_) {}
+    final String body = '[${DateTime.now().toIso8601String()}] '
+        'v$kAppVersion exe=${Platform.resolvedExecutable}  $line\n';
+    for (final String d in dirs) {
+      try {
+        final Directory dir = Directory(d);
+        if (!dir.existsSync()) dir.createSync(recursive: true);
+        final File f = File('${dir.path}\\update-download.log');
+        // 不让它长成垃圾：超过 64 KB 就从头写
+        try {
+          if (f.existsSync() && f.lengthSync() > 64 * 1024) f.deleteSync();
+        } catch (_) {}
+        f.writeAsStringSync(body, mode: FileMode.append, flush: true);
+        return; // 写成功就够
+      } catch (_) {
+        // 换下一个位置
+      }
+    }
+  }
+
+  /// 更新包**下载到哪个目录**（2026-10-28 晚改）
+  ///
+  /// ★★★ 实测（日志抓到的，不是推理）：绿色版往 `%TEMP%` 写 `.part` 会被系统拒绝
+  ///
+  ///   ```
+  ///   open part=C:\Users\…\Temp\mathlang-update-9.9.9.msix.part  realfile=false
+  ///   progress got=2097152 diskLen=-1        ← 2 MB 了磁盘上还是没有
+  ///   finally close 抛了: PathAccessException: 拒绝访问。(errno = 5)
+  ///   ```
+  ///
+  ///   `File.openWrite()` 是**惰性**打开：开文件失败不会当场抛，数据先堆在内存里，
+  ///   直到 `close()` 才报错 —— 于是进度条一路涨、磁盘一个字节都没有。
+  ///   同一个路径同一个名字，PowerShell 写得进去 ⇒ 不是 ACL，是**这个进程**被限制。
+  ///
+  /// ⇒ 不再赌"哪个目录应该能写"，而是**运行时试写探测**（写一个 1 字节探针文件，
+  ///   成功就删掉），按顺序挑第一个真能写的：
+  ///   ① `%USERPROFILE%\mathlang\`（正常位置：跟设置/图标在一起，卸载选 N 就留着）
+  ///   ② **exe 同级目录**（绿色版必可写；打包版只读会被跳过）
+  ///   ③ `%TEMP%`
+  ///   结果缓存在 [_dlDir]。
+  static Directory? _dlDir;
+
+  Directory _downloadDir() {
+    final Directory? cached = _dlDir;
+    if (cached != null) return cached;
+    final List<Directory> cands = <Directory>[];
+    final String home = Platform.environment['USERPROFILE'] ?? '';
+    if (home.isNotEmpty) cands.add(Directory('$home\\mathlang'));
+    try {
+      cands.add(Directory(File(Platform.resolvedExecutable).parent.path));
+    } catch (_) {}
+    try {
+      cands.add(Directory.systemTemp);
+    } catch (_) {}
+    for (final Directory d in cands) {
+      try {
+        if (!d.existsSync()) d.createSync(recursive: true);
+        final File probe = File('${d.path}\\.mathlang-write-test');
+        probe.writeAsStringSync('x', flush: true);
+        probe.deleteSync();
+        _dlDir = d;
+        _log('下载目录选定 = ${d.path}');
+        return d;
+      } catch (e) {
+        _log('下载目录不可写，跳过 ${d.path}（$e）');
+      }
+    }
+    _dlDir = Directory.systemTemp;
+    return Directory.systemTemp;
+  }
+
+  @override
+  String get downloadsHint => _downloadDir().path;
+
+  /// 所有"更新包文件"（**新目录 + 旧的 temp 都算**：老版本可能把半截文件留在 temp 里）
+  List<File> _updatePayloadFiles() {
+    final List<File> out = <File>[];
+    final List<String> dirs = <String>[_downloadDir().path];
+    try {
+      final String t = Directory.systemTemp.path;
+      if (!dirs.contains(t)) dirs.add(t);
+    } catch (_) {}
+    for (final String d in dirs) {
+      try {
+        for (final FileSystemEntity e
+            in Directory(d).listSync(followLinks: false)) {
+          if (e is! File) continue;
+          final String name = e.uri.pathSegments.last.toLowerCase();
+          if (!name.startsWith('mathlang-update-')) continue;
+          if (!name.endsWith('.msix') && !name.endsWith('.msix.part')) continue;
+          out.add(e);
+        }
+      } catch (_) {}
+    }
+    return out;
+  }
+
+  @override
+  Future<int> downloadedUpdateFiles() async => _updatePayloadFiles().length;
+
+  @override
+  Future<int> downloadedUpdateBytes() async {
+    var sum = 0;
+    for (final File f in _updatePayloadFiles()) {
+      try {
+        sum += f.lengthSync();
+      } catch (_) {}
+    }
+    return sum;
+  }
+
+  @override
+  Future<int> clearDownloadedUpdates() async {
+    final int before = await downloadedUpdateBytes();
+    for (final File f in _updatePayloadFiles()) {
+      try {
+        f.deleteSync();
+      } catch (_) {}
+    }
+    final int after = await downloadedUpdateBytes();
+    return before - after;
+  }
 
   @override
   Future<bool> launchInstaller(
@@ -351,23 +554,44 @@ try {
     _deleteOldUpdateFiles(olderThanDays: olderThanDays);
   }
 
-  /// 删 `%TEMP%` 里的 `mathlang-update-*`。
+  @override
+  Future<void> revealFile(String path) async {
+    try {
+      await Process.start(
+        'explorer.exe',
+        <String>['/select,', path],
+        mode: ProcessStartMode.detached,
+      );
+    } catch (_) {
+      // 打不开就算了：弹窗里还有可复制的路径
+    }
+  }
+
+  /// 删掉过期的 `mathlang-update-*`（**新目录 + 旧的 temp 都清**）。
   ///
-  /// · [onlyMsixAndScript] ⇒ 只删 msix / ps1（"装好了"那一支，立刻删）；
+  /// · [onlyMsixAndScript] ⇒ 只删 msix / `.msix.part` / ps1（"装好了"那一支，立刻删）；
   /// · 否则只删 [olderThanDays] 天前的（兜底那条）。
   void _deleteOldUpdateFiles({bool onlyMsixAndScript = false, int olderThanDays = 3}) {
     try {
-      final Directory dir = Directory.systemTemp;
       final DateTime cutoff =
           DateTime.now().subtract(Duration(days: olderThanDays));
-      for (final FileSystemEntity e in dir.listSync(followLinks: false)) {
-        if (e is! File) continue;
+      final List<File> candidates = <File>[..._updatePayloadFiles()];
+      // `.ps1` 小助手脚本只在 temp 里，单列一份
+      try {
+        for (final FileSystemEntity e
+            in Directory.systemTemp.listSync(followLinks: false)) {
+          if (e is! File) continue;
+          final String n = e.uri.pathSegments.last.toLowerCase();
+          if (!n.startsWith('mathlang-update-') || !n.endsWith('.ps1')) continue;
+          candidates.add(e);
+        }
+      } catch (_) {}
+      for (final File e in candidates) {
         final String name = e.uri.pathSegments.last.toLowerCase();
-        if (!name.startsWith('mathlang-update-')) continue;
-        final bool isPayload = name.endsWith('.msix') || name.endsWith('.ps1');
-        if (onlyMsixAndScript && !isPayload) continue;
+        final bool isPayload =
+            name.endsWith('.msix') || name.endsWith('.msix.part');
+        if (onlyMsixAndScript && !isPayload && !name.endsWith('.ps1')) continue;
         if (!onlyMsixAndScript) {
-          // 兜底那条：只动"够老"的（失败留下的 msix 也在内）
           DateTime mtime;
           try {
             mtime = e.statSync().modified;

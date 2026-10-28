@@ -110,6 +110,7 @@ void main() {
     Future<UpdateDecision?> pumpDialog(
       WidgetTester tester, {
       bool canInstall = true,
+      bool canDownload = false,
       bool autoCheckEnabled = true,
     }) async {
       UpdateDecision? got;
@@ -123,6 +124,7 @@ void main() {
                   info: _info,
                   current: const VersionRef(1, 1, 2),
                   canInstall: canInstall,
+                  canDownload: canDownload,
                   autoCheckEnabled: autoCheckEnabled,
                 );
               },
@@ -219,13 +221,24 @@ void main() {
       expect(got!.disableAuto, isTrue);
     });
 
-    testWidgets('没有可一键安装的包 ⇒ 「一键更新」禁用并给出说明',
+    testWidgets('没有可安装的包 ⇒ 「一键更新」禁用并给出说明',
         (WidgetTester tester) async {
       await pumpDialog(tester, canInstall: false);
       final FilledButton b =
           tester.widget<FilledButton>(find.byKey(const Key('update-install')));
       expect(b.onPressed, isNull);
-      expect(find.textContaining('这一版没有可一键安装的包'), findsOneWidget);
+      expect(find.textContaining('这一版没有可安装的包'), findsOneWidget);
+    });
+
+    // ★ 2026-10-28 晚：绿色版"能下不能装" —— 按钮要亮着，但写「下载更新包」
+    testWidgets('绿色版（可下不可装）⇒ 按钮写「下载更新包」且可点',
+        (WidgetTester tester) async {
+      await pumpDialog(tester, canInstall: false, canDownload: true);
+      final FilledButton b =
+          tester.widget<FilledButton>(find.byKey(const Key('update-install')));
+      expect(b.onPressed, isNotNull);
+      expect(find.text('下载更新包'), findsOneWidget);
+      expect(find.textContaining('绿色版没有包身份'), findsOneWidget);
     });
   });
 
