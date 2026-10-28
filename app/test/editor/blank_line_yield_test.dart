@@ -23,10 +23,13 @@ import 'package:mathlang/render/math_caret.dart';
 const String kDoc = '甲\n\n\$\$\na\n\$\$\n\n\$\$\nb\n\$\$\n';
 
 /// 空行后面跟的是**普通段落**（没有相邻行间块）。
-const String kPlain = '甲\n\n乙\n';
+/// ★ 2026-10-28：必须是**两个**空行（`甲⏎⏎⏎乙`）—— 一个空行是**段落分隔符**
+///   （零高度、不是位置），它不画光标；真行是 `3`。
+const String kPlain = '甲\n\n\n乙\n';
 
 /// 连续**两个**空行 + 一个行间块（空行槽覆盖两行）。
-const String kTwoBlanks = '甲\n\n\n\$\$\na\n\$\$\n';
+/// ★ 2026-10-28：改成**三个**空行（`甲⏎⏎⏎⏎$$`）—— 第一个是分隔符，真行才是后两个。
+const String kTwoBlanks = '甲\n\n\n\n\$\$\na\n\$\$\n';
 
 Future<void> _mount(WidgetTester tester, DocBuffer buf) async {
   await tester.pumpWidget(MaterialApp(
@@ -100,7 +103,7 @@ void main() {
       final DocBuffer buf = DocBuffer(kPlain);
       await _mount(tester, buf);
 
-      final int blank = kPlain.indexOf('\n\n') + 1;
+      final int blank = kPlain.indexOf('\n\n') + 2; // ★ 第 2 个空行才是真行（第 1 个是分隔符）
       buf.setCaret(blank);
       await tester.pump();
       await tester.pump();
@@ -118,8 +121,8 @@ void main() {
       final int open = kTwoBlanks.indexOf(r'$$');
       final int nearBlock = open - 1; // 贴着块的空行（== acceptFrom）
       final int earlier = nearBlock - 1; // 更早那个空行
-      expect(nearBlock, kTwoBlanks.indexOf('\n\n') + 2,
-          reason: '前置：这段文档里贴块的空行是第二个空行');
+      expect(nearBlock, kTwoBlanks.indexOf('\n\n') + 3,
+          reason: '前置：这段文档里贴块的空行是第三个空行（第一个是段落分隔符）');
 
       buf.setCaret(earlier);
       await tester.pump();

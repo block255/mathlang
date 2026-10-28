@@ -13,6 +13,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mathlang/core/doc_buffer.dart';
+import 'package:mathlang/core/paragraph_break.dart';
 import 'package:mathlang/editor/edit_view.dart';
 import 'package:mathlang/render/inline_math_text.dart';
 
@@ -75,6 +76,9 @@ void main() {
       final DocBuffer buf = DocBuffer(doc);
       await _mount(tester, buf);
       for (var off = 0; off <= doc.length; off++) {
+        // ★ 2026-10-28（用户拍板"段间距不承接字符"）：段落分隔符那一格不是位置、
+        //   零高度、不画光标 —— 不算死区。
+        if (isParagraphSeparator(doc, off)) continue;
         expect(await _barsAt(tester, buf, off), greaterThan(0),
             reason: '偏移 $off（用户报的就是这一段）');
       }

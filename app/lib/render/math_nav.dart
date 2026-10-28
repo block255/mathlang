@@ -11,6 +11,7 @@
 // **纯 Dart，不依赖 Flutter。**
 
 import '../core/block.dart';
+import '../core/paragraph_break.dart';
 import 'caret_sites.dart';
 import 'projection.dart';
 import 'site_adjacency.dart';
@@ -153,7 +154,10 @@ int nextCaretOffset(String source, int offset) {
       final CaretSiteTable t = buildCaretSites(nr.tex);
       return nr.abs(t.snap(0).offset);
     }
-    return o + 1;
+    // ★★★ 2026-10-28（用户拍板"段间距不承接字符"）：**段落分隔符那一格不是位置** ——
+    //   `甲⏎|⏎乙` 的那个 `|` 在版面上没有行盒（高度 0），画不出光标。所以 `→`
+    //   从上一行行末**一步跨到**下一段行首（`core/paragraph_break.dart` 有完整判据）。
+    return skipParagraphSeparator(source, o + 1, forward: true);
   }
   final CaretSiteTable t = buildCaretSites(r.tex);
   final CaretSite s = t.snap(r.rel(o));
@@ -457,7 +461,8 @@ int prevCaretOffset(String source, int offset) {
       final CaretSiteTable t = buildCaretSites(pr.tex);
       return pr.abs(t.sites.last.offset);
     }
-    return o - 1;
+    // ★★★ 2026-10-28：与 `→` 对称 —— 段落分隔符不是位置，`←` 一步回上一行行末。
+    return skipParagraphSeparator(source, o - 1, forward: false);
   }
   final CaretSiteTable t = buildCaretSites(r.tex);
   final CaretSite s = t.snap(r.rel(o));

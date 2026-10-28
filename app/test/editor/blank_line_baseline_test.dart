@@ -218,12 +218,17 @@ void main() {
           reason: '空行上 Shift+Enter 应像 Enter 一样造出下一个空行（基准 3 第一句）');
     });
 
-    testWidgets('有文字的行上 Shift+Enter 仍然是硬换行（行尾两空格）',
+    // ★★★ 2026-10-28（用户拍板，只读基准 6 已补句）：
+    //   「shift enter 换的是**段内的行**（光标两侧有文字时可以，否则等价 enter）」。
+    //   原来的断言是 `甲  \n\n` —— 那在缓冲区里是"两空格 + 两个换行"，
+    //   而两个换行之间那个空行**是段分隔符（零高度）**，于是光标被放进段距里，
+    //   打字还会把两段并成一段。行尾没有"段内的空行"这种东西（md 表达不了）⇒ 等价 Enter。
+    testWidgets('行尾 Shift+Enter = Enter（段内空行在 md 里不存在）',
         (WidgetTester tester) async {
       final DocBuffer buf = await _mount(tester, '甲\n', 1);
       await shiftEnter(tester);
-      expect(buf.buf, '甲  \n\n',
-          reason: '有文字的行：Shift+Enter 写"两空格 + 换行"（R8 硬换行）');
+      expect(buf.buf, '甲\n\n',
+          reason: '行尾没有"段内的空行"可造 ⇒ 与 Enter 完全一致（基准 6）');
     });
   });
 

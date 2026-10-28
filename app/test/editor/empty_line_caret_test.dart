@@ -16,9 +16,12 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mathlang/core/doc_buffer.dart';
 import 'package:mathlang/editor/doc_view.dart';
 
-/// 文档：`甲\n\n乙`（中间那一行是空行，偏移 2）
-const String kDoc = '甲\n\n乙';
-const int kBlankOffset = 2;
+/// 文档：`甲\n\n\n乙`（空行串 = [2, 3]；**2 是段落分隔符，不是位置**，`3` 是真空段的行首）
+///
+/// ★ 2026-10-28（用户拍板"段间距不承接字符"）：原来是 `甲\n\n乙` + 偏移 2 ——
+///   那一格是**段落分隔符**（零高度），以前靠"把光标塞进段距"才画得出来。
+const String kDoc = '甲\n\n\n乙';
+const int kBlankOffset = 3;
 
 Future<({DocBuffer buf, List<Rect?> carets, List<int> taps})> _pump(
   WidgetTester tester, {

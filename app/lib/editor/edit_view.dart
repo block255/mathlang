@@ -397,7 +397,13 @@ class EditViewState extends State<EditView> {
     final int c = _buf.caret.clamp(0, s.length);
     final (int ls, int le) = _lineBounds();
     final bool emptyLine = s.substring(ls, le).trim().isEmpty;
-    if (shift && !emptyLine) {
+    // ★★★ 2026-10-28（只读基准 6 补句，用户拍板）：`Shift+Enter` 换的是**段内的行** ——
+    //   只在**光标两侧都有文字**（`c != ls && c != le`）时成立；**行首 / 行尾等价 Enter**。
+    //   为什么行首行尾不行：硬换行的载体是"行尾两个空格 + 换行"，而它造出来的那一行
+    //   在行首/行尾必然是**空的** —— 而**段内的空行在 Markdown 里不存在**（空白行就是换段）。
+    //   实测（2026-10-28）：行尾按 Shift+Enter 得到 `甲␣␣⏎⏎`，那个空行是**段落分隔符**
+    //   （零高度）⇒ 光标被放进段距里、打字还会把两段并成一段。
+    if (shift && c != ls && c != le) {
       _commitText('  \n', isEnter: true);
       return;
     }

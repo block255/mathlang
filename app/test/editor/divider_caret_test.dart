@@ -19,6 +19,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mathlang/core/doc_buffer.dart';
+import 'package:mathlang/core/paragraph_break.dart';
 import 'package:mathlang/editor/edit_view.dart';
 
 Future<void> _mount(WidgetTester tester, DocBuffer buf) async {
@@ -56,6 +57,9 @@ void main() {
       final DocBuffer buf = DocBuffer(doc);
       await _mount(tester, buf);
       for (var off = 0; off <= doc.length; off++) {
+        // ★ 2026-10-28（用户拍板"段间距不承接字符"）：段落分隔符那一格**不是位置**，
+        //   它零高度、不画光标 —— 这是**对的**，不算死区。
+        if (isParagraphSeparator(doc, off)) continue;
         expect(await _barsAt(tester, buf, off), greaterThan(0),
             reason: '偏移 $off 一根光标都没有（改前：3–7 全是死区）');
       }
@@ -67,6 +71,7 @@ void main() {
       final DocBuffer buf = DocBuffer(doc);
       await _mount(tester, buf);
       for (var off = 0; off <= doc.length; off++) {
+        if (isParagraphSeparator(doc, off)) continue; // ★ 2026-10-28：分隔符不是位置
         expect(await _barsAt(tester, buf, off), greaterThan(0),
             reason: '偏移 $off（改前：3–6 死区）');
       }
@@ -77,6 +82,7 @@ void main() {
       final DocBuffer buf = DocBuffer(doc);
       await _mount(tester, buf);
       for (var off = 0; off <= doc.length; off++) {
+        if (isParagraphSeparator(doc, off)) continue; // ★ 2026-10-28：分隔符不是位置
         expect(await _barsAt(tester, buf, off), greaterThan(0),
             reason: '偏移 $off（改前：3–8 死区，含文末）');
       }
@@ -84,11 +90,17 @@ void main() {
 
     testWidgets('★ ④ 分界线**下面那个空行**上光标要画出来（用户报的那一格）',
         (WidgetTester tester) async {
-      const String doc = 'T\n\n---\n\nabc\n';
+      // ★ 2026-10-28：文档改成**两个**空行 —— 分界线下面第一个空行是**段落分隔符**
+      //   （零高度、不是位置，见 `core/paragraph_break.dart`），真行从第二个起。
+      //   用户报的那一格原本就是"分隔符"，以前靠"把光标塞进段距"才画出来。
+      const String doc = 'T\n\n---\n\n\nabc\n';
       final DocBuffer buf = DocBuffer(doc);
       await _mount(tester, buf);
-      // `---\n` 之后的那个空行：`---` 占 3 格，行尾 `\n` 一格 ⇒ 空行 = dash + 4
-      final int blank = doc.indexOf('---') + 4;
+      // `---\n` 之后：第 1 个空行 = dash + 4（分隔符），第 2 个 = dash + 5（真行）
+      final int separator = doc.indexOf('---') + 4;
+      final int blank = separator + 1;
+      expect(isParagraphSeparator(doc, separator), isTrue,
+          reason: '前置：分界线下面第一个空行是段落分隔符');
       expect(doc[blank], '\n', reason: '前置：这一格确实是分界线下面那个空行');
       expect(await _barsAt(tester, buf, blank), greaterThan(0),
           reason: '用户点的就是这一格：光标不显示');

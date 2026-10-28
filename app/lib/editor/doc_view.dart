@@ -2068,62 +2068,26 @@ class DocViewState extends State<DocView> {
     return rows;
   }
 
-  /// 光标落在 [rows] 的哪一行
-  int _caretRowIndexIn(List<int> rows) {
-    final int c = _caret ?? -1;
-    if (c < 0 || rows.isEmpty) return 0;
-    var k = 0;
-    for (var i = 0; i < rows.length; i++) {
-      if (rows[i] <= c) {
-        k = i;
-      } else {
-        break;
-      }
-    }
-    return k;
-  }
+  // ★★★ 2026-10-28：**落点表与 `_rowsAfter` 合并成一条规则**（删掉了 `_rowSlotsAfter`）。
+  // 那个函数原来给的是"**每一个可落位置**"（空行串**全部**，含第一个），理由是
+  // "换行符也是真实位置，光标站上去必须看得见"。**那条理由是错的** ——
+  // 空行串里第一个是**段落分隔符**：它零高度、在版面上没有行盒，画不出光标；
+  // 为了让它"有主人"只能把光标塞进段距里，于是出现了"段间距当容器行"（用户当场否掉）。
+  // ⇒ 两套口径合成一条：`空行串[1..] + 待写行`，每一格都是真行。
 
-  /// [prev] 之后**每一个可落位置**的行首偏移 = 空行串（全部）+ 待写行。
+  /// 一串**真行**里第 [i] 个的位置（相对**槽顶**的纵向偏移）。
   ///
-  /// ★ 与 `_rowsAfter` 的区别：那个只给"**行**"（第一个空行只是段距，不是行）；
-  ///   这个给"**位置**"—— 第一个空行也是一个真实偏移（换行符也是真实位置），
-  ///   光标站上去必须看得见，所以必须有主人。
-  List<int> _rowSlotsAfter(_Unit prev) {
-    final String buf = widget.buffer.buf;
-    final List<int> blanks = _blankRunAfter(prev);
-    final List<int> slots = <int>[...blanks];
-    final int at = prev.acceptTo.clamp(0, buf.length);
-    int next = at;
-    if (at < buf.length && buf[at] == '\n') next = at + 1;
-    if (blanks.isNotEmpty) next = (blanks.last + 1).clamp(0, buf.length);
-    if (next < buf.length) {
-      final int nl = buf.indexOf('\n', next);
-      final String line = buf.substring(next, nl < 0 ? buf.length : nl);
-      if (BlockMarkers.isPageBreak(line)) {
-        slots.add(next);
-        return slots;
-      }
-    }
-    slots.add(buf.length);
-    return slots;
-  }
-
-  /// 空行串里第 [i] 个位置相对**槽顶**的纵向偏移。
-  ///
-  /// · `i < firstRow` ⇒ 它是"**段距那一截**"：紧贴上一段行盒底（段内行位置），没有段距；
-  /// · 否则 ⇒ 第 `i - firstRow` 个**段**：段距 + k × 一行 + 行内内缩。
-  ///
-  /// [firstRow] = "第一个真正的行"在表里的下标：空行串**非空**时第一个空行只是段距那一截
-  /// （`firstRow = 1`）；空行串为空时第 0 个就是待写行本身（`firstRow = 0`）。
-  /// 这就是"彻底区分行 / 段 / 行间距 / 段间距"（只读基准 6）落到像素上的那一条。
-  double _blankDy(int i, {double? gap, int firstRow = 1}) {
+  /// ★★★ 2026-10-28（用户拍板：**段间距不承接字符**）：参数表里的"第一格是段距那一截"
+  ///   已经被删掉 —— 那个偏移是**段落分隔符**（`core/paragraph_break.dart`），零高度、
+  ///   **不是位置**，所以它根本不进落点表。现在这张表里**每一项都是一个真行**：
+  ///   `段距 + i × 一行 + 行内内缩`（文首的段距是 0，见 [leadingBlankHeight]）。
+  double _blankDy(int i, {double? gap}) {
     final double g = gap ?? _paraGap;
-    if (i < firstRow) return _caretInset;
-    return g + (i - firstRow) * _blankLineHeight + _caretInset;
+    return g + i * _blankLineHeight + _caretInset;
   }
 
-  List<double> _blankDys(int n, {double? gap, int firstRow = 1}) =>
-      <double>[for (var i = 0; i < n; i++) _blankDy(i, gap: gap, firstRow: firstRow)];
+  List<double> _blankDys(int n, {double? gap}) =>
+      <double>[for (var i = 0; i < n; i++) _blankDy(i, gap: gap)];
 
   /// 文档**开头**那串空行（文首空行，记账 #2）
   List<int> _blankRunAtStart() {
@@ -2188,32 +2152,43 @@ class DocViewState extends State<DocView> {
         //   （末页槽的 `dy = 段距 + k × 行高`，量的是同一串空行）。
         //   这里再建一个块间空行槽 = 同一格像素两个主人（探针：偏移 5 画在 161 与 183 两根）。
         if (run.isNotEmpty && u != null) {
-          final int? idx = _caretLineIndexInRun(run);
+          // ★★★ 2026-10-28（用户拍板：**段间距不承接字符**）：
+          //   这串空行里**第一个是段落分隔符**（零高度、不是位置）—— 它不进落点表。
+          //   文首那一串没有分隔符（`blankRowStart`；与 `leadingBlankHeight = n × 行高` 同一口径）。
+          final bool atStart = prevUnit == null;
+          final List<int> rows = run
+              .skip(blankRowStart(atDocStart: atStart, atDocEnd: false))
+              .toList(growable: false);
           // ★ 段距那一截：空隙里除了"真空段落的行"之外，前面还有一段**段距**
-          final double gapBefore = prevUnit == null ? 0.0 : _gapBefore(u.type);
+          final double gapBefore = atStart ? 0.0 : _gapBefore(u.type);
+          final List<double> dys = _blankDys(rows.length, gap: gapBefore);
+          final int idx = rows.isEmpty ? -1 : (_caretLineIndexInRun(rows) ?? -1);
           // ★★ 批 23：这一行空行**是不是与下一块的 `acceptFrom` 同一格** ——
           //   是则让给块（由它画"块之前"边界条），否则屏幕上两根竖条。
-          final bool drawsCaret = idx != null &&
+          final bool drawsCaret = idx >= 0 &&
               blankLineDrawsCaret(
                 caret: _caret,
-                blankStart: run[idx],
+                blankStart: rows[idx],
                 nextAcceptFrom: u.acceptFrom,
               );
+          // ★ 没有真行可落（这一片只有**段距**）⇒ 它归**下一段**：点它落下一段行首。
+          //   判据：段距是 `leadingGap`，挂在下一段的 item 上、页首还会被丢掉 ⇒ 属于下一段。
+          final List<int> land = rows.isEmpty ? <int>[u.acceptFrom] : rows;
+          final List<double> landDy = rows.isEmpty ? <double>[gap / 2] : dys;
           children.add(_BlankSlot(
             id: 'blank@${run.first}',
             height: gap,
-            offset: run.first,
-            lineOffsets: run,
-            lineDys: _blankDys(run.length, gap: gapBefore),
+            offset: land.first,
+            lineOffsets: land,
+            lineDys: landDy,
             gapBefore: gapBefore,
             lineHeight: _blankLineHeight,
             caretHere: !_hideCaret &&
                 widget.caretVisible &&
                 drawsCaret,
-            // 空行的行盒从 gapBefore 起算 ⇒ 光标落在"它真正会落脚"的那一行上
-            // ★ 2026-10-27：再补一个**行内垂直内缩**（光标在行盒里居中）——
-            //   少了这 3.6px 就是用户说的"光标在这儿、打出来的字低一截"。
-            caretDy: drawsCaret ? _blankDy(idx, gap: gapBefore) : null,
+            // 每一格都是**一个真行**：`段距 + i × 一行 + 行内内缩`
+            // （少了那 3.6px 就是用户说的"光标在这儿、打出来的字低一截"）。
+            caretDy: drawsCaret ? dys[idx] : null,
             caretHeight: textCaretHeight(_s.bodyFontSize),
             caretWidth: 1.5,
             caretColor: const Color(kCaretColorValue),
@@ -2239,12 +2214,8 @@ class DocViewState extends State<DocView> {
             //   **走同一套**：行首偏移取自 `_rowsAfter`（空行串[1..] + 待写行），
             //   自己画光标（接缝槽不再重复画同一格 —— 一像素一语义）。
             List<int> rows = const <int>[];
-            List<int> run = const <int>[];
             if (isTail) {
               rows = tailRows;
-              run = _units.isEmpty
-                  ? const <int>[]
-                  : _blankRunAfter(_units.last);
               tailLinesOnPage++;
             } else {
               final int h1 = id.indexOf('#b');
@@ -2253,30 +2224,20 @@ class DocViewState extends State<DocView> {
                   h2 > 0 ? int.tryParse(id.substring(h1 + 2, h2)) : null;
               if (ui != null && ui - 1 >= 0 && ui - 1 < _units.length) {
                 rows = _rowsAfter(_units[ui - 1]);
-                run = _blankRunAfter(_units[ui - 1]);
               }
               breakRowsOnPage++;
             }
-            // k == 0 的盒子：文末（`#t#`）**就是第一行**（行表不 skip）；
-            // 分页原页（`#b`）还背着"段距那一格"（第一个空行只是段距 ⇒ 它也是一个真实位置）。
+            // ★★★ 2026-10-28（用户拍板：段间距不承接字符）：分页原页（`#b`）原来在 k == 0 的
+            //   盒子里**多挂了一格**（`run.first`，画在 `行盒底 + 3.6` = 段距里）——
+            //   那正是"段间距当容器行"。空行串里第一个是**段落分隔符**（零高度、不是位置）
+            //   ⇒ 它不进落点表。现在 `rows` 只有真行，k == 0 的盒子只承载"第一行"。
             final List<int> offs = <int>[];
             final List<double> dys = <double>[];
-            if (k == 0 && !isTail) {
-              if (run.isNotEmpty) {
-                offs.add(run.first);
-                dys.add(_caretInset);
-              }
-              if (rows.isNotEmpty) {
-                offs.add(rows.first);
-                dys.add(_paraGap + _caretInset);
-              }
-            } else if (k < rows.length) {
+            if (k < rows.length) {
               offs.add(rows[k]);
               // ★ 盒子的 y 已经含 `leadingGap`（= 段间距）⇒ 盒内只补行内内缩；
-              //   只有分页原页的第 0 个盒子**没有** leadingGap（它同时承接"段距那一格"）。
-              dys.add(isTail
-                  ? _caretInset
-                  : (k == 0 ? _paraGap + _caretInset : _caretInset));
+              //   只有分页原页的第 0 个盒子**没有** leadingGap（段距在盒子里面）。
+              dys.add(isTail || k > 0 ? _caretInset : _paraGap + _caretInset);
             }
             // ★ 分页符行内部的格：那一行**零像素、不可见**，屏幕上就是同一格 ——
             //   所以它们与"分页符行首"共用同一个 y（批 38 的口径：那 19 格不许是死区）。
@@ -2465,14 +2426,9 @@ class DocViewState extends State<DocView> {
       // （否则两页各画一根竖条 —— 同一格像素两个主人，平权/一像素一语义都不允许）。
       final int tapAt = _seamTapTarget(prevUnit);
       final int end = _seamEnd(layout, p);
-      // ★★ 2026-10-26 用户手测追加（批 38 回归 + 批 39）：**认领起点 = 上一单元之后那一格**。
-      //   · 不许从 `tapAt` 起算：自然分页时 `tapAt == prevUnit.acceptTo`，那格是**单元自己**的
-      //     （旁边还有空行槽/块边界条）⇒ 直接叠成 3 根（用户看到"文末和下面空行各一个光标"）；
-      //   · 也不许"只在越过 acceptTo 时才画"（上一版）：那样**页尾那几行真空行没人管** ——
-      //     用户在页尾空行上按 Enter，光标就看不见了（他的原话："光标会消失，实际到空行了但不显示"）。
-      //   ⇒ 起算点是 acceptTo + 1，右端是下一页第一个单元的左边界。
-      final int ownedFrom =
-          (prevUnit.acceptTo + 1).clamp(0, widget.buffer.buf.length);
+      // ★★ 2026-10-26 用户手测追加（批 38 回归 + 批 39）：**认领的右端 = 下一页第一个单元的左边界**
+      //   （`_seamEnd`）。为什么右端必须是**排他**的：文末那一行（EOF）可能被自动分页推到下一页，
+      //   那时"这一页的接缝"不该画它（否则下一页的画一根、这一页也画一根 = 双光标）。
       // ★★★ 2026-10-27（用户实测：「分页原页的文末下一个空行，继续按 Enter，光标位置看上去不变，
       //   但退格次数会增加」）：接缝槽原来**没有 `caretDy` / `lineOffsets`** ⇒ 光标恒画在槽顶，
       //   缓冲区在长（Enter 生效、退格变多）而屏幕上看不出光标在动。
@@ -2481,25 +2437,29 @@ class DocViewState extends State<DocView> {
       //   **这一页底部那些"行"用同一条规则算出来**（见 `_rowsAfter`）：已有空行 + 一个待写行。
       //   分页符块零像素、不产单元 ⇒ 它那一行没人画，必须由接缝槽补上；
       //   补上之后，"分页原页底部那片空白"就和"文末那片空白"是同一个东西了。
-      final List<int> seamSlots = _rowSlotsAfter(prevUnit);
-      // 空行串非空 ⇒ 第 0 个只是段距那一截；为空 ⇒ 第 0 个就是待写行本身。
-      final int seamFirstRow = _blankRunAfter(prevUnit).isEmpty ? 0 : 1;
-      final int seamK = _caretRowIndexIn(seamSlots);
+      // ★★★ 2026-10-28：落点表与 `_rowsAfter` **同一条规则**（原 `_rowSlotsAfter` 已删）——
+      //   空行串里第一个是段落分隔符（零高度、不是位置），所以从第二个起才是真行。
+      final List<int> seamSlots = _rowsAfter(prevUnit);
+      // ★★★ 2026-10-28：**只认落点表里的偏移**。原来是区间判据（`ownedFrom <= caret < end`），
+      //   而区间里那个**段落分隔符**因此也画了一根（全量守卫生效现场：`⑧ 自然溢出` 的
+      //   偏移 149 = 第 25 段的分隔符）。它不是位置 ⇒ 光标必须**正好**是某个真行的行首；
+      //   同时**保留右端排他**（`< end`）—— 下一页的行由下一页自己画。
+      final int seamHit = seamSlots.indexOf(_caret ?? -1);
       children.add(_BlankSlot(
         id: 'seam@p$p',
         height: free,
         offset: tapAt,
         lineOffsets: seamSlots,
-        lineDys: _blankDys(seamSlots.length, firstRow: seamFirstRow),
+        lineDys: _blankDys(seamSlots.length),
         gapBefore: _paraGap,
         lineHeight: _blankLineHeight,
         caretHere: breakRowsOnPage == 0 &&
             !widget.hideCaretAndSelection &&
             widget.caretVisible &&
-            (_caret ?? -1) >= ownedFrom &&
+            seamHit >= 0 &&
             (_caret ?? -1) < end,
         // ★ 同一把尺子：`槽顶 + 段间距 + k × 一行 + 行内内缩`
-        caretDy: _blankDy(seamK, firstRow: seamFirstRow),
+        caretDy: seamHit >= 0 ? _blankDy(seamHit) : null,
         caretHeight: textCaretHeight(_s.bodyFontSize),
         caretWidth: 1.5,
         caretColor: const Color(kCaretColorValue),

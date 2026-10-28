@@ -83,8 +83,10 @@ void main() {
 
     testWidgets('★ 空行上要有**光标竖条**（改前：真空段落根本没人画）',
         (WidgetTester tester) async {
-      // `甲\n\n\n乙`：空行是 [2,3) 这一行，光标落在 2 = 那一行行首
-      await _pumpDocView(tester, '甲\n\n\n乙', caret: 2);
+      // `甲\n\n\n乙`：空行串 = [2, 3]，**2 是段落分隔符（不是位置）**，`3` 才是真空段的行首。
+      // ★ 2026-10-28（用户拍板"段间距不承接字符"）：这里原来写的是 2 —— 那一格零高度，
+      //   以前靠"把光标塞进段距"才画得出来，正是被否掉的形态。
+      await _pumpDocView(tester, '甲\n\n\n乙', caret: 3);
       expect(_hasCaretBar(tester), isTrue, reason: '光标在真空段落里必须看得见');
     });
   });
@@ -106,14 +108,16 @@ void main() {
       expect(got, 4, reason: '点在第二个空行上 ⇒ 光标落在第二个空行的行首（实际 $got）');
     });
 
-    testWidgets('★ 点上半部分 ⇒ 第一行（偏移 2）', (WidgetTester tester) async {
+    testWidgets('★ 点上半部分（段距那一格）⇒ 落第一行（偏移 3）', (WidgetTester tester) async {
       int? got;
       await _pumpDocView(tester, '甲\n\n\n\n乙',
           caret: 0, onTapOffset: (int o, Offset _, TapSource _) => got = o);
       final Rect slot = tester.getRect(_slots.first);
+      // ★ 2026-10-28：偏移 2 是**段落分隔符**（零高度、不是位置）⇒ 它不进落点表；
+      //   点段距那一格 ⇒ 落最近的**真行** = 3。
       await tester.tapAt(Offset(slot.left + 40, slot.top + 4));
       await tester.pumpAndSettle();
-      expect(got, 2);
+      expect(got, 3);
     });
   });
 

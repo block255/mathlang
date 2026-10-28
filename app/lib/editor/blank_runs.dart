@@ -39,6 +39,21 @@ List<int> blankRunAfter(String buf, int acceptTo) {
   return blankRunFrom(buf, o);
 }
 
+/// 一段空行串里，**从第几个位置起才是真正的「行」**（有高度、能承接光标）。
+///
+/// ★★★ 2026-10-28（用户拍板：**段间距不承接字符**）：
+///   · **文首 / 文末** ⇒ `0`：没有"下一段"来用掉段落分隔符 ⇒ 每个空行都是真行
+///     （与 [leadingBlankHeight] / [trailingBlankHeight] 的 `n × 行高` 同一条口径）；
+///   · **两段之间** ⇒ `1`：第一个空行是 **Markdown 的段落分隔符** —— 它零高度、
+///     不是行、**不许落光标**（判据本体在 `core/paragraph_break.dart`）。
+///
+/// 为什么必须有这一条：`A⏎⏎B` 在缓冲区里是 3 行（"A" / "" / "B"），可版面上那个空行
+/// 高度是 0（`extraBlankHeight(1) == 0`）—— **同一串字符，数据里是一行、版面里是零行**。
+/// 之前为了让"每个偏移都有光标"成立，把它的光标硬塞进段距里（`doc_view` 的折线），
+/// 于是出现了"段间距能当容器行"—— 那是**用实现迁就一条错的断言**。
+int blankRowStart({required bool atDocStart, required bool atDocEnd}) =>
+    (atDocStart || atDocEnd) ? 0 : 1;
+
 /// **块之间**的真空段落要多高：`n` 个连续空行里，第一个只是**段距**，其余每个占一整行。
 ///
 /// `n <= 1 ⇒ 0`（一个空行就是 md 的段落边界，视觉上只是那点 `gap`）。

@@ -19,6 +19,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mathlang/core/doc_buffer.dart';
+import 'package:mathlang/core/paragraph_break.dart';
 import 'package:mathlang/editor/edit_view.dart';
 
 /// 2 页：第 1 页「甲 + 分页符」，第 2 页「乙」
@@ -164,7 +165,11 @@ void main() {
       final DocBuffer buf = await _mount(tester, doc);
       final int firstBlank = doc.indexOf('乙') + 2;
       expect(doc[firstBlank], '\n', reason: '前置：这一格确实是乙下面的第一个空行');
-      for (var off = firstBlank; off <= firstBlank + 2; off++) {
+      // ★ 2026-10-28（用户拍板"段间距不承接字符"）：`firstBlank` 就是**段落分隔符**
+      //   （零高度、不是位置）⇒ 它不再画光标；真行从下一个起。
+      expect(isParagraphSeparator(doc, firstBlank), isTrue,
+          reason: '前置：乙下面第一个空行是段落分隔符');
+      for (var off = firstBlank + 1; off <= firstBlank + 3; off++) {
         expect(await _barsAt(tester, buf, off), greaterThan(0),
             reason: '页尾空行偏移 $off 没有光标条（用户："光标会消失"）');
       }
