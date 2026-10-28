@@ -288,10 +288,13 @@ if errorlevel 1 (
 )
 echo   已卸载。桌面/开始菜单的图标会消失。
 echo.
-set /p PURGE=要顺带删掉设置与暂存（%APPDATA%\mathlang）吗？保留可重装接着用 [y/N]: 
+set /p PURGE=要顺带删掉设置与暂存（%USERPROFILE%\mathlang）吗？保留可重装接着用 [y/N]: 
 if /i "%PURGE%"=="y" (
-  rmdir /s /q "%APPDATA%\mathlang"
+  rmdir /s /q "%USERPROFILE%\mathlang"
+  if exist "%APPDATA%\mathlang" rmdir /s /q "%APPDATA%\mathlang"
   echo   已删除。
+) else (
+  echo   已保留：%USERPROFILE%\mathlang（重装后设置自动接着用）
 )
 echo.
 echo 完成。你保存的 .md 文档不受影响。
@@ -312,7 +315,10 @@ $readme = @"
   双击「双击我卸载数语引擎.cmd」，按提示走即可（会问要不要顺带清掉设置与暂存）。
 
 三、你的数据在哪
-  设置与「本地暂存」在 %APPDATA%\mathlang\（卸载**不会**自动删，除非常你说 y）。
+  设置与「本地暂存」在 %USERPROFILE%\mathlang\（= C:\Users\<你>\mathlang\）。
+  ★ 它**不在安装包里面** ⇒ 卸载本身**不会**删它；卸载脚本会另外问你要不要删（默认保留）。
+  ★ 1.2.3 及更早的版本把数据放在包内（%APPDATA%\mathlang 会被系统虚拟化进包），
+    那一份**会**随卸载消失 —— 1.2.4 起已自动迁移到上面那个路径。
   你保存的 .md 文档在任何情况下都不受影响。
 
 四、为什么需要"信任证书"（只此一次）
@@ -327,7 +333,7 @@ $readme = @"
   设置 → 应用 → 已安装的应用 → 搜「数语引擎」→ 卸载
   或 PowerShell：Get-AppxPackage MathLang.Editor | Remove-AppxPackage
 "@
-[System.IO.File]::WriteAllText((Join-Path $stage '安装说明.txt'), ($readme -replace "`r?`n", "`r`n"), (New-Object System.Text.UTF8Encoding($false)))
+[System.IO.File]::WriteAllText((Join-Path $stage '安装说明.txt'), ($readme -replace "`r?`n", "`r`n"), (New-Object System.Text.UTF8Encoding($true)))
 
 # 打成 zip（GitHub 发布用 ASCII 名；解压得到「数语引擎」文件夹）
 $setupZip = Join-Path $root ("dist\mathlang-v$Version-win64-setup.zip")
