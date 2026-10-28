@@ -31,8 +31,16 @@ if (-not $Version) {
 if (-not $Tag) { $Tag = "v$Version" }
 
 if (-not $Token) {
-    $tokFile = 'D:\Flutter_APP_Develop\global_credentials\github_token.txt'
-    if (-not (Test-Path $tokFile)) { throw "找不到 token 文件：$tokFile" }
+    # ★★ 2026-10-28 踩坑：先用了 github_token.txt，它**只有读权限**
+    #   （POST /releases ⇒ 403、连 PATCH 仓库也 403），白折腾一轮。
+    #   本项目专用的是 github_token_mathlang.txt（Contents: Read and write）。
+    #   ⇒ 默认优先用项目专用那份，没有才回落到通用那份。
+    $credDir = 'D:\Flutter_APP_Develop\global_credentials'
+    $projectTok = Join-Path $credDir 'github_token_mathlang.txt'
+    $genericTok = Join-Path $credDir 'github_token.txt'
+    $tokFile = if (Test-Path $projectTok) { $projectTok } else { $genericTok }
+    if (-not (Test-Path $tokFile)) { throw "找不到 token 文件：$projectTok / $genericTok" }
+    Write-Host "   token: $tokFile" -ForegroundColor DarkGray
     $Token = ([System.IO.File]::ReadAllText($tokFile)).Trim()
 }
 
