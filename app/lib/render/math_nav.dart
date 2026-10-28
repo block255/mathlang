@@ -798,14 +798,77 @@ SmartEdit _textLayerDelete(String source, int offset, {required bool forward}) {
   //   想删这一块的正路是"把内容删空 ⇒ 整块回收"，见上面 emptyShell 那条）。
   if (!forward) {
     if (o <= 0) return SmartEdit.none;
-    final SmartEdit e = SmartEdit.remove(o - 1, o, o - 1);
+    final SmartEdit e = _visibleObjectDelete(source, o - 1, o - 1);
+    if (e.isNone) return SmartEdit.none;
     if (_fenceBrokenByDelete(source, e.from!, e.to!)) return SmartEdit.none;
     return e;
   }
   if (o >= source.length) return SmartEdit.none;
-  final SmartEdit e = SmartEdit.remove(o, o + 1, o);
+  final SmartEdit e = _visibleObjectDelete(source, o, o);
+  if (e.isNone) return SmartEdit.none;
   if (_fenceBrokenByDelete(source, e.from!, e.to!)) return SmartEdit.none;
   return e;
+}
+
+/// 删掉 [at] 那**一个可见对象**（2026-10-28 新增；三条判据都在这里）。
+///
+/// ★ 为什么不能直接 `SmartEdit.remove(at, at+1, …)`（用户 2026-10-28 实测的三处翻车）：
+///
+/// ① **分隔线 `---` 是整行对象**：删一个 `-` ⇒ `--` ⇒ 不再匹配 `_dividerRe`
+///    ⇒ 那三个连字符**变成可见正文**。
+/// ② **行首标记是存储细节**（`# ` / `- ` / `> `）：删掉 `# ` 里那个空格 ⇒
+///    标题块降级 ⇒ `#` 漏成正文（用户的"爆了一个 `#` 出来"）。
+///    ⇒ 删到标记内部就**整块处置**：标记一起去掉（标题降级为正文、列表取消），
+///    内容保留、**一步撤销**。这就是「块类型由块类型表达，用户不写标记」那条的落地。
+/// ③ **删空一段会多出一行**：md 里两段之间本来就存着 `⏎⏎`（段界），
+///    把中间那段删空 ⇒ 左右两个段界**并置**成 `⏎⏎⏎⏎` ⇒ 版面按"每多一个 `⏎` 一行"
+///    算出 **2 行**，而空段落只有 **1 行**。
+///    ⇒ 这一下把那个**多余的段界**一起收掉（`⏎⏎⏎` = 段界 + 1 空行），
+///    并且与"删字符"合成**一次编辑**（一步撤销）。文首同理（那里没有上一段，
+///    但第一个空行同样是段界性质），文末则收掉末尾那一格（否则光标会掉到下一行）。
+SmartEdit _visibleObjectDelete(String source, int at, int caret) {
+  if (at < 0 || at >= source.length) return SmartEdit.none;
+  final int ls = _lineStartOf(source, at);
+  final int nl = source.indexOf('\n', ls);
+  final String line = source.substring(ls, nl < 0 ? source.length : nl);
+
+  // ① 分隔线：整行（连它的换行一起）
+  if (BlockMarkers.isDivider(line)) {
+    final int to = nl < 0 ? source.length : nl + 1;
+    return SmartEdit.remove(ls, to, ls > 0 ? ls - 1 : 0);
+  }
+
+  // ② 行首标记：整块降级（绝不留下半个标记）
+  final int ml = BlockMarkers.markerLength(line);
+  if (ml > 0 && at < ls + ml) {
+    return SmartEdit.remove(ls, ls + ml, ls);
+  }
+
+  // ③ 普通字符；顺手做"空段落归一化"
+  final String out = source.replaceRange(at, at + 1, '');
+  final int ls2 = at == 0 ? 0 : out.lastIndexOf('\n', at - 1) + 1;
+  final int nl2 = out.indexOf('\n', at);
+  if (nl2 >= 0 && out.substring(ls2, nl2).trim().isEmpty) {
+    final bool twoBefore =
+        ls2 >= 2 && out[ls2 - 1] == '\n' && out[ls2 - 2] == '\n';
+    final bool atStart = ls2 == 0;
+    final bool atEnd = nl2 + 1 >= out.length;
+    if ((twoBefore || atStart) && (atEnd || out[nl2 + 1] == '\n')) {
+      final int to = at + 2;
+      if (to <= source.length) {
+        // 文末：收掉那一格之后光标要退一格（否则站在"文末下一行"上，看起来掉了一行）
+        return SmartEdit.remove(at, to, atEnd ? (at == 0 ? 0 : at - 1) : at);
+      }
+    }
+  }
+  return SmartEdit.remove(at, at + 1, caret);
+}
+
+/// [o] 所在行的行首（绝对偏移）
+int _lineStartOf(String s, int o) {
+  if (o <= 0) return 0;
+  final int i = s.lastIndexOf('\n', o - 1);
+  return i < 0 ? 0 : i + 1;
 }
 
 /// 从**公式外侧**删除 ⇒ **委托进公式的内层边界**（§3.3「同一根像素」）：
