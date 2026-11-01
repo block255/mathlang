@@ -65,6 +65,7 @@ class MathWithCaret extends StatefulWidget {
     this.showEditingAids = true,
     this.caretDepth = -1,
     this.caretScript = false,
+    this.caretMainRow = false,
   });
 
   /// ★★★ 2026-10-24（批 16，用户拍板"变矮"）：光标这一格是不是落在**脚本槽**里
@@ -76,6 +77,11 @@ class MathWithCaret extends StatefulWidget {
   ///
   /// 判据**不靠几何猜**（不量"盒有多矮"），由位点表直接给（与 [caretDepth] 同源）。
   final bool caretScript;
+
+  /// ★★★ 2026-11-01（F8）：这一格是**主行位点**（行间块用；位点表 path 为空）。
+  /// 主行位点只在『本层最高的那类字形』里选行 —— 脚本字形比主行矮一档（实测 18 vs 21），
+  /// 而『最近字形』永远先碰到矮的那个；见台账 F8 的三个相貌。
+  final bool caretMainRow;
 
   /// ★★ 2026-10-20（T-C 实测 F16）：**要不要画"编辑辅助"**（空槽虚线框 / 当前槽淡蓝底 /
   /// 边界刻度 / 光标竖条）。
@@ -218,7 +224,9 @@ class _MathWithCaretState extends State<MathWithCaret> {
       if (widget.caretEdge == CaretEdge.none) {
         final Rect? rowBox = _clampRowHeight(
             findLocalRowBox(root, at,
-                anchor: anchor, script: widget.caretScript),
+                anchor: anchor,
+                script: widget.caretScript,
+                mainRow: widget.caretMainRow),
             widget.fontSize);
         // ★★ U3（2026-10-21 用户实测 + 探针）：「同一视觉行上，光标不该因为旁边是文字还是
         //   数学符号而变高变矮」—— 这是**平权**在光标上的直接要求。
@@ -579,7 +587,7 @@ const double kLineToGlyph = 1.35;
 ///   `true` ⇒ 高度回到 `min(行盒 × kLineToGlyph, 本层字形盒)`（指数档实测 8.6）
 ///   `false` ⇒ 高度 = 本层字形盒（批 15 口径：行盒特别紧的结构里也不会被压扁）。
 Rect? findLocalRowBox(RenderObject root, Offset at,
-    {RenderObject? anchor, bool script = false}) {
+    {RenderObject? anchor, bool script = false, bool mainRow = false}) {
   final List<({Rect rect, double dx, RenderObject? row})> hits =
       <({Rect rect, double dx, RenderObject? row})>[];
   void walk(RenderObject o) {
@@ -605,6 +613,30 @@ Rect? findLocalRowBox(RenderObject root, Offset at,
   Rect clip(Rect r) => (rowH <= 0 || r.height <= rowH * 1.6)
       ? r
       : Rect.fromCenter(center: r.center, width: r.width, height: rowH);
+
+  // ★★★ 2026-11-01（F8）：**主行位点只在"本层最高的那类字形"里选行**。
+  //
+  // 探针（2026-11-01，行间块 `f_{-}` / `f'_{-}f'_{-}`）：
+  //   · 基座 `f` 的字形盒 **21 高**（-1.4..19.6）；
+  //   · 下标 `-` 的字形盒 **18 高**（3.7..21.7）；撇 **18 高**。
+  //   "离光标最近"永远先碰上**矮的那个**（下标 / 分母 / 对象尾笔）⇒ 竖条被带矮带低
+  //   （实测 `f_{-}` 末尾 15.1/5.1，而公式首 17.6/0.3；`f'_{-}f'_{-}` 行尾同样 15.1）。
+  //   层差在几何上就是"高一档" ⇒ 主行位点只保留高度 ≥ 最高字形 × 0.9 的候选
+  //   （同高的并列保留；一个不剩就退回全体，不许因此拿不到行盒）。
+  final List<({Rect rect, double dx, RenderObject? row})> scanHits = () {
+    if (!mainRow || hits.isEmpty) return hits;
+    double maxH = 0;
+    for (final ({Rect rect, double dx, RenderObject? row}) h in hits) {
+      final double hh = clip(h.rect).height;
+      if (hh > maxH) maxH = hh;
+    }
+    if (maxH <= 1) return hits;
+    final List<({Rect rect, double dx, RenderObject? row})> keep = hits
+        .where((({Rect rect, double dx, RenderObject? row}) h) =>
+            clip(h.rect).height >= maxH * 0.9)
+        .toList();
+    return keep.isEmpty ? hits : keep;
+  }();
 
   // ★★★ 2026-10-24（批 7 · A1）：**先按"基线"认本层**，取本层的字形盒。
   //
@@ -640,7 +672,7 @@ Rect? findLocalRowBox(RenderObject root, Offset at,
       //   根行里直接挂着的字形（`x` / `=`）它们的行**就是**根行 ⇒ 这一档先把它们挑出来。
       ({Rect rect, double dx, RenderObject? row})? sameRow;
       ({Rect rect, double dx, RenderObject? row})? maybeSameRow;
-      for (final ({Rect rect, double dx, RenderObject? row}) h in hits) {
+      for (final ({Rect rect, double dx, RenderObject? row}) h in scanHits) {
         if (!identical(h.row, aRow)) continue;
         final Rect r = clip(h.rect);
         if (at.dy < r.top || at.dy > r.bottom) continue;
@@ -649,7 +681,7 @@ Rect? findLocalRowBox(RenderObject root, Offset at,
         }
       }
       if (sameRow != null) maybeSameRow = sameRow;
-      for (final ({Rect rect, double dx, RenderObject? row}) h in hits) {
+      for (final ({Rect rect, double dx, RenderObject? row}) h in scanHits) {
         final Rect? rb = rowRectOf(h.row);
         if (rb == null) continue;
         if ((rb.bottom - anchorRowBox.bottom).abs() > 1.2) continue; // 只认本层基线
@@ -696,7 +728,7 @@ Rect? findLocalRowBox(RenderObject root, Offset at,
   if (anchorRow != null) {
     ({Rect rect, double dx, RenderObject? row})? pick(double slack) {
       ({Rect rect, double dx, RenderObject? row})? best;
-      for (final ({Rect rect, double dx, RenderObject? row}) h in hits) {
+      for (final ({Rect rect, double dx, RenderObject? row}) h in scanHits) {
         if (!sameLayer(h.row, anchorRow)) continue;
         final Rect r = clip(h.rect);
         if (at.dy < r.top - slack || at.dy > r.bottom + slack) continue;
@@ -721,13 +753,13 @@ Rect? findLocalRowBox(RenderObject root, Offset at,
 
   // ② 退路：纯几何（严格含基线 → ±2 px）
   ({Rect rect, double dx, RenderObject? row})? best;
-  for (final ({Rect rect, double dx, RenderObject? row}) h in hits) {
+  for (final ({Rect rect, double dx, RenderObject? row}) h in scanHits) {
     final Rect r = clip(h.rect);
     if (at.dy < r.top || at.dy > r.bottom) continue;
     if (best == null || h.dx < best.dx) best = (rect: r, dx: h.dx, row: h.row);
   }
   if (best == null) {
-    for (final ({Rect rect, double dx, RenderObject? row}) h in hits) {
+    for (final ({Rect rect, double dx, RenderObject? row}) h in scanHits) {
       final Rect r = clip(h.rect);
       if (at.dy < r.top - 2 || at.dy > r.bottom + 2) continue;
       if (best == null || h.dx < best.dx) best = (rect: r, dx: h.dx, row: h.row);

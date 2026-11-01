@@ -390,6 +390,16 @@ bool isScriptSite(String tex, int rel) {
   return isScriptPath(buildCaretSites(tex).snap(rel).path);
 }
 
+/// ★★★ 2026-11-01（F8）：这一格是不是**主行位点**（`path` 为空 = 不在任何结构槽里）。
+///
+/// 用途：行间块里"对象末尾"那些格，`findLocalRowBox` 会按**离它最近的字形**选行
+/// （最近的是下标 `-` / 分母 / 对象尾笔）⇒ 竖条被带矮带低（三种相貌见台账 F8）。
+/// 判据从位点表拿、不靠几何猜 —— 与 [isScriptSite] / `caretVisualLevel` 同源。
+bool isMainRowSite(String tex, int rel) {
+  if (rel < 0 || rel > tex.length) return false;
+  return buildCaretSites(tex).snap(rel).path.isEmpty;
+}
+
 /// 同上，给**已经算好位点**的调用方复用（省一次建表）。
 bool isScriptPath(List<SlotStep> path) {
   if (path.isEmpty) return false;

@@ -1636,6 +1636,8 @@ class DocViewState extends State<DocView> {
         // ★ 反馈 8：粘合位点按脚本档画（与行内公式同一函数，画/插同源）
         final bool caretScript = texRel >= 0 &&
             caretVisualLevel(buildCaretSites(text).snap(texRel)).script;
+        // ★★★ 2026-11-01（F8）：主行位点 ⇒ 只在『本层最高的那类字形』里选行
+        final bool caretMainRow = texRel >= 0 && isMainRowSite(text, texRel);
         // ⚠️ 2026-10-15 晚：原先这里给整段行间公式刷淡色底（§6.5 旧版），**已撤** ——
         //    它把"渲染提示"画成了"一个对象"（用户指出 `$\frac{a}{b}=\sqrt{2}$` 是三个对象）。
         //    见 `inline_math_text.kMathRangeColor` 的注释与《编辑地基与手感》§六-6。
@@ -1731,6 +1733,8 @@ class DocViewState extends State<DocView> {
                 sharesLeftCell: sharesLeftCell),
             // ★ 批 16：脚本槽 ⇒ 竖条变矮（判据同上，源码位点）
             caretScript: caretScript,
+            // ★ F8：主行位点 ⇒ 只在最高的那类字形里选行
+            caretMainRow: caretMainRow,
             caretEdge: beforeBlock
                 ? CaretEdge.before
                 : (afterBlock ? CaretEdge.after : CaretEdge.none),
