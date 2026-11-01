@@ -286,10 +286,34 @@ AutoExpand? _planScript(String doc, int caret, String mark) {
   while (from > 0 && _isAsciiWordChar(doc[from - 1])) {
     from--;
   }
+  // ★★★ 2026-11-01（反馈 17 · 口径 §3.4）：**括号是一对"看得见的边界" ⇒ 整对当基座**。
+  //   现场（用户图 17）：正文 `合E={(-1)` 后面按 Shift+6 ⇒ 判据只看前一个字符 `)` ⇒ 不是字母数字
+  //   ⇒ 直接放弃 ⇒ 打进去一个**字面 `^`**。改成：`)` `]` `}` 先找配对开括号，
+  //   找得到就**把整对括号（含内容）一起搬进公式**：`(-1)` ⇒ `$(-1)^{}$`。
+  //   ★ 两条护栏：① 括号里**不许有 `$`**（跨公式的括号没法这么搬，留给"相邻公式合并"）；
+  //     ② 只在本行内找配对（跨行的括号不算"一个视觉对象"）。
   if (from == caret) {
     final String prev = doc[caret - 1];
-    if (!_isNumeratorChar(prev)) return null;
-    from = caret - 1;
+    final int? openAt = _matchedOpenBefore(doc, caret - 1);
+    if (openAt != null && !doc.substring(openAt, caret).contains(r'$')) {
+      from = openAt;
+    } else if (prev == r'$') {
+      // ★★ **并回原段**（口径 §4.1）：光标紧跟在一对 `$…$` 的收尾 `$` 之后 ⇒
+      //   把 `^{}` 写进**那段公式**（在收尾 `$` 之前插），而不是往正文里插字符。
+      //   实现：把替换区间定在收尾 `$` 那一格、长度 0 —— 编辑层会认出"在数学段里"⇒ 只插 tex。
+      return AutoExpand(
+        from: caret - 1,
+        caret: caret - 1,
+        tex: '$mark{}',
+        kind: AutoExpandKind.script,
+        template: true,
+        matched: mark,
+      );
+    } else if (_isNumeratorChar(prev)) {
+      from = caret - 1;
+    } else {
+      return null;
+    }
   }
   final String base = doc.substring(from, caret);
   return AutoExpand(
@@ -300,6 +324,32 @@ AutoExpand? _planScript(String doc, int caret, String mark) {
     template: true,
     matched: mark,
   );
+}
+
+/// [closeAt] 是一个闭合括号（`)` `]` `}`）⇒ 返回它**配对的开括号**下标（找不到 = null）。
+///
+/// 只在本行内找（不跨 `\n`）：跨行的括号不是"一个视觉对象"。
+int? _matchedOpenBefore(String doc, int closeAt) {
+  final String close = doc[closeAt];
+  final String open = switch (close) {
+    ')' => '(',
+    ']' => '[',
+    '}' => '{',
+    _ => '',
+  };
+  if (open.isEmpty) return null;
+  var depth = 0;
+  for (var i = closeAt; i >= 0; i--) {
+    final String ch = doc[i];
+    if (ch == '\n') return null;
+    if (ch == close) {
+      depth++;
+    } else if (ch == open) {
+      depth--;
+      if (depth == 0) return i;
+    }
+  }
+  return null;
 }
 
 /// 正文里"视觉连续的一段"用的字符集：**ASCII 字母 / 数字**（汉字按批 18 是断点）。
