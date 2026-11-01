@@ -65,6 +65,15 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
     case WM_FONTCHANGE:
       flutter_controller_->engine()->ReloadSystemFonts();
       break;
+    case WM_SYSCHAR:
+      // Alt+数字（1..8 = 插入快捷栏第 N 格）在框架里已经被消费，但系统仍会为
+      // 未转成助记符的 WM_SYSCHAR 播一声提示音（用户 2026-11-01 实测：Alt+0..9 全响，
+      // 与选区 / 面板 / 快捷栏内容都无关）。
+      // 这里只吞"Alt+数字"，不动别的 SysChar（Alt+字母 的菜单助记符照旧）。
+      if (wparam >= '0' && wparam <= '9') {
+        return 0;
+      }
+      break;
   }
 
   return Win32Window::MessageHandler(hwnd, message, wparam, lparam);

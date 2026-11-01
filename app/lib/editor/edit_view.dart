@@ -1,4 +1,4 @@
-﻿// 数语引擎 · 编辑面（S3-2）
+// 数语引擎 · 编辑面（S3-2）
 //
 // 架构（2026-10-14 输入层重做后；依据见 notes/design/位点与结构导航.md §11.6 / §11.7 / §11.13 后的修订块）：
 //
@@ -32,6 +32,7 @@ import '../lang/math_spans.dart';
 import '../lang/paste_context.dart';
 import '../lang/smart_wrap.dart';
 import '../lang/symbol_insert.dart';
+import '../lang/typed_input.dart';
 import '../lang/word_triggers.dart';
 import '../render/caret_sites.dart'
     show kCaretColorValue, CaretSiteTable, SlotSpan, buildCaretSites;
@@ -273,7 +274,7 @@ class EditViewState extends State<EditView> {
   @override
   void initState() {
     super.initState();
-    _input.onCommitText = _commitText;
+    _input.onCommitText = _onTypedText;
     _input.inputFormatters = widget.inputFormatters;
     _input.addListener(_onInputChanged);
     _buf.addListener(_onBufferChanged);
@@ -513,6 +514,21 @@ class EditViewState extends State<EditView> {
   ///
   /// ★ 这里**不碰输入设备**（不再有"回写镜像框"这一步）：
   ///   输入设备的内容由 [TextInputSurfaceController] 自己维持成"空的"。
+  /// 平台文本通道送来的一段文本（= 用户**敲**出来的字符 / IME 提交）。
+  ///
+  /// ★★★ 2026-11-01（用户拍板）：**反斜杠不许手打** —— 与 "$ 那样禁用" 同一条线。
+  ///   原则 2：用户永远不需要看数学编码；而 `\` 是 LaTeX 命令的开头，
+  ///   手打一个孤立的 `\` 会让整块公式立刻变成 `[公式不完整]`（用户实测反馈二）。
+  ///   进编码的入口是**符号面板 / 快捷键 / 模板**，不是键盘敲反斜杠。
+  ///   ★ 只挡"一次按键提交一个字符"那种；粘贴 / IME 的多字符载荷照旧（见 `filterTypedText`）。
+  ///   ★ 模板、面板、`\ `（数学段里按空格）、撇的 `^{\prime}` 都走**直接调用** `_commitText`，
+  ///     不经过这里，所以一个字都不受影响。
+  void _onTypedText(String text) {
+    final String? kept = filterTypedText(text);
+    if (kept == null) return;
+    _commitText(kept);
+  }
+
   void _commitText(String rawText,
       {int autoWrapped = 0, bool isEnter = false, bool padDone = false}) {
     if (rawText.isEmpty) return;
@@ -526,6 +542,18 @@ class EditViewState extends State<EditView> {
       if (mathRegionAt(_buf.buf, _buf.caret) != null) {
         rawText = _hasBaseAtom() ? r'^{\prime}' : r'{}^{\prime}';
       }
+    }
+    // ★★★ 2026-11-01（用户实测反馈一 · 2）：**打字落点不许落在行首标记里**。
+    //   实测：标题 `# 20261028作业`，光标停在最前面（`#` 之前）打一个 `w`
+    //   ⇒ 缓冲区 `w# 20261028作业` ⇒ `#` 不在行首、不再是标题
+    //   ⇒ **markdown 标记漏到屏幕上**（屏上就显示 `w# 20261028作业`）。
+    //   违反原则 3：「结构由块类型表达，用户不写 Markdown 标记」。
+    //   ⇒ 插入点落在标记区之内 ⇒ 挪到**标记之后**（语义 = "在标题开头插字"）。
+    //   ★ 只挪插入点，**不删标记** —— 删标记是 `Delete` 的语义（`_visibleObjectDelete` ②
+    //     把整块降级、绝不留下半个标记），两者别混。
+    if (!_buf.hasSelection && !isEnter) {
+      final int? moved = shiftInsertOutOfMarker(_buf.buf, _buf.caret);
+      if (moved != null) _buf.setCaret(moved);
     }
     // ★★★ 2026-10-28：**两条 Enter 通道汇到这里**（键事件走 `_onKey` → `_enter()`；
     //   平台文本通道 / IME 提交到达时就是一段裸 `\n`）。
