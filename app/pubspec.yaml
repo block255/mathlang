@@ -1,4 +1,4 @@
-name: mathlang
+﻿name: mathlang
 description: "数语引擎 —— 数学文档编辑器（Markdown + LaTeX：渲染、可视化编辑、A4 分页导出）"
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 1.2.10+16
+version: 1.2.11+17
 environment:
   sdk: ^3.13.1
 
