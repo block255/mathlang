@@ -92,39 +92,81 @@ const String kBigFrac = r'\dfrac';
 /// `\frac` 与 `\dfrac` 的长度差 = 1（多出那个 `d`），插在 `\` 之后
 const String kDfracInsert = 'd';
 
-/// 把 `\frac` 换成 `\dfrac`（**只给行内用**；行间块本来就是 display 尺寸，不用换）。
+/// 把**顶层** `\frac` 换成 `\dfrac`（只给行内用；行间块本来就是 display 尺寸，不用换）。
 ///
 /// 为什么要它：行内 `\frac` 的分子分母是 **0.71 档**（实测 15 px vs 正文 21 px），
 /// 用户口径是"分式看起来过小，即使调大字号也没用"（C1）。这套引擎里没有"介于
 /// 0.7 与 1.0 之间"的旋钮（0.7/0.5 是包里写死的常量），所以只能给它换档。
 ///
+/// ★★★ 2026-11-01（反馈 18）：**只换顶层** —— 指数 / 上下限 / 另一个分式里的 `\frac`
+///   一律不动。根因：`\dfrac` 会把这个分式的分子分母**直接顶到 1.0 档**，而它本来
+///   应当由引擎按层降档（指数里是 0.5 档）。实测（字号 20，字形盒高）：
+///   `e^{\frac{\theta}{2}}` ⇒ θ **10.0**；`e^{\dfrac{\theta}{2}}` ⇒ θ **21.0**（大两档）。
+///   判据：花括号深度 = 0，且**不是** `^` / `_` 的裸参数（`e^\frac{a}{b}`）。
+///
 /// ★ 只改**渲染**用的 tex，L0 源码一个字符都不动；
 /// ★ 插入点是 `\` 之后那一个 `d` ⇒ [FixedTex.mapOffset] 会把光标偏移同步过去。
 FixedTex withBigFractions(String tex) {
-  if (!tex.contains(r'\frac')) return FixedTex(tex, const <int>[]);
+  if (!tex.contains(r'\frac')) {
+    return FixedTex(tex, const <int>[], insertLen: kDfracInsert.length);
+  }
   final List<int> inserts = <int>[];
   final StringBuffer out = StringBuffer();
+  var depth = 0;
+  // 跳过空白后的前一个"有意义的字符"⇒ 用来认 `^` / `_` 的裸参数
+  var prev = '';
   var i = 0;
   while (i < tex.length) {
-    if (tex.startsWith(r'\frac', i)) {
-      final int after = i + r'\frac'.length;
-      // 命令名后面必须是"非字母"（`\fracA` 不是 `\frac`；`\dfrac` 根本不会命中这里）
-      final bool nameEnds = after >= tex.length ||
-          !RegExp(r'[A-Za-z]').hasMatch(tex[after]);
-      if (nameEnds) {
-        out.write(r'\');
-        out.write(kDfracInsert); // ← 插入点在这里（原串的 i+1 之前）
-        out.write('frac');
-        inserts.add(i + 1);
-        i = after;
-        continue;
+    final String ch = tex[i];
+    if (ch == r'\') {
+      if (tex.startsWith(r'\frac', i)) {
+        final int after = i + r'\frac'.length;
+        // 命令名后面必须是"非字母"（`\fracA` 不是 `\frac`；`\dfrac` 根本不会命中这里）
+        final bool nameEnds = after >= tex.length ||
+            !RegExp(r'[A-Za-z]').hasMatch(tex[after]);
+        final bool topLevel = depth == 0 && prev != '^' && prev != '_';
+        if (nameEnds && topLevel) {
+          out.write(r'\');
+          out.write(kDfracInsert); // ← 插入点在这里（原串的 i+1 之前）
+          out.write('frac');
+          inserts.add(i + 1);
+          prev = 'c';
+          i = after;
+          continue;
+        }
       }
+      // 其它控制序列整体复制（`\{` / `\}` / `\\` / `\ ` 都不改变深度）
+      final int end = _commandEnd(tex, i);
+      out.write(tex.substring(i, end));
+      final String last = tex[end - 1];
+      if (last != ' ') prev = last;
+      i = end;
+      continue;
     }
-    out.write(tex[i]);
+    if (ch == '{') {
+      depth++;
+    } else if (ch == '}' && depth > 0) {
+      depth--;
+    }
+    if (ch != ' ') prev = ch;
+    out.write(ch);
     i++;
   }
   if (inserts.isEmpty) {
     return FixedTex(tex, const <int>[], insertLen: kDfracInsert.length);
   }
   return FixedTex(out.toString(), inserts, insertLen: kDfracInsert.length);
+}
+
+/// 一个控制序列的结束位置（`\` + 字母串，或 `\` + 单个非字母）。
+int _commandEnd(String tex, int start) {
+  var j = start + 1;
+  if (j >= tex.length) return j;
+  if (RegExp(r'[A-Za-z]').hasMatch(tex[j])) {
+    while (j < tex.length && RegExp(r'[A-Za-z]').hasMatch(tex[j])) {
+      j++;
+    }
+    return j;
+  }
+  return j + 1;
 }
