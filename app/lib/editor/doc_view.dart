@@ -2216,8 +2216,23 @@ class DocViewState extends State<DocView> {
           final double gapBefore = atStart ? 0.0 : _gapBefore(u.type);
           final List<double> dys = _blankDys(rows.length, gap: gapBefore);
           final int idx = rows.isEmpty ? -1 : (_caretLineIndexInRun(rows) ?? -1);
-          // ★★ 批 23：这一行空行**是不是与下一块的 `acceptFrom` 同一格** ——
-          //   是则让给块（由它画"块之前"边界条），否则屏幕上两根竖条。
+          // ★★★ 2026-11-01（用户实测：Enter 之后光标在空行上、打得进字，但**看不见**）：
+          //   原来"共享格一律让给块"，可块**自己也可能不画** —— `blockShowsCaret` 里
+          //   `sharesLeftCell && caret == acceptFrom` 时它让给左边那块（批 22 的口径）
+          //   ⇒ 空行槽让位、块也不画 ⇒ **两处都不画 ⇒ 光标消失**（只剩旁边那根淡色刻度）。
+          //   判据改成：**确认块真的会画，才让**。
+          final bool yieldsToBlock = _blankYieldsTo(u);
+          final String srcBuf = widget.buffer.buf;
+          final bool blockWillDraw = yieldsToBlock &&
+              blockShowsCaret(
+                caret: _caret,
+                acceptFrom: u.acceptFrom,
+                acceptTo: u.acceptTo,
+                sharesLeftCell: u.acceptFrom >= 1 &&
+                    u.acceptFrom < srcBuf.length &&
+                    srcBuf[u.acceptFrom] == '\n' &&
+                    srcBuf[u.acceptFrom - 1] == r'$',
+              );
           final bool drawsCaret = idx >= 0 &&
               blankLineDrawsCaret(
                 caret: _caret,
@@ -2227,7 +2242,7 @@ class DocViewState extends State<DocView> {
                 //   而那个段落自己又不在这格画 ⇒ 两处都不画 ⇒ **光标消失**
                 //   （用户实测：本行数学子位点按 Enter、下一行已有文本）。
                 //   批 23 定的本意就是"空行后是普通段落 ⇒ 照常画"，只是调用处没分类型。
-                nextAcceptFrom: _blankYieldsTo(u) ? u.acceptFrom : null,
+                nextAcceptFrom: blockWillDraw ? u.acceptFrom : null,
               );
           // ★ 没有真行可落（这一片只有**段距**）⇒ 它归**下一段**：点它落下一段行首。
           //   判据：段距是 `leadingGap`，挂在下一段的 item 上、页首还会被丢掉 ⇒ 属于下一段。
