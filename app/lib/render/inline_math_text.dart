@@ -181,8 +181,13 @@ class _InlineMathTextState extends State<InlineMathText> {
       if (s.isMath) {
         children.add(_mathSpan(s, i, pl, slotPl));
         // 光标在这个行内公式里 → 组合串接在公式**之后**（拼音不是数学源码，塞进 `$...$` 会破坏渲染）
-        if (caretOwnedBy(pl, i, isMath: true) &&
-            widget.composingText.isNotEmpty) {
+        // ★★★ 2026-11-01（反馈 1 · R9）：组合串**不许跟着光标闪烁灭**。
+        //   闪烁只影响"画不画光标条"，不影响"组合串在哪儿"——
+        //   与 2026-10-18 给空槽垫子开的药方同一条（`slotCaretOffset` 不跟闪烁）。
+        //   实测病灶：`pl` 在闪烁灭时为 null ⇒ 这一段整条分支塌掉 ⇒ 拼音每 530 ms 消失一次。
+        if (widget.composingText.isNotEmpty &&
+            (caretOwnedBy(pl, i, isMath: true) ||
+                caretOwnedBy(slotPl, i, isMath: true))) {
           children.add(_composingSpan());
         }
         continue;
@@ -191,7 +196,7 @@ class _InlineMathTextState extends State<InlineMathText> {
         children.addAll(_emphasisSpansWithCaret(s, i, pl));
         continue;
       }
-      children.addAll(_textSpansWithCaret(s, i, pl));
+      children.addAll(_textSpansWithCaret(s, i, pl, slotPl));
     }
 
     return Text.rich(
@@ -204,20 +209,27 @@ class _InlineMathTextState extends State<InlineMathText> {
     ProjectionSegment s,
     int i,
     CaretPlacement? pl,
+    CaretPlacement? slotPl,
   ) {
-    if (!caretOwnedBy(pl, i, isMath: false)) {
+    // ★★★ 2026-11-01（反馈 1 · R9）：**组合串与光标条分开判**。
+    //   光标条看 `pl`（跟闪烁）；组合串看 `pl ?? slotPl`（不跟闪烁、不跟选区）。
+    final bool here = caretOwnedBy(pl, i, isMath: false);
+    final bool composingHere = widget.composingText.isNotEmpty &&
+        (here || caretOwnedBy(slotPl, i, isMath: false));
+    if (!here && !composingHere) {
       // ★ 绝对偏移口径（2026-10-20 修复拖选高亮错位）
       return _runs(s.text, s.start);
     }
-    final int r = pl!.localRel.clamp(0, s.text.length);
+    final CaretPlacement cpl = here ? pl! : slotPl!;
+    final int r = cpl.localRel.clamp(0, s.text.length);
     // ★ `widget.selStart/selEnd` 是**本单元源坐标里的相对偏移**（`DocView._localSelFor` 算的），
     //   所以这里必须传段内相对的 `s.start`（2026-10-20 曾误改成绝对偏移，导致中文不高亮）。
     final int abs0 = s.start;
     return <InlineSpan>[
       ..._runs(s.text.substring(0, r), abs0),
-      _caretBar(),
+      if (here) _caretBar(),
       // ★ 插入点在光标条之后：光标不动、拼音向右展开，后面的字被真的推开
-      if (widget.composingText.isNotEmpty) _composingSpan(),
+      if (composingHere) _composingSpan(),
       ..._runs(s.text.substring(r), abs0 + r),
     ];
   }

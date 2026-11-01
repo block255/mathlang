@@ -407,6 +407,26 @@ class EditViewState extends State<EditView> {
       _commitText('  \n', isEnter: true);
       return;
     }
+    // ★★★ 2026-11-01（反馈 2 · R10）：**行间公式块内部按 Enter ⇒ 块后一行**。
+    //
+    // 实测病灶（真 EditView + 真 Enter）：光标在 `\frac{a}{b}` 的分子里时既不在行首也不在行末，
+    //   `_enterPayload` 给 `\n\n`，而 `insert_guard` 把这两个换行**整体推到块之后**
+    //   ⇒ 一次按键多出**两行**（`$$` 后 2 个换行变 4 个，实测数字）。
+    //
+    // 口径（只读基准 1/3：Enter 每按一次、屏幕上多一行）：这一次按键的语义是
+    //   **"出到一个新行"**，不是"另起一段" ⇒ 在**块之后**插**一个** `\n`，
+    //   光标落到新行行首。★ 不能只把载荷改成 `\n` —— 那会被 `insert_guard` 判成
+    //   "多行围栏里的单个 `\n` 合法"而**插进 tex 内部**（`\frac{a\n}{b}`）。
+    //   ⇒ 这里显式指定落点（`closeEnd` = 收尾 `$$` 之后那一格）。
+    final MathRegion? enterRegion = mathRegionAt(s, c);
+    if (enterRegion != null &&
+        enterRegion.isDisplay &&
+        c != ls &&
+        c != le) {
+      final int at = enterRegion.closeEnd.clamp(0, _buf.length);
+      _mutate(() => _buf.replace(at, at, '\n'));
+      return;
+    }
     final String payload = _enterPayload();
     // ★ 换行符插在**下一行行首**，光标才会落到"新造出来的那一行"上 —— 但**文末例外**：
     //   · 行末（这一行有字）⇒ 一定要挪（插在本行行末的话光标停在本行，屏上看起来没动）；
