@@ -432,7 +432,20 @@ class EditViewState extends State<EditView> {
           buildCaretSites(enterRegion.tex).snap(relIn).path.isNotEmpty;
       if (inStructure || enterRegion.isDisplay) {
         final int at = enterRegion.closeEnd.clamp(0, _buf.length);
-        _mutate(() => _buf.replace(at, at, '\n'));
+        _mutate(() {
+          // ★★★ 2026-11-01（用户复验：空行出来了但**光标消失**）：
+          //   版面模型里"公式行 + `\n`×k + 下一行"的 k 决定中间有几行：
+          //     k=1 ⇒ 同一段的两行（行距）；k=2 ⇒ 一个空行但**零高度**（只是段距）；
+          //     k=3 ⇒ **一个真行**的空行（能承接光标）—— 只读基准 2 的 A-空行-B 就是它。
+          //   所以"只多一行"= 把 k 凑到 **3**，再把光标放到那个**真行**上（第 2 个空行的行首）。
+          int k = 0;
+          while (at + k < _buf.length && _buf.buf[at + k] == '\n') {
+            k++;
+          }
+          final int need = (3 - k).clamp(1, 3);
+          _buf.replace(at, at, '\n' * need);
+          _buf.setCaret((at + 2).clamp(0, _buf.length));
+        });
         return;
       }
     }

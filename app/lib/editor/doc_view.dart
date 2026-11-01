@@ -1470,6 +1470,17 @@ class DocViewState extends State<DocView> {
     return '$name「$snippet」';
   }
 
+  /// 空行要不要把"行首那一格的光标"**让给下一个单元**（2026-11-01 补）。
+  ///
+  /// 只让给**块**：行间公式 / 分界线 / 分页符 —— 它们自己会画"块之前/之后"的边界条，
+  /// 若空行也画就是同一格两根竖条（批 23 / 批 38 的病灶）。
+  /// **普通段落/标题/列表不让**：它们不画边界条，让了就两处都没有 ⇒ 光标消失
+  /// （用户 2026-11-01 实测：本行数学子位点按 Enter、下一行已有文本）。
+  static bool _blankYieldsTo(_Unit u) =>
+      u.type == BlockType.math ||
+      u.type == BlockType.divider ||
+      u.type == BlockType.pageBreak;
+
   /// 块间距（挂在该块第一个 FlowUnit 的 leadingGap 上）
   double _gapBefore(BlockType t) {
     final double body = _s.bodyFontSize;
@@ -2205,7 +2216,12 @@ class DocViewState extends State<DocView> {
               blankLineDrawsCaret(
                 caret: _caret,
                 blankStart: rows[idx],
-                nextAcceptFrom: u.acceptFrom,
+                // ★★★ 2026-11-01（反馈 2 续）：**只让给"块"（行间公式 / 分界线 / 分页符）**。
+                //   原来无条件传 `u.acceptFrom` ⇒ 空行后面跟**普通段落**时也把光标让掉，
+                //   而那个段落自己又不在这格画 ⇒ 两处都不画 ⇒ **光标消失**
+                //   （用户实测：本行数学子位点按 Enter、下一行已有文本）。
+                //   批 23 定的本意就是"空行后是普通段落 ⇒ 照常画"，只是调用处没分类型。
+                nextAcceptFrom: _blankYieldsTo(u) ? u.acceptFrom : null,
               );
           // ★ 没有真行可落（这一片只有**段距**）⇒ 它归**下一段**：点它落下一段行首。
           //   判据：段距是 `leadingGap`，挂在下一段的 item 上、页首还会被丢掉 ⇒ 属于下一段。

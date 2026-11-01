@@ -70,7 +70,12 @@ void main() {
     final int close = buf.buf.indexOf(r'$', at);
     final String tail = buf.buf.substring(close + 1);
     final int nl = tail.length - tail.replaceFirst(RegExp(r'^\n+'), '').length;
-    expect(nl, 1, reason: '公式之后只多**一行**（改前是 2 个换行）');
+    // ★ 口径（2026-11-01 用户复验）：k=3 = **一个"真行"的空行**（k=2 只是零高度的段距）。
+    expect(nl, 3, reason: '公式之后恰好一个真行空行（k=3）');
     expect(tail.contains('后'), isTrue);
+    // ★★ 用户实测的那条：**光标不许消失**
+    final Finder bars = find.byWidgetPredicate((Widget w) =>
+        w is Container && w.color == const Color(0xFF1E88E5));
+    expect(bars.evaluate().length, 1, reason: '回车之后光标必须画在新造出来的空行上');
   });
 }
