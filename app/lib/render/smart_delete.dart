@@ -615,6 +615,45 @@ SmartEdit _backspaceCore(CaretSiteTable t, int rel) {
   final _Span? wrap = _absorbFontOnlyWrapper(t, reg, obj, forward: false);
   if (wrap != null) return SmartEdit.remove(wrap.start, wrap.end, wrap.start);
   if (obj == null) return SmartEdit.none; // 同层左边什么都没有
+  // ★★★ 2026-11-01（用户实测 A）：**光标在对象外面（主行位点）时，退格要连基座一起删**。
+  //   现场：`f^{\prime}_{+}` 末尾退格只删了两个挂件，把基座 `f` 独自留下 —— 对象被劈成两半。
+  //   判据：位点 `path` 为空（不在任何挂件里）+ 要删的东西从 `^`/`_` 开始（= 只删到挂件）
+  //     ⇒ 把它的基座 token 一起带上（单字符 / `\cmd` / `{…}` 组三种形态）。
+  //   ★ 脚本层位点（`x_2` 的 `2` 之后）不受影响 —— 那是 2026-10 用户拍板的「甲」。
+  if (s.path.isEmpty &&
+      obj.start < obj.end &&
+      (t.tex[obj.start] == '^' || t.tex[obj.start] == '_')) {
+    var p = obj.start - 1;
+    while (p >= 0 && t.tex[p] == ' ') {
+      p--;
+    }
+    var base = obj.start;
+    if (p >= 0) {
+      if (t.tex[p] == '}') {
+        var depth = 0;
+        for (var i = p; i >= 0; i--) {
+          if (t.tex[i] == '}') depth++;
+          if (t.tex[i] == '{') {
+            depth--;
+            if (depth == 0) {
+              base = i;
+              break;
+            }
+          }
+        }
+      } else if (RegExp(r'[A-Za-z]').hasMatch(t.tex[p])) {
+        while (p > 0 && RegExp(r'[A-Za-z]').hasMatch(t.tex[p - 1])) {
+          p--;
+        }
+        base = (p > 0 && t.tex[p - 1] == r'\') ? p - 1 : p;
+      } else {
+        base = p;
+      }
+    }
+    if (base < obj.start) {
+      return SmartEdit.remove(base, obj.end, base);
+    }
+  }
   // ★★★ 2026-10-24 **安全网**（用户实测"每次必坏"）：要删的那一项若是**纯语法**
   //   （定界符 `|` / 花括号 / `^` `_` / `\left` `\right` 这类），而光标左边紧贴着一个
   //   **普通字母** ⇒ 改删那个字母。
