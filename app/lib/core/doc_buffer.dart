@@ -11,10 +11,27 @@ import 'text_normalize.dart';
 /// 逆操作 = 在 `[start, start + inserted.length)` 把 [inserted] 换回 [removed]。
 class Edit {
   const Edit(this.start, this.end, this.removed, this.inserted,
-      {this.eol = false});
+      {this.eol = false,
+      this.caretBefore = -1,
+      this.caretAfter = -1,
+      this.anchorBefore = -1,
+      this.anchorAfter = -1});
 
   final int start;
   final int end;
+
+  /// ★★★ 2026-11-01（反馈 5 · R11）：**编辑前 / 编辑后的光标与选区锚点**。
+  ///
+  /// 为什么必须记（而不是算）：撤销原先只有一条推断
+  /// `caret = start + removed.length`（"被恢复区间的右缘"），
+  /// 它只在"编辑前光标正好停在区间右缘"时成立 —— 而 5 处"整篇 replace"
+  /// （面板插符号 / 自动展开 / 块类型 / 分页符）区间横跨全文 ⇒ 撤销后光标跳到**文末**
+  /// （实测：用户报的"Ctrl+Z 后光标跑到下一行"）。
+  /// ⇒ **撤销用记录、不靠推断**；`-1` = 老数据/未记录，退回旧推断。
+  final int caretBefore;
+  final int caretAfter;
+  final int anchorBefore;
+  final int anchorAfter;
 
   /// 编辑前的原内容（= 当时 buf.substring(start, end)）
   final String removed;
@@ -323,7 +340,20 @@ class DocBuffer {
     //   补出来的那个 `\n` 由 `Edit.eol` 表达（撤销才精确），光标停在它前面。
     final String after = _buf.replaceRange(s, e, inserted);
     final bool eol = after.isNotEmpty && !after.endsWith('\n') && e == _buf.length;
-    final edit = Edit(s, e, removed, inserted, eol: eol);
+    // ★★★ 2026-11-01（R11）：**最小差分** —— 把 `[s, e)` 缩到"真正变化的那一段"。
+    //   为什么：5 处调用点是 `replace(0, 长度, 新全文)`（面板插符号 / 自动展开 /
+    //   块类型 / 分页符），区间横跨整篇 ⇒ ① 撤销的光标推断落到文末；
+    //   ② 紧接着打字会被 `_tryMerge` 的"连续打字"规则并进那条巨区间 ⇒ 一次 Ctrl+Z 撤太多。
+    //   缩到差分之后，这两件事都结构性消失（等价性：公共前后缀相同 ⇒ 两种写法结果一致）。
+    final (int rs, int re, String rRemoved, String rInserted) =
+        _minimalDiff(s, e, removed, inserted);
+    final int newLen = _buf.length - (e - s) + inserted.length + (eol ? 1 : 0);
+    final int caretAfter = (rs + rInserted.length).clamp(0, newLen);
+    final edit = Edit(rs, re, rRemoved, rInserted, eol: eol,
+        caretBefore: _caret.clamp(0, _buf.length),
+        caretAfter: caretAfter,
+        anchorBefore: _anchor.clamp(0, _buf.length),
+        anchorAfter: caretAfter);
     _applyForward(edit);
     // ★ 撤销分组：能并就并进栈顶那一条（栈长度不变 ⇒ Ctrl+Z 一步回一大段）
     final Edit? merged =
@@ -351,7 +381,11 @@ class DocBuffer {
         next.end == next.start) {
       return Edit(top.start, top.end, top.removed,
           '${top.inserted}${next.inserted}',
-          eol: top.eol || next.eol);
+          eol: top.eol || next.eol,
+          caretBefore: top.caretBefore,
+          caretAfter: next.caretAfter,
+          anchorBefore: top.anchorBefore,
+          anchorAfter: next.anchorAfter);
     }
     // ② 连续退格：这次删的范围正好紧贴在上一条的左端
     if (top.removed.isNotEmpty &&
@@ -360,16 +394,53 @@ class DocBuffer {
         next.inserted.isEmpty &&
         next.end == top.start) {
       return Edit(next.start, top.end, '${next.removed}${top.removed}', '',
-          eol: top.eol || next.eol);
+          eol: top.eol || next.eol,
+          caretBefore: top.caretBefore,
+          caretAfter: next.caretAfter,
+          anchorBefore: top.anchorBefore,
+          anchorAfter: next.anchorAfter);
     }
     return null;
+  }
+
+  /// 把一次替换缩到**真正变化的那一段**（公共前缀 / 公共后缀都不算变化）。
+  ///
+  /// ★ 2026-11-01（R11）：`replace(0, 全文长度, 新全文)` 的 5 个调用点靠它变成"局部编辑"。
+  /// 等价性：`[s,e)` 换成 [inserted] 与 `[s+p, e-q)` 换成 [inserted] 去掉公共前后缀 —— 结果同串。
+  static (int, int, String, String) _minimalDiff(
+      int s, int e, String removed, String inserted) {
+    final int maxP =
+        removed.length < inserted.length ? removed.length : inserted.length;
+    var p = 0;
+    while (p < maxP && removed.codeUnitAt(p) == inserted.codeUnitAt(p)) {
+      p++;
+    }
+    var q = 0;
+    while (q < maxP - p &&
+        removed.codeUnitAt(removed.length - 1 - q) ==
+            inserted.codeUnitAt(inserted.length - 1 - q)) {
+      q++;
+    }
+    return (
+      s + p,
+      e - q,
+      removed.substring(p, removed.length - q),
+      inserted.substring(p, inserted.length - q),
+    );
   }
 
   void _applyForward(Edit e) {
     _buf = _buf.replaceRange(e.start, e.end, e.inserted);
     // ★ 补出来的行终止符挂在**文末**；光标停在它前面（否则每打一个字就跳到下一行）
     if (e.eol) _buf = '$_buf\n';
-    _setCaretRaw(e.start + e.inserted.length);
+    // ★★ 2026-11-01（R11）：**重做**恢复"编辑后的光标/选区"（记录优先，推断兜底）
+    if (e.caretAfter >= 0) {
+      _caret = e.caretAfter.clamp(0, _buf.length);
+      _anchor =
+          (e.anchorAfter >= 0 ? e.anchorAfter : e.caretAfter).clamp(0, _buf.length);
+    } else {
+      _setCaretRaw(e.start + e.inserted.length);
+    }
   }
 
   void _applyBackward(Edit e) {
@@ -378,7 +449,14 @@ class DocBuffer {
       _buf = _buf.substring(0, _buf.length - 1);
     }
     _buf = _buf.replaceRange(e.start, e.start + e.inserted.length, e.removed);
-    _setCaretRaw(e.start + e.removed.length);
+    // ★★ 2026-11-01（R11）：**撤销**恢复"编辑前的光标/选区" —— 不靠"区间右缘"推断
+    if (e.caretBefore >= 0) {
+      _caret = e.caretBefore.clamp(0, _buf.length);
+      _anchor = (e.anchorBefore >= 0 ? e.anchorBefore : e.caretBefore)
+          .clamp(0, _buf.length);
+    } else {
+      _setCaretRaw(e.start + e.removed.length);
+    }
   }
 
   void _setCaretRaw(int offset) {
