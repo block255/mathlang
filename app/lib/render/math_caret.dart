@@ -1,4 +1,4 @@
-// 数语引擎 · 数学段里的**光标**：零尺寸锚点 + 自绘竖条（高度**随当地那一行自适应**）
+﻿// 数语引擎 · 数学段里的**光标**：零尺寸锚点 + 自绘竖条（高度**随当地那一行自适应**）
 //
 // ★★ 为什么不用引擎自带的 `\cursor{}`（2026-10-15 晚用户实测后定）：
 //   引擎的 `CursorNode` 是一根 **1.5 × (0.875 × 字号)** 的实心竖条，它**真的参与排版**。
@@ -140,6 +140,10 @@ class _MathWithCaretState extends State<MathWithCaret> {
   /// ★ 测试钩子（U3 守卫读它）：**这一帧真正算出来的竖条矩形**（本组件坐标系）
   @visibleForTesting
   Rect? get debugCaretBar => _bar;
+
+  /// 边界刻度（§6.5「甲」）——守卫用：**不许与竖条重叠**（重叠就会把光标盖成淡色）。
+  @visibleForTesting
+  Rect? get debugTick => _tick;
 
   /// ★ 测试钩子（批 19）：这一帧算出来的**空槽/格框垫子**（含"当前格"的格框）
   @visibleForTesting
@@ -333,11 +337,19 @@ class _MathWithCaretState extends State<MathWithCaret> {
         //   ⇒ 用户看得见"公式的边界在哪"（竖条是插入点，刻度是边界）。
         //   ★ 只在这两格出现、离开即消失（**不常驻、不包围**）—— 过闸表 §7.2 的允许形态。
         //   ★ 画在外侧（`caretWidth + 1.5`）⇒ 不与竖条重叠。
+        // ★★★ 2026-11-01（用户实测"光标是淡色的 / 看不见"）：**刻度不许压在竖条上**。
+        //   批 10 把"块边界格"的**竖条**挪到了块边外（`-(caretWidth+1.5)` / `w+1.5`），
+        //   而刻度这里是按**同一个 x** 画的（注释还写着"画在外侧 ⇒ 不与竖条重叠" ——
+        //   那句话在批 10 之后就过期了）。结果：刻度（1px 淡色）后画，**盖住**竖条（1.5px 深色）
+        //   ⇒ 屏幕上看不到深色光标，只看到一根淡色细条；像素扫描实测：整个窗口里
+        //   `#1E88E5` **0 个像素**。
+        //   ⇒ 刻度再往外让 3px：两者错开，竖条恢复可见（刻度被裁掉也不影响功能）。
+        const double kTickGap = 3.0;
         final double w =
             (root is RenderBox && root.hasSize) ? root.size.width : 0.0;
         final double x = widget.caretEdge == CaretEdge.before
-            ? -(widget.caretWidth + 1.5)
-            : w + 1.5;
+            ? -(widget.caretWidth + 1.5 + kTickGap)
+            : w + 1.5 + kTickGap;
         tick = Rect.fromLTWH(x, bar.top, 1.0, bar.height);
       }
     }
@@ -1122,3 +1134,4 @@ const List<String> kCjkFallback = <String>[
   'Segoe UI Symbol',
   'Segoe UI Emoji',
 ];
+
