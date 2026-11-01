@@ -1,4 +1,4 @@
-// 数语引擎 · 编辑面（S3-2）
+﻿// 数语引擎 · 编辑面（S3-2）
 //
 // 架构（2026-10-14 输入层重做后；依据见 notes/design/位点与结构导航.md §11.6 / §11.7 / §11.13 后的修订块）：
 //
@@ -23,6 +23,7 @@ import '../core/doc_buffer.dart';
 import '../core/doc_settings.dart';
 import '../core/text_normalize.dart';
 import '../lang/auto_expand.dart';
+import 'blank_runs.dart';
 import '../lang/block_ops.dart';
 import '../lang/break_split.dart';
 import '../lang/clipboard_slice.dart';
@@ -424,7 +425,15 @@ class EditViewState extends State<EditView> {
     //   "多行围栏里的单个 `\n` 合法"而**插进 tex 内部**（`\frac{a\n}{b}`）。
     //   ⇒ 这里显式指定落点（`closeEnd` = 收尾 `$` / `$$` 之后那一格）。
     final MathRegion? enterRegion = mathRegionAt(s, c);
-    if (enterRegion != null && c != ls && c != le) {
+    // ★★★ 2026-11-01（用户实测"一次 Enter 插两行"）：**行间块最后一行行末也算"结构内部"**。
+    //   原判据 `c != le` 把"公式末尾（`)` 之后、收尾 `$$` 之前）"排除在外 ——
+    //   而用户按 Enter 的正是那里 ⇒ 掉进通用路径 ⇒ 载荷 `\n\n` 被 `insert_guard`
+    //   整体推到公式之后 ⇒ 一次按键多两行（实测：`$$` 后的换行数 2 → **4**）。
+    final bool displayTexEnd = enterRegion != null &&
+        enterRegion.isDisplay &&
+        c == le &&
+        c >= enterRegion.contentStart;
+    if (enterRegion != null && ((c != ls && c != le) || displayTexEnd)) {
       // ★★ 判据必须窄：**行内**公式只有"在结构内部"才走这里 ——
       //   平铺原子之间按 Enter 是既有口径（就地断栅栏，`enter_inline_math_test` 钉着），
       //   第一版把行内全吃掉 ⇒ 那条守卫当场红。
@@ -460,7 +469,16 @@ class EditViewState extends State<EditView> {
           }
           final int need = (3 - k).clamp(1, 3);
           _buf.replace(at, at, '\n' * need);
-          _buf.setCaret((at + 2).clamp(0, _buf.length));
+          // ★★★ 2026-11-01（用户实测"Enter 之后光标消失 / 暗光标"）：落点**问行表**，
+          //   不再手算 `at + 2`。实测：`at+2` 落在**段落分隔符**那一格 —— 零高度、
+          //   不是行、没有主人（块不画、空行槽也让位）⇒ 屏幕上一根竖条都没有。
+          //   行表只有一处：`blankRunAfter`（行首表）＋ `blankRowStart`（哪几个才是行）。
+          final List<int> blanks = blankRunAfter(_buf.buf, at);
+          final int skip = blankRowStart(atDocStart: false, atDocEnd: false);
+          final int target = blanks.length > skip
+              ? blanks[skip]
+              : (blanks.isEmpty ? at : blanks.last);
+          _buf.setCaret(target.clamp(0, _buf.length));
         });
         return;
       }
@@ -1812,4 +1830,5 @@ class EditViewState extends State<EditView> {
     );
   }
 }
+
 
