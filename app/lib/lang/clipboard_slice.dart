@@ -172,7 +172,64 @@ int _braceDepth(String s) {
   final ({int start, int end}) head = _completeArgs(doc, s, e, sp.end);
   final ({int start, int end}) tail =
       _completeTrailingCommand(doc, head.start, head.end, sp.end);
-  return _balanceWithin(doc, tail.start, tail.end, sp);
+  // ★★★ 2026-11-01（反馈 16 · R6）：**环境（`\begin{cases}…\end{cases}`）也要自洽**。
+  //   实测动因：用户从 `\begin{cases}` 选到 `y=3tsint` 松手（尾巴没带上 `\end{cases}`）
+  //   ⇒ 旧代码原样吐出 `$\begin{cases}x=3tcost\\⏎y=3tsint$`（不配平）⇒ 粘到行内就是
+  //   `[公式不完整]`。旧的自洽化只认 `\frac{a}` 这种**命令参数**，不认环境。
+  final ({int start, int end}) env =
+      _completeEnvs(doc, tail.start, tail.end, sp.end);
+  return _balanceWithin(doc, env.start, env.end, sp);
+}
+
+/// 片段里有**没闭合的 `\begin{X}`** ⇒ 把结尾扩到那个 `\end{X}` 之后（最多到 [limit]）。
+///
+/// 判据：按出现顺序压栈，走到片段末尾时栈里还剩下的 `\begin` 就是"缺尾巴"的；
+/// 继续往后扫，直到栈空 —— 中途出现的**别的**环境照旧压栈（嵌套要一起补齐）。
+/// ★ 只做"往后补"这一向；"选区从环境中间起"（开头多出 `\end`）另行处理（台账登记）。
+({int start, int end}) _completeEnvs(String doc, int s, int e, int limit) {
+  final RegExp rx = RegExp(r'\\(begin|end)\s*\{([A-Za-z*]+)\}');
+  final List<({int start, int end, bool isBegin, String name})> toks =
+      <({int start, int end, bool isBegin, String name})>[];
+  for (final Match m in rx.allMatches(doc.substring(0, limit.clamp(0, doc.length)))) {
+    toks.add((
+      start: m.start,
+      end: m.end,
+      isBegin: m.group(1) == 'begin',
+      name: m.group(2)!,
+    ));
+  }
+  final List<String> stack = <String>[];
+  // ★ 只认**片段自己打开**的环境：起点之前就有的 `\begin{X}` 不算 ——
+  //   否则"选区落在分段块某一格里"也会被当成"缺尾巴"而扩到 `\end{cases}`，
+  //   删除就会把围栏拆坏（守卫 `delete_cross_math_test`「选区落在分段块内部」抓到过）。
+  var i = 0;
+  while (i < toks.length && toks[i].start < s) {
+    i++;
+  }
+  while (i < toks.length && toks[i].start < e) {
+    final t = toks[i];
+    if (t.isBegin) {
+      stack.add(t.name);
+    } else if (stack.isNotEmpty && stack.last == t.name) {
+      stack.removeLast();
+    }
+    i++;
+  }
+  if (stack.isEmpty) return (start: s, end: e);
+  var end = e;
+  while (stack.isNotEmpty && i < toks.length) {
+    final t = toks[i];
+    if (t.isBegin) {
+      stack.add(t.name);
+    } else if (stack.last == t.name) {
+      stack.removeLast();
+      end = t.end;
+    }
+    i++;
+  }
+  // 补不齐（跑到 math span 尽头还没闭合）⇒ 原样返回，让上层按"落单"处理
+  if (stack.isNotEmpty) return (start: s, end: e);
+  return (start: s, end: end);
 }
 
 /// 片段**末尾**正好停在一个结构命令后面（`x+\sqrt`）⇒ 把它的参数组补进来。
