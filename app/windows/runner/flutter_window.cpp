@@ -1,8 +1,11 @@
 #include "flutter_window.h"
 
+#include <commctrl.h>
 #include <fstream>
 #include <optional>
 #include <string>
+
+#pragma comment(lib, "comctl32.lib")  // SetWindowSubclass
 
 #include "flutter/generated_plugin_registrant.h"
 
@@ -29,6 +32,20 @@ void LogKeyMessage(const char* tag, UINT message, WPARAM wparam,
     << " lparam=" << static_cast<long long>(lparam) << "\n";
 }
 
+// Alt+digit beeps even though the framework handles the key: the beep comes from
+// DefWindowProc's WM_SYSCHAR path, and key messages never reach the parent
+// MessageHandler (they go to the FLUTTERVIEW child window -- proved by an
+// instrumented build that logged nothing). So replace DefWindowProc on that
+// child for this one case only.
+LRESULT CALLBACK SwallowAltDigitBeep(HWND hwnd, UINT message, WPARAM wparam,
+                                     LPARAM lparam, UINT_PTR id,
+                                     DWORD_PTR ref) {
+  if (message == WM_SYSCHAR && wparam >= '0' && wparam <= '9') {
+    return 0;
+  }
+  return DefSubclassProc(hwnd, message, wparam, lparam);
+}
+
 }  // namespace
 
 FlutterWindow::FlutterWindow(const flutter::DartProject& project)
@@ -53,6 +70,11 @@ bool FlutterWindow::OnCreate() {
   }
   RegisterPlugins(flutter_controller_->engine());
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
+
+  if (HWND view =
+          ::FindWindowEx(GetHandle(), nullptr, L"FLUTTERVIEW", nullptr)) {
+    ::SetWindowSubclass(view, SwallowAltDigitBeep, 1, 0);
+  }
 
   flutter_controller_->engine()->SetNextFrameCallback([&]() {
     this->Show();
