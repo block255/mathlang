@@ -2,11 +2,8 @@
 
 #include <flutter/generated_plugin_registrant.h>
 
-#include <cstdio>
 #include <cstring>
-#include <fstream>
 #include <optional>
-#include <string>
 
 namespace {
 
@@ -15,50 +12,30 @@ namespace {
 //
 // The seam matters. The beep is produced AFTER the engine has already seen the
 // character: the engine reads WM_SYSCHAR (that is how the deferred key event for
-// Alt+digit is dispatched -- the shortcut works today), then passes the very
+// Alt+digit is dispatched -- the shortcut works that way), then passes the very
 // same message on to DefWindowProcW, whose default handling plays the system
 // beep. Swallowing the message earlier -- subclassing the FLUTTERVIEW child,
 // tried on 2026-11-01 -- also takes the character away from the engine, and the
 // shortcut dies with it. The only correct seam is between the engine and
 // DefWindowProc, and the engine reaches DefWindowProc through the import table
-// of flutter_windows.dll. So we replace those two imports and forward the rest
-// untouched.
+// of flutter_windows.dll. So we replace that one import and forward everything
+// else untouched.
 //
-// Failure mode is a no-op: if an import cannot be found (say, after a Flutter
+// Failure mode is a no-op: if the import cannot be found (say, after a Flutter
 // SDK upgrade) nothing gets patched, the app behaves exactly as before, and the
 // beep simply comes back.
+//
+// Measured on 2026-11-01: only WM_SYSCHAR (0x0106) actually reaches
+// DefWindowProcW for Alt+digit -- the engine consumes the key messages itself.
+// The key messages are still listed below because on another Windows build the
+// default handling could be the one that beeps, and swallowing them here is
+// harmless: by the time we run, the engine has already forwarded them.
 // ---------------------------------------------------------------------------
 
 using DefWindowProcWFn = LRESULT(WINAPI*)(HWND, UINT, WPARAM, LPARAM);
-using MessageBeepFn = BOOL(WINAPI*)(UINT);
 
 DefWindowProcWFn g_real_def_window_proc = nullptr;
-MessageBeepFn g_real_message_beep = nullptr;
 
-std::string BeepLogPath() {
-  char exe[MAX_PATH] = {0};
-  GetModuleFileNameA(nullptr, exe, MAX_PATH);
-  std::string path(exe);
-  const size_t slash = path.find_last_of("\\/");
-  if (slash != std::string::npos) {
-    return path.substr(0, slash + 1) + "beep_log.txt";
-  }
-  return "beep_log.txt";
-}
-
-void LogBeep(const std::string& line, bool truncate = false) {
-  std::ofstream f(BeepLogPath().c_str(),
-                  truncate ? std::ios::trunc : std::ios::app);
-  if (!f) {
-    return;
-  }
-  f << line << "\n";
-}
-
-// Alt held + a digit. Covers the char message and the key messages, because we
-// do not know which of them the default procedures turn into a beep on this
-// Windows build; swallowing the key ones is harmless since the engine has
-// already forwarded them by the time we are called.
 bool IsAltDigitMessage(UINT message, WPARAM wparam) {
   if (message != WM_SYSCHAR && message != WM_SYSKEYDOWN &&
       message != WM_SYSKEYUP) {
@@ -73,27 +50,14 @@ bool IsAltDigitMessage(UINT message, WPARAM wparam) {
 LRESULT WINAPI HookDefWindowProcW(HWND hwnd, UINT message, WPARAM wparam,
                                   LPARAM lparam) {
   if (IsAltDigitMessage(message, wparam)) {
-    char buf[128];
-    snprintf(buf, sizeof(buf),
-             "swallow msg=0x%04X wparam=%lu (Alt+digit, no beep)",
-             static_cast<unsigned>(message),
-             static_cast<unsigned long>(wparam));
-    LogBeep(buf);
     return 0;
   }
   return g_real_def_window_proc(hwnd, message, wparam, lparam);
 }
 
-BOOL WINAPI HookMessageBeep(UINT /*type*/) {
-  LogBeep("swallow MessageBeep (no beep)");
-  return TRUE;
-}
-
 // Replaces one named import in |module|'s import address table.
-// Returns the previous target (nullptr when the import is not there) and sets
-// |where| to the imported-from DLL name for the log.
-void* PatchImport(HMODULE module, const char* func_name, void* replacement,
-                  std::string* where) {
+// Returns the previous target, or nullptr when the import is not there.
+void* PatchImport(HMODULE module, const char* func_name, void* replacement) {
   if (module == nullptr) {
     return nullptr;
   }
@@ -112,7 +76,8 @@ void* PatchImport(HMODULE module, const char* func_name, void* replacement,
     return nullptr;
   }
 
-  auto desc = reinterpret_cast<PIMAGE_IMPORT_DESCRIPTOR>(base + dir.VirtualAddress);
+  auto desc =
+      reinterpret_cast<PIMAGE_IMPORT_DESCRIPTOR>(base + dir.VirtualAddress);
   for (; desc->Name != 0; ++desc) {
     // Names live in OriginalFirstThunk; a bound import has none and cannot be
     // patched by name.
@@ -144,49 +109,23 @@ void* PatchImport(HMODULE module, const char* func_name, void* replacement,
                        &ignored);
       ::FlushInstructionCache(::GetCurrentProcess(), &thunk->u1.Function,
                               sizeof(ULONG_PTR));
-      if (where != nullptr) {
-        *where = reinterpret_cast<const char*>(base + desc->Name);
-      }
       return original;
     }
   }
   return nullptr;
 }
 
-// TEMPORARY DIAGNOSTIC (2026-11-01): beep_log.txt next to the .exe records
-// whether the patch was installed and which message was swallowed, so a build
-// that still beeps can be diagnosed without another round of guessing.
-// Remove this logging (and the log name) once the user confirms silence.
-void InstallAltDigitBeepMute() {
+void MuteAltDigitBeep() {
   HMODULE engine = ::GetModuleHandleW(L"flutter_windows.dll");
   if (engine == nullptr) {
-    LogBeep("patch: flutter_windows.dll not loaded -- nothing patched",
-            /*truncate=*/true);
     return;
   }
-  LogBeep("patch: target = flutter_windows.dll", /*truncate=*/true);
-
-  std::string where;
   void* original = PatchImport(engine, "DefWindowProcW",
-                               reinterpret_cast<void*>(&HookDefWindowProcW),
-                               &where);
+                               reinterpret_cast<void*>(&HookDefWindowProcW));
   if (original != nullptr) {
     // Assigned before any window message can be dispatched again: we are inside
     // OnCreate, which runs while this thread is still handling WM_CREATE.
     g_real_def_window_proc = reinterpret_cast<DefWindowProcWFn>(original);
-    LogBeep("patch DefWindowProcW: ok (imported from " + where + ")");
-  } else {
-    LogBeep("patch DefWindowProcW: NOT FOUND -- beep stays, behaviour unchanged");
-  }
-
-  where.clear();
-  original = PatchImport(engine, "MessageBeep",
-                         reinterpret_cast<void*>(&HookMessageBeep), &where);
-  if (original != nullptr) {
-    g_real_message_beep = reinterpret_cast<MessageBeepFn>(original);
-    LogBeep("patch MessageBeep: ok (imported from " + where + ")");
-  } else {
-    LogBeep("patch MessageBeep: NOT FOUND -- direct beeps stay");
   }
 }
 
@@ -216,7 +155,7 @@ bool FlutterWindow::OnCreate() {
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
   // Alt+digit: keep the shortcut, drop the beep. See the block comment above.
-  InstallAltDigitBeepMute();
+  MuteAltDigitBeep();
 
   flutter_controller_->engine()->SetNextFrameCallback([&]() {
     this->Show();
