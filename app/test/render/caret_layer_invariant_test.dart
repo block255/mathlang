@@ -117,4 +117,43 @@ void main() {
     ];
     _expectSameLevel(bars, <String>['公式首', '末尾']);
   });
+
+  testWidgets('⑤ 行内并列：公式首 / 之间 / 行尾 必须同层', (WidgetTester tester) async {
+    final DocBuffer buf = await _pump(tester, "\$f'_{-}f'_{-}\$");
+    final int s = buf.buf.indexOf("f'");
+    final int mid = s + "f'_{-}".length;
+    final int end = mid + "f'_{-}".length;
+    final List<Rect?> bars = <Rect?>[
+      await _at(tester, buf, s),
+      await _at(tester, buf, mid),
+      await _at(tester, buf, end),
+    ];
+    _expectSameLevel(bars, <String>['公式首', '两对象之间', '行尾']);
+  });
+
+  testWidgets('⑥ 前后有正文：三处必须同层', (WidgetTester tester) async {
+    final DocBuffer buf = await _pump(tester, "甲\$f'_{-}f'_{-}\$乙");
+    final int s = buf.buf.indexOf("f'");
+    final int mid = s + "f'_{-}".length;
+    final int end = buf.buf.indexOf('\$', s); // 收尾 `$` = 内容末尾
+    final List<Rect?> bars = <Rect?>[
+      await _at(tester, buf, s),
+      await _at(tester, buf, mid),
+      await _at(tester, buf, end),
+    ];
+    _expectSameLevel(bars, <String>['公式首', '两对象之间', '内容末']);
+  });
+
+  testWidgets('⑦ 两对象之间隔一个空格：三处必须同层', (WidgetTester tester) async {
+    final DocBuffer buf = await _pump(tester, "\$f'_{-} f'_{-}\$");
+    final int s = buf.buf.indexOf("f'");
+    final int mid = s + "f'_{-}".length;
+    final int end = buf.buf.lastIndexOf('}') + 1; // 第二个对象的收尾 `}`
+    final List<Rect?> bars = <Rect?>[
+      await _at(tester, buf, s),
+      await _at(tester, buf, mid),
+      await _at(tester, buf, end),
+    ];
+    _expectSameLevel(bars, <String>['公式首', '两对象之间', '内容末']);
+  });
 }
