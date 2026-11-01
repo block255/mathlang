@@ -459,6 +459,35 @@ NeutralPoint neutralPoint(String tex, int rel) {
     return NeutralPoint(wrapped, a + 1, (start: a, end: end));
   }
 
+  // ①b ★★★ 2026-11-01（用户实测"光标闪烁影响排版"）：位点之后紧跟**撇号**。
+  //
+  //   `'` 在 TeX 里是 `^{\prime}` 的语法糖 —— 它**也是脚本**。原来只有 ① 认 `^`/`_`，
+  //   于是 `f|'_{-}` 这一格就地注入 ⇒ `f\textcolor{…}{\rule{0pt}{0pt}}'_{-}` ⇒
+  //   撇**改绑到那个零尺寸盒**上（`f` 不再拥有它）⇒ 版面变宽 1.56px、闪烁时来回抖
+  //   （实测 `f'_{-}` 亮 20.5 / 灭 18.9）。
+  //   修法：与 ① 同一条思路 —— 撇没有"组"可钻，就把注入点挪到**整个脚本串之后**
+  //   （连续撇 + 紧跟的 `^`/`_` 脚本，含它们的组/裸参数）。那里注入是结构中性的。
+  if (k < tex.length && tex[k] == "'") {
+    var j = k;
+    while (j < tex.length && tex[j] == "'") {
+      j++;
+    }
+    // 再把紧跟的 `^` / `_` 脚本一起跳过（`f'_{-}` 的情形）
+    while (true) {
+      var m = j;
+      while (m < tex.length && tex[m] == ' ') {
+        m++;
+      }
+      if (m >= tex.length || (tex[m] != '^' && tex[m] != '_')) break;
+      var a = m + 1;
+      while (a < tex.length && tex[a] == ' ') {
+        a++;
+      }
+      j = _bareArgEnd(tex, a);
+    }
+    return NeutralPoint(tex, j, null);
+  }
+
   // ② 位点紧跟在 `^` / `_` 之后（**裸参数**的起点）
   var p = r - 1;
   while (p >= 0 && tex[p] == ' ') {
