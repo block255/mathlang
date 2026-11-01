@@ -78,6 +78,19 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
         return 0;
       }
       break;
+    case WM_SYSKEYDOWN:
+    case WM_SYSKEYUP:
+      // Swallowing WM_SYSCHAR alone was not enough (user still heard the beep),
+      // so the mnemonic path is stopped one step earlier: while Alt is held the
+      // key was ALREADY forwarded to the framework by HandleTopLevelWindowProc
+      // above (the Alt+1..8 shortcut keeps working), and from here we only deny
+      // DefWindowProc its menu-mnemonic handling -- that is what beeps.
+      if ((GetKeyState(VK_MENU) & 0x8000) != 0 &&
+          wparam >= static_cast<WPARAM>('0') &&
+          wparam <= static_cast<WPARAM>('9')) {
+        return 0;
+      }
+      break;
   }
 
   return Win32Window::MessageHandler(hwnd, message, wparam, lparam);

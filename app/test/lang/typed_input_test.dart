@@ -20,12 +20,12 @@ void main() {
   group('① 反斜杠不许手打', () {
     test('★ 单个 `\\` ⇒ 丢掉（不进缓冲区）', () {
       expect(filterTypedText('\\'), isNull,
-          reason: '★ 改前：`\` 会插进 tex ⇒ 整块公式变 [公式不完整]');
+          reason: r'★ 改前：一个反斜杠会插进 tex ⇒ 整块公式变 [公式不完整]');
     });
 
     test('普通字符 / 多字符载荷照旧', () {
       for (final String t in <String>['a', '甲', ' ', r'\frac', r'x\y', '\n']) {
-        expect(filterTypedText(t), t, reason: '「$t」不该被挡');
+        expect(filterTypedText(t), t, reason: r'「' '$t' r'」不该被挡');
       }
     });
   });

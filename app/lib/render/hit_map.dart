@@ -439,14 +439,24 @@ List<Rect> selectionBands({
   //   极少数盒**连"就近归属"都拿不到组**（配对算法在这类紧凑结构上会漏），
   //   于是无论怎么挑都轮不到它 ⇒ 视觉上就是"夹在两个蓝块中间的一个白字"。
   //   兜底：**紧邻已选中盒的墨迹盒**跟着一起铺（选区本来就是连续的字符区间，
-  //   不可能"选了两个邻居却漏掉中间这一个"）。只传播一轮，避免越界扩大选区。
+  //   不可能"选了两个邻居却漏掉中间这一个"）。
+  //
+  // ★★★ 2026-11-01（反馈 19：拖选分子却把分母一起涂上）—— 这条兜底有两个洞：
+  //   ① **"只传播一轮"其实会连锁**：`picked[i]` 在同一次循环里被改，后面 i+1 就看见它了
+  //      ⇒ 只要分子与分母在**扫描顺序**上相邻（引擎渲染顺序 ≠ 源码顺序，分式正是这种），
+  //      选中分子就会顺着索引把整条分母一路染色（实测：11 条底色，跨 4 个视觉行）；
+  //   ② **有主的盒也参与传播** ⇒ 它的源区间明明在选区之外，却被邻居"带"进来。
+  //   ⇒ 现在：只给**没有组**的盒兜底（那才是这条规则的初衷），而且用**快照**判邻居
+  //     （真的只传播一轮）。
+  final List<bool> pickedBefore = List<bool>.of(picked);
   for (var i = 0; i < boxes.length; i++) {
     if (picked[i]) continue;
+    if (owner[i] != null) continue; // 有主的盒按自己的源区间判，不许被邻居带进来
     final LeafBox b = boxes[i];
     if (b.kind == LeafBoxKind.pad) continue;
     if ((b.text ?? '').isEmpty) continue;
-    final bool neighbour = (i > 0 && picked[i - 1]) ||
-        (i + 1 < boxes.length && picked[i + 1]);
+    final bool neighbour = (i > 0 && pickedBefore[i - 1]) ||
+        (i + 1 < boxes.length && pickedBefore[i + 1]);
     if (!neighbour) continue;
     picked[i] = true;
     out.add(b.rect);
