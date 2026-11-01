@@ -1594,7 +1594,7 @@ class EditViewState extends State<EditView> {
   void _applyDragAt(Offset pos, int anchor) {
     final State<StatefulWidget>? st = _docKey.currentState;
     if (st is! DocViewState) return;
-    final int? off = st.offsetAtGlobal(pos);
+    final int? off = st.offsetAtGlobalForDrag(pos);
     if (off == null) return; // 页边/页间空隙 ⇒ 停住（不跳）
     _buf.setSelection(anchor, off);
   }

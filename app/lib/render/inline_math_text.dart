@@ -50,6 +50,7 @@ class InlineMathText extends StatefulWidget {
     this.align = MathAlignMode.baseline,
     this.mathKeys,
     this.onMathTap,
+    this.onMathLayout,
     this.onMathRightClick,
     this.caretWidth = 1.5,
     this.caretColor,
@@ -111,6 +112,10 @@ class InlineMathText extends StatefulWidget {
   final void Function(ProjectionSegment seg, String renderTex, Offset globalPos,
       GlobalKey key)? onMathTap;
 
+  /// ★★★ 2026-11-01（反馈 19 续 · 拖选）：每次布局时把「这一段的 key + **渲染 tex**」登记出去。
+  ///   拖选走的是页面级几何（DocView.offsetAtGlobal），它拿不到段内坐标；
+  ///   有了这张登记表，拖选就能与点击**共用一个命中函数**（hitTestMathTex）。
+  final void Function(int absStart, GlobalKey key, String renderTex)? onMathLayout;
   /// ★★ 2026-10-18 晚（用户实测「行内矩阵右键一点反应没有」）：
   /// 行内公式上**右键**时回调，参数是**这段公式在文档里的绝对起点**
   /// （`_resizeEnvAt` 只要知道"落在哪一段里"就能认出环境族与当前行列）。
@@ -398,6 +403,12 @@ class _InlineMathTextState extends State<InlineMathText> {
       //   行间块（`doc_view` 那条）不传 ⇒ 保持 display 尺寸（它本来就是全尺寸）。
       inlineFractions: true,
     );
+    // ★★★ 2026-11-01（反馈 19 续 · 拖选）：**把"这一段公式的 key 与渲染 tex"登记出去**。
+    //   为什么：拖选走的是页面级几何（`DocView.offsetAtGlobal`），而它对文字段只有
+    //   "段落排版器"一条路 —— 段落里行内公式是被**整段删掉**的（`_plainTextOf`），
+    //   所以点在公式里只能吸到公式边界（实测：点 `D` 得到偏移 1 = `$`）。
+    //   有了这张登记表，拖选就能像点击一样走 `hitTestMathTex`。
+    widget.onMathLayout?.call(absStart, key, tex);
 
     // ★★ ⑤ 选区：`source` 里公式段是 `$tex$` ⇒ 内容从 `s.start + 1` 开始
     final ({int from, int to})? sel = _texSelection(s, s.tex.length);

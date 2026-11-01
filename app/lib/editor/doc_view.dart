@@ -679,6 +679,12 @@ class DocViewState extends State<DocView> {
     return out;
   }
   /// 本帧的光标（绝对偏移）—— S3-2
+  /// ★ 2026-11-01（拖选）：段起点绝对偏移 → （这段公式的 key, 渲染 tex）。
+  ///   由 InlineMathText.onMathLayout 在每次构建时填；_offsetAt 的文字分支用它
+  ///   走与点击同一个命中函数。
+  final Map<int, ({GlobalKey key, String renderTex})> _inlineMathInfo =
+      <int, ({GlobalKey key, String renderTex})>{};
+
   int? _caret;
 
   /// ★★ 2026-10-20（用户实测"导出的 PDF 里带着光标"）：导出期间临时隐藏光标与选区。
@@ -863,6 +869,68 @@ class DocViewState extends State<DocView> {
   ///
   /// 与点击走**同一套**判据（行间块 → 公式命中；文字 → 段落排版器），
   /// 这样"拖着走"给出的落点与"点一下"完全一致。
+  /// **拖选专用**的落点（与 `offsetAtGlobal` 的区别：先问行内公式自己的叶盒）。
+  ///
+  /// ★★★ 2026-11-01（反馈 19 续）：点击走公式自己的手势（`_onMathTap` → `hitTestMathTex`），
+  ///   而拖选走页面级几何 —— 文字段那条路只有"段落排版器"，而段落里行内公式是被
+  ///   **整段删掉**的（`_plainTextOf`）⇒ 点在公式内部只能吸到公式**边界**。
+  ///   实测（用户文档 T3）：在分子 `D(x)` 的 `D` 上按下得偏移 **1**（= `$`）、
+  ///   拖到分子末尾得偏移 **14**（= `\frac` 起点）⇒ 用户看到"想选一个 D，结果选中左边的 lim"、
+  ///   "想选分子，结果整个分式"。
+  ///
+  /// ★ 单独开一个方法而**不改 `offsetAtGlobal`**：后者也被**点击**用，而点击那条路
+  ///   已经有一整套钉住的口径（例如 `inline_left_band_test` ⑮⑰ 的"公式左缘外侧
+  ///   ±4px ⇒ 公式之前"）。拖选只借用它的**几何**，不该去动点击的判据。
+  int? offsetAtGlobalForDrag(Offset global) {
+    for (final _Unit u in _units) {
+      if (u.type == BlockType.math) continue; // 行间块由 `offsetAtGlobal` 自己就对了
+      final ProjectionSegment? hit = _inlineMathHit(u, global);
+      if (hit == null) continue;
+      return _inlineMathOffset(u, hit, global);
+    }
+    return offsetAtGlobal(global);
+  }
+
+  /// [global] 落在本单元哪一段**行内公式**的盒里？（精确盒，不加 inflate）
+  ProjectionSegment? _inlineMathHit(_Unit u, Offset global) {
+    final String text = _renderParts(u.type, u.source).text;
+    for (final ProjectionSegment seg in projectInline(text)) {
+      if (!seg.isMath) continue;
+      final RenderBox? mr = _inlineMathBox(u, seg);
+      if (mr == null) continue;
+      if (!(Offset.zero & mr.size).contains(mr.globalToLocal(global))) continue;
+      return seg;
+    }
+    return null;
+  }
+
+  RenderBox? _inlineMathBox(_Unit u, ProjectionSegment seg) {
+    final ({GlobalKey key, String renderTex})? info =
+        _inlineMathInfo[u.renderBase + seg.start];
+    final RenderObject? ro = info?.key.currentContext?.findRenderObject();
+    return ro is RenderBox && ro.hasSize ? ro : null;
+  }
+
+  /// 段内公式命中 → **绝对偏移**（与 `_onMathTap` 同一个函数、同一套吸附）
+  int? _inlineMathOffset(_Unit u, ProjectionSegment seg, Offset global) {
+    if (seg.tex.trim().isEmpty) return u.renderBase + seg.start;
+    final RenderBox? mr = _inlineMathBox(u, seg);
+    final ({GlobalKey key, String renderTex})? info =
+        _inlineMathInfo[u.renderBase + seg.start];
+    if (mr == null || info == null) return null;
+    final int? texRelRaw = _mathTapTexOffset(
+      tex: seg.tex,
+      renderTex: info.renderTex,
+      root: mr,
+      global: global,
+      displayStyle: false,
+      fontSize: _s.bodyFontSize,
+    );
+    if (texRelRaw == null) return null;
+    final int texRel = normalizeAlignedEqOffset(seg.tex, texRelRaw);
+    return u.renderBase + seg.start + buildCaretSites(seg.tex).snap(texRel).offset;
+  }
+
   int? offsetAtGlobal(Offset global) {
     for (final _Unit u in _units) {
       final RenderBox? box = _unitBoxes[u.id];
@@ -1503,6 +1571,16 @@ class DocViewState extends State<DocView> {
     final void Function(int absOffset)? onMathRight = interactive
         ? (int at) => widget.onEnvResizeRequest?.call(at)
         : null;
+    // ★★★ 2026-11-01（反馈 19 续 · 拖选）：**把每段行内公式的 key 与渲染 tex 登记下来**。
+    //   拖选走 `offsetAtGlobal`（页面级几何），而它对文字段只有"段落排版器"一条路 ——
+    //   段落里行内公式被整段删掉（`_plainTextOf`）⇒ 点在公式里只能吸到公式**边界**
+    //   （实测：在 `D` 上按下得偏移 1 = `$`；拖到分子末尾得分式起点 14）。
+    //   有了这张表，`_offsetAt` 的文字分支就能像点击一样走 `hitTestMathTex`。
+    final void Function(int, GlobalKey, String)? onMathLayout = interactive
+        ? (int absStart, GlobalKey k, String rt) {
+            _inlineMathInfo[absStart] = (key: k, renderTex: rt);
+          }
+        : null;
 
     switch (u.type) {
       case BlockType.heading1:
@@ -1526,7 +1604,7 @@ class DocViewState extends State<DocView> {
           // ★★ 2026-10-20（T-C 实测 F16）：导出抓图时**不画任何编辑辅助**
           //   （空槽虚线框 / 当前槽淡蓝底 / 光标竖条 / 选区底块）——它们不是文档内容。
           showEditingAids: !_hideForCapture,
-          onMathTap: onMathTap,
+          onMathTap: onMathTap, onMathLayout: onMathLayout,
           onMathRightClick: onMathRight,
           textStyle: TextStyle(
             fontFamilyFallback: kCjkFallback,
@@ -1558,7 +1636,7 @@ class DocViewState extends State<DocView> {
                 selEnd: selTo,
                 composingText: composing,
                 mathFontSize: body,
-                onMathTap: onMathTap,
+                onMathTap: onMathTap, onMathLayout: onMathLayout,
           onMathRightClick: onMathRight,
                 textStyle: base,
               ),
@@ -1583,7 +1661,7 @@ class DocViewState extends State<DocView> {
             selEnd: selTo,
             composingText: composing,
             mathFontSize: body,
-            onMathTap: onMathTap,
+            onMathTap: onMathTap, onMathLayout: onMathLayout,
           onMathRightClick: onMathRight,
             textStyle: base.copyWith(color: Colors.black54),
           ),
@@ -1816,7 +1894,7 @@ class DocViewState extends State<DocView> {
           selEnd: selTo,
           composingText: composing,
           mathFontSize: body,
-          onMathTap: onMathTap,
+          onMathTap: onMathTap, onMathLayout: onMathLayout,
           onMathRightClick: onMathRight,
           textStyle: base,
         );
