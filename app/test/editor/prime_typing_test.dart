@@ -83,4 +83,28 @@ void main() {
     final SmartEdit e = smartBackspace(buildCaretSites(fixed), fixed.length);
     expect(e.deletes, isTrue, reason: '末尾退格必须有东西可删');
   });
+
+  // ★ 2026-11-01（用户实测）：正文里先打 `f`，再点面板「导数撇」——
+  //   现状是插入一个**只有撇的数学段**（`f$'$`，撇无基座、f 还是正体）。
+  //   与打 `^` 是同一个诉求：**把光标前那串字母一起搬进公式**，撇挂为它的上标。
+  testWidgets(r"⑦ 正文里 f 后点「导数撇」⇒ 搬进公式，得到 $f^{\prime}$",
+      (WidgetTester t) async {
+    final (EditViewState st, DocBuffer buf) = await _mount(t, 'f');
+    buf.setCaret(1);
+    await t.pump();
+    st.insertSymbolTex("'", template: false);
+    await t.pump();
+    expect(buf.buf.trimRight(), r'$f^{\prime}$',
+        reason: '不许留"正体 f + 只有撇的公式段"（撇必须有基座，且 f 要进数学字体）');
+  });
+
+  // 同一诉求的第二种形态：`sin` 这种多字母也要整串搬（与打 `^` 的"搬家范围"同一条口径）。
+  testWidgets(r"⑧ 正文里 sin 后点「导数撇」⇒ 整串搬进公式", (WidgetTester t) async {
+    final (EditViewState st, DocBuffer buf) = await _mount(t, 'sin');
+    buf.setCaret(3);
+    await t.pump();
+    st.insertSymbolTex("'", template: false);
+    await t.pump();
+    expect(buf.buf.trimRight(), r'$sin^{\prime}$');
+  });
 }

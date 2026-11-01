@@ -693,7 +693,18 @@ class EditViewState extends State<EditView> {
     // ★★★ 2026-11-01（用户拍板 2）：面板「导数撇」也不写裸字符（与打字同一条口径）。
     if (tex == "'") {
       final MathRegion? mr0 = mathRegionAt(_buf.buf, _buf.caret);
-      if (mr0 != null) tex = _hasBaseAtom() ? r'^{\prime}' : r'{}^{\prime}';
+      if (mr0 != null) {
+        tex = _hasBaseAtom() ? r'^{\prime}' : r'{}^{\prime}';
+      } else {
+        // ★★★ 2026-11-01（用户实测）：**正文侧插入也要"搬家"** —— 与打 `^` 同一条通道。
+        //   否则得到"正体 f + 一个只有撇的数学段"（撇无基座），是同一格的两套标准。
+        final AutoExpand? ex =
+            planPrimeInsert(doc: _buf.buf, caret: _buf.caret);
+        if (ex != null) {
+          _applyAutoExpand(ex);
+          return;
+        }
+      }
     }
     // ★★★ 2026-11-01（反馈 7）：面板/快捷键连点「下标」不再套娃（判据见 [_scriptNestRefused]）。
     if (template && (tex == '^{}' || tex == '_{}') &&

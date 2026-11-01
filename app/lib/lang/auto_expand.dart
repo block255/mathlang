@@ -161,6 +161,16 @@ AutoExpand? planAutoExpand({
   return null;
 }
 
+/// 面板 / 快捷键插入**完整脚本载荷** —— 目前只有「导数撇」（`^{\prime}`）。
+///
+/// ★ 2026-11-01（用户实测）：正文里打 `f` 再点「导数撇」，原来得到
+///   **正体 `f` ＋ 一个只有撇的数学段**（撇没有基座）。与打 `^` 是同一个诉求：
+///   **把光标前那一串（字母数字 / 配对括号 / 紧邻公式）一起搬进数学段**，
+///   撇挂成它的上标 ⇒ `$f^{\prime}$`，一个对象、f 同时变成数学字体。
+///   ⇒ 直接复用 [_planScript] 的"搬家范围"，不另写一套判据。
+AutoExpand? planPrimeInsert({required String doc, required int caret}) =>
+    _planScript(doc, caret, '^', payload: r'^{\prime}');
+
 // ---------------------------------------------------------------------------
 // `/` → 分式
 // ---------------------------------------------------------------------------
@@ -194,7 +204,13 @@ bool atScriptContentEnd(String doc, int caret) {
 /// ★ 与 [_planFraction] 同一条判据：公式里用 `lexVisibleAtoms` 的源区间，
 ///   所以抽走基座不会留下半个花括号；正文里则把基座包进 `$…$`（同权：数学由内容产生）。
 /// ★ 空槽由 `firstSlotOffset` 定位 ⇒ 光标自动落进 `^{}` / `_{}` 里。
-AutoExpand? _planScript(String doc, int caret, String mark) {
+AutoExpand? _planScript(String doc, int caret, String mark,
+    {String? payload}) {
+  // ★ 2026-11-01（撇是脚本）：[payload] 非空 = **完整载荷**（如 `^{\prime}`），
+  //   此时 tex 里不再留空槽、光标停在载荷之后。与打 `^`/`_` 共用"搬家范围"这一条判据
+  //   （面板「导数撇」从正文侧插入走这里，见 `planPrimeInsert`）。
+  final String slot = payload ?? '$mark{}';
+  final bool asTemplate = payload == null;
   if (caret <= 0) return null;
   final MathRegion? r = mathRegionAt(doc, caret);
   if (r != null) {
@@ -242,9 +258,9 @@ AutoExpand? _planScript(String doc, int caret, String mark) {
       return AutoExpand(
         from: from,
         caret: from + obj.length, // 换掉的只有"整个对象"
-        tex: '{$obj}$mark{}',
+        tex: '{$obj}$slot',
         kind: AutoExpandKind.script,
-        template: true,
+        template: asTemplate,
         matched: mark,
       );
     }
@@ -269,9 +285,9 @@ AutoExpand? _planScript(String doc, int caret, String mark) {
     return AutoExpand(
       from: contentStart + last.start,
       caret: baseEnd,
-      tex: '$base$mark{}',
+      tex: '$base$slot',
       kind: AutoExpandKind.script,
-      template: true,
+      template: asTemplate,
       matched: mark,
     );
   }
@@ -304,9 +320,9 @@ AutoExpand? _planScript(String doc, int caret, String mark) {
       return AutoExpand(
         from: caret - 1,
         caret: caret - 1,
-        tex: '$mark{}',
+        tex: slot,
         kind: AutoExpandKind.script,
-        template: true,
+        template: asTemplate,
         matched: mark,
       );
     } else if (_isNumeratorChar(prev)) {
@@ -319,9 +335,9 @@ AutoExpand? _planScript(String doc, int caret, String mark) {
   return AutoExpand(
     from: from,
     caret: caret,
-    tex: '$base$mark{}',
+    tex: '$base$slot',
     kind: AutoExpandKind.script,
-    template: true,
+    template: asTemplate,
     matched: mark,
   );
 }

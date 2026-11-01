@@ -166,6 +166,36 @@ const Set<String> kOpaqueCommands = <String>{
 /// 上标 / 下标：它们**与基座同生共死**（`x^2` 在 TeX 里就是一个原子）
 bool _isScript(TexItem it) => it.command == '^' || it.command == '_';
 
+/// 是不是**一串撇**（`'` `''`）—— 口径「撇是脚本」：裸撇与 `^{\prime}` 等价。
+bool _isPrimeRun(String tex, int start, int end) {
+  if (end <= start || start < 0 || end > tex.length) return false;
+  for (var i = start; i < end; i++) {
+    if (tex[i] != "'") return false;
+  }
+  return true;
+}
+
+/// [rel] 左边那个对象的**基座起点**：跳过紧邻的脚本项与撇串，走到第一个基座项。
+///
+/// 只给"裸撇"用（见 [_backspaceCore] 里那条）。返回 `null` = 左边没有基座。
+int? _baseStartBefore(CaretSiteTable t, int rel) {
+  final TexRegion? reg = innermostRegionAt(t, rel);
+  if (reg == null) return null;
+  var idx = -1;
+  for (var i = 0; i < reg.items.length; i++) {
+    if (reg.items[i].end <= rel) idx = i;
+  }
+  if (idx < 0) return null;
+  var j = idx;
+  while (j >= 0 &&
+      (_isScript(reg.items[j]) ||
+          _isPrimeRun(t.tex, reg.items[j].start, reg.items[j].end))) {
+    j--;
+  }
+  if (j < 0) return null; // 左边只有挂件 / 撇，没有基座
+  return reg.items[j].start;
+}
+
 /// 该内容项在**它自己那一层**上是不是一个"可见对象"（而不是透明包装）。
 bool isOpaqueItem(TexItem it) =>
     _isScript(it) || (it.command != null && kOpaqueCommands.contains(it.command));
@@ -627,6 +657,11 @@ SmartEdit _backspaceCore(CaretSiteTable t, int rel) {
     while (p >= 0 && t.tex[p] == ' ') {
       p--;
     }
+    // ★ 2026-11-01（撇是脚本）：基座是**裸撇**时（`f'_{+}`）先跳过那串撇，
+    //   否则"一个基座 token"会取成撇本身 ⇒ 只剩 `f`。
+    while (p >= 0 && t.tex[p] == "'") {
+      p--;
+    }
     var base = obj.start;
     if (p >= 0) {
       if (t.tex[p] == '}') {
@@ -651,6 +686,20 @@ SmartEdit _backspaceCore(CaretSiteTable t, int rel) {
       }
     }
     if (base < obj.start) {
+      return SmartEdit.remove(base, obj.end, base);
+    }
+  }
+  // ★★★ 2026-11-01（口径「撇是脚本」）：**裸撇与 `^{\prime}` 必须等价**。
+  //   裸撇有两个来源：老文档/导入件、面板从正文侧插入（本批另一条修的是入口）。
+  //   现象（探针实测）：`f_{-}'` 的对象之后退格只删掉 `'`，把 `f_{-}` 留在原地 ——
+  //   同一个对象被劈成两半；而 `f_{-}^{\prime}` 同一位点是整块删 ⇒ 两套标准。
+  //   判据：主行位点 + 要删的东西**从一串撇开始**（`f'` / `f'_{+}` / `f_{-}'`）⇒ 走到它的基座一起删。
+  if (s.path.isEmpty &&
+      obj.start < obj.end &&
+      t.tex[obj.start] == "'" &&
+      obj.start < t.tex.length) {
+    final int? base = _baseStartBefore(t, obj.start);
+    if (base != null && base < obj.start) {
       return SmartEdit.remove(base, obj.end, base);
     }
   }

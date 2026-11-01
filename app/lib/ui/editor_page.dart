@@ -32,6 +32,7 @@ import '../core/version_ref.dart';
 import '../editor/edit_view.dart';
 import '../io/pdf_builder.dart';
 import '../lang/block_ops.dart';
+import '../lang/doc_normalize.dart';
 import '../lang/math_spans.dart';
 import '../lang/shortcut_registry.dart';
 import '../lang/smart_wrap.dart';
@@ -1202,8 +1203,11 @@ class EditorPageState extends State<EditorPage> {
   Future<bool> saveDocument({bool saveAs = false}) async {
     SaveOutcome out;
     try {
+      // ★ 2026-11-01：**落盘走"边界归一"**（只归一副本，不动缓冲区）——
+      //   否则 `.md` 里会同时存在裸撇 `f'` 与新写的 `^{\prime}`（AI/其它工具读到两种形态）。
+      //   `_savedText` 仍然记**缓冲区本身**：写出去的是它的规范形，内存内容没变。
       out = await _file.saveText(
-        text: _buf.buf,
+        text: normalizeDocument(_buf.buf),
         path: saveAs ? null : _docFile.path,
         suggestedName: _docFile.suggestedFileName(),
       );
@@ -1311,7 +1315,8 @@ class EditorPageState extends State<EditorPage> {
     SaveOutcome out;
     try {
       out = await _file.saveText(
-        text: _buf.buf,
+        // ★ 2026-11-01：导出的也是**规范形**（与保存同一口径：边界归一）。
+        text: normalizeDocument(_buf.buf),
         suggestedName: _docFile.suggestedFileName(ext: ext),
         extension: ext,
       );
