@@ -71,10 +71,17 @@ bool FlutterWindow::OnCreate() {
   RegisterPlugins(flutter_controller_->engine());
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
-  if (HWND view =
-          ::FindWindowEx(GetHandle(), nullptr, L"FLUTTERVIEW", nullptr)) {
-    ::SetWindowSubclass(view, SwallowAltDigitBeep, 1, 0);
-  }
+  // REVERTED 2026-11-01 22:5x: subclassing the FLUTTERVIEW child DOES kill the
+  // Alt+digit beep, but it also kills the Alt+1..8 shortcut (user report: the
+  // beep was gone AND the shortcut stopped inserting). Conclusion: the framework
+  // receives Alt+digit THROUGH WM_SYSCHAR -- swallowing it takes the feature with
+  // it. A working shortcut beats a silent one, so the subclass stays off.
+  // If we ever want both, the beep has to be suppressed at the DefWindowProc
+  // level after the framework has read the char (not possible from here).
+  //   if (HWND view =
+  //           ::FindWindowEx(GetHandle(), nullptr, L"FLUTTERVIEW", nullptr)) {
+  //     ::SetWindowSubclass(view, SwallowAltDigitBeep, 1, 0);
+  //   }
 
   flutter_controller_->engine()->SetNextFrameCallback([&]() {
     this->Show();
