@@ -28,9 +28,9 @@ Windows 10/11 64 位 · Flutter 桌面应用 · MIT
 
 | 包 | 适合谁 | 怎么用 |
 |---|---|---|
-| `mathlang-v1.1.0-win64-setup.zip` ★推荐 | 想装好、以后**不弹** SmartScreen | 解压 → 双击 `数语引擎\双击我安装数语引擎.cmd` |
-| `mathlang-v1.1.0-win64-portable.zip` | 想要绿色版（解压即用、不写系统目录） | 解压 → **先双击 `启动数语引擎.cmd`**（装一次证书） |
-| `mathlang-v1.1.0-x64.msix` | 只想装 MSIX | 先信任包里的 `.cer`，再双击 `.msix` |
+| `mathlang-v1.2.10-win64-setup.zip` ★推荐 | 想装好、以后**不弹** SmartScreen | 解压 → 双击 `数语引擎\双击我安装数语引擎.cmd` |
+| `mathlang-v1.2.10-win64-portable.zip` | 想要绿色版（解压即用、不写系统目录） | 解压 → **先双击 `启动数语引擎.cmd`**（装一次证书） |
+| `数语引擎-1.2.10-x64.msix` | 只想装 MSIX | 先信任包里的 `.cer`，再双击 `.msix` |
 
 安装那一步会弹**一次**管理员授权（把本软件的自签证书放进「受信任的根」）→ 点「是」⇒ 自动安装并打开。
 ★ 之后从桌面 / 开始菜单打开，**都不会再弹 SmartScreen**。
@@ -102,7 +102,7 @@ powershell -ExecutionPolicy Bypass -File scripts\pack_msix.ps1     # MSIX + 一�
 
 ## 状态
 
-版本 **1.1.0**，Windows 已可用；移动端在路线图里。
+版本 **1.2.10**，Windows 已可用；移动端在路线图里。
 
 ## English
 
@@ -117,7 +117,7 @@ powershell -ExecutionPolicy Bypass -File scripts\pack_msix.ps1     # MSIX + 一�
 Download the latest `mathlang-vX.Y.Z-win64-setup.zip` from [Releases](https://github.com/block255/mathlang/releases/latest),
 unzip, then run `数语引擎\双击我安装数语引擎.cmd` (one-time admin prompt to trust the self-signed certificate).
 
-Status: v1.1.0. Mobile is on the roadmap.
+Status: v1.2.10. Mobile is on the roadmap.
 
 ## 许可
 

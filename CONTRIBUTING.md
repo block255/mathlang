@@ -1,14 +1,14 @@
 # 贡献指南 · 数语引擎（mathlang）
 
 > Windows 桌面优先。规范的目标不是“流程好看”，而是让改动**可追溯、可验证、可交接**。
-> 当前版本：**1.1.0**。文档地图见 [`notes/README.md`](notes/README.md)；AI agent 的额外约束见 [`AGENTS.md`](AGENTS.md)。
+> 当前版本：**1.2.10+16**（已发布 1.2.10；本轮大优化完成后统一升 **1.3.0**）。文档地图见 [`notes/README.md`](notes/README.md)；AI agent 的额外约束见 [`AGENTS.md`](AGENTS.md)。
 
 ## 1. 先读什么
 
 - 用户视角：[`README.md`](README.md)
 - 文档索引与权威顺序：[`notes/README.md`](notes/README.md)
 - 现役待办：[`notes/后优化清单.md`](notes/后优化清单.md)
-- 最近交接：[`notes/handover/会话状态快照-20261024.md`](notes/handover/会话状态快照-20261024.md)
+- 最近交接：[`notes/handover/会话状态快照-20261101-下午.md`](notes/handover/会话状态快照-20261101-下午.md)
 
 ## 2. 环境与常用命令
 
