@@ -407,25 +407,34 @@ class EditViewState extends State<EditView> {
       _commitText('  \n', isEnter: true);
       return;
     }
-    // ★★★ 2026-11-01（反馈 2 · R10）：**行间公式块内部按 Enter ⇒ 块后一行**。
+    // ★★★ 2026-11-01（反馈 2 · R10）：**公式内部（行间 / 行内都算）按 Enter ⇒ 公式之后一行**。
     //
     // 实测病灶（真 EditView + 真 Enter）：光标在 `\frac{a}{b}` 的分子里时既不在行首也不在行末，
-    //   `_enterPayload` 给 `\n\n`，而 `insert_guard` 把这两个换行**整体推到块之后**
+    //   `_enterPayload` 给 `\n\n`，而 `insert_guard` 把这两个换行**整体推到公式之后**
     //   ⇒ 一次按键多出**两行**（`$$` 后 2 个换行变 4 个，实测数字）。
     //
+    // ★ 用户复验（2026-11-01）：先只做了 `isDisplay`，**行内公式里一模一样的两行**没被修到
+    //   ⇒ 判据扩到"任何数学段内部"（行内公式的结构槽同样不该长出两行）。
+    //
     // 口径（只读基准 1/3：Enter 每按一次、屏幕上多一行）：这一次按键的语义是
-    //   **"出到一个新行"**，不是"另起一段" ⇒ 在**块之后**插**一个** `\n`，
+    //   **"出到一个新行"**，不是"另起一段" ⇒ 在**公式之后**插**一个** `\n`，
     //   光标落到新行行首。★ 不能只把载荷改成 `\n` —— 那会被 `insert_guard` 判成
     //   "多行围栏里的单个 `\n` 合法"而**插进 tex 内部**（`\frac{a\n}{b}`）。
-    //   ⇒ 这里显式指定落点（`closeEnd` = 收尾 `$$` 之后那一格）。
+    //   ⇒ 这里显式指定落点（`closeEnd` = 收尾 `$` / `$$` 之后那一格）。
     final MathRegion? enterRegion = mathRegionAt(s, c);
-    if (enterRegion != null &&
-        enterRegion.isDisplay &&
-        c != ls &&
-        c != le) {
-      final int at = enterRegion.closeEnd.clamp(0, _buf.length);
-      _mutate(() => _buf.replace(at, at, '\n'));
-      return;
+    if (enterRegion != null && c != ls && c != le) {
+      // ★★ 判据必须窄：**行内**公式只有"在结构内部"才走这里 ——
+      //   平铺原子之间按 Enter 是既有口径（就地断栅栏，`enter_inline_math_test` 钉着），
+      //   第一版把行内全吃掉 ⇒ 那条守卫当场红。
+      final int relIn =
+          (c - enterRegion.contentStart).clamp(0, enterRegion.tex.length);
+      final bool inStructure =
+          buildCaretSites(enterRegion.tex).snap(relIn).path.isNotEmpty;
+      if (inStructure || enterRegion.isDisplay) {
+        final int at = enterRegion.closeEnd.clamp(0, _buf.length);
+        _mutate(() => _buf.replace(at, at, '\n'));
+        return;
+      }
     }
     final String payload = _enterPayload();
     // ★ 换行符插在**下一行行首**，光标才会落到"新造出来的那一行"上 —— 但**文末例外**：

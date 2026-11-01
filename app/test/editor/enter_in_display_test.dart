@@ -56,4 +56,21 @@ void main() {
     await t.pumpAndSettle();
     expect(_newlinesBetween(buf.buf, '后'), 3);
   });
+
+  testWidgets('**行内**公式的分式里按 Enter 也只多一行（用户 11-01 复验没修到的那条）',
+      (WidgetTester t) async {
+    final DocBuffer buf = DocBuffer('前\n文字 \$\\frac{a}{b}\$ 后\n');
+    await _mount(t, buf);
+    buf.setCaret(buf.buf.indexOf('{a}') + 1);
+    await t.pumpAndSettle();
+    await t.sendKeyEvent(LogicalKeyboardKey.enter);
+    await t.pumpAndSettle();
+    // 公式之后只该多**一个** `\n`（改前多两个）
+    final int at = buf.buf.indexOf(r'\frac');
+    final int close = buf.buf.indexOf(r'$', at);
+    final String tail = buf.buf.substring(close + 1);
+    final int nl = tail.length - tail.replaceFirst(RegExp(r'^\n+'), '').length;
+    expect(nl, 1, reason: '公式之后只多**一行**（改前是 2 个换行）');
+    expect(tail.contains('后'), isTrue);
+  });
 }
