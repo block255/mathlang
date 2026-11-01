@@ -529,6 +529,19 @@ class EditViewState extends State<EditView> {
     //   （`$左$` + 汉字 + `$右$`，汉字落文本层）；结构槽里 / 行间块里 ⇒ 接受数学字体。
     //   纯函数与自检在 `lang/break_split.dart`（那边的注释写全了判据与理由）。
     if (_splitInlineMathOnBreakChar(rawText)) return;
+    // ★★★ 2026-11-01（反馈 7 续 · **打字路径**）：Shift+- / Shift+6 的"打字即展开"也会套娃 ——
+    //   光标已经在下标里再打 `_` ⇒ `f_{-_{}}`（探针实测：planAutoExpand 给出 `tex=-_{}`）。
+    //   面板与快捷键两条已拦（见 `_scriptNestRefused`），这里是同一个判据的第三条入口。
+    if (rawText == '^' || rawText == '_') {
+      if (!_buf.hasSelection) {
+        final MathRegion? r0 = mathRegionAt(_buf.buf, _buf.caret);
+        if (r0 != null) {
+          final int rel0 =
+              (_buf.caret - r0.contentStart).clamp(0, r0.tex.length);
+          if (scriptInsertWouldNest(r0.tex, rel0, sup: rawText == '^')) return;
+        }
+      }
+    }
     // ★★ S4-c：**自动展开**（打字即渲染）先于插入守门人 —— 因为它是"改写用户刚打的那几个字符"，
     //   不是"往后插一段东西"。三条（`/`→分式、词触发、`>=`→`\ge`）都只对**单字符/终止符**生效，
     //   粘贴这种多字符载荷一律不参与（`planAutoExpand` 自己会拒）。
