@@ -1646,16 +1646,28 @@ class DocViewState extends State<DocView> {
         final double display = _s.effectiveDisplayFontSize;
         // ★★ §6.1.1（2026-10-18）：**空的公式块也要看得见**（同上，行内那份的理由）。
         //   行间块的内容被删光时，`renderMathTex('')` 是零尺寸 ⇒ 同理是个幽灵。
-        if (text.trim().isEmpty) {
+        //
+        // ★★★ 2026-11-01（用户拍板「甲」）：**"没有墨迹"也算空块** —— 把鬼抓出来。
+        //   现场（用户当场复现）：空行 → 点「行间公式」⇒ 空块（虚线小框、占一行高）
+        //   → **在里面打一个空格** ⇒ 内容成了 `\ ` ⇒ `text.trim()` 判不出空
+        //   ⇒ 虚线框消失 ⇒ 但它不画任何东西 ⇒ **0 高、隐形、光标卡在上下两行的缝里**。
+        //   ⇒ 判据从"真的一无所有"扩成"**没有任何会画墨迹的东西**"（`isInklessTex`）：
+        //     只剩间距（`\ ` `\quad` `\,` …）的块**照样画那个虚线小框**。
+        //   用户原话：「甲这个不叫代价，只能说叫把鬼抓出来了；抓出来的鬼我删掉不就行了」
+        //   ⇒ 代价（纯间距的留白块会显示成虚线框、并占一行高）被接受：那本来就是要露出来的东西。
+        //   ⚠️ 配套：这种块里按 ⌫ / Delete ⇒ **整块回收**（`math_nav._smartEditCore` 里的
+        //   `isInklessTex` 那一支），所以抓出来的鬼一次退格就能删掉。
+        final bool inkless = isInklessTex(text);
+        if (text.trim().isEmpty || inkless) {
           return Center(
             child: EmptyMathMark(
               width: display * 1.2,
               height: display * 1.1,
               // ★ 2026-11-01：不再有"共享格让给左边"（重叠在构造上已消失）
-            showCaret: blockShowsCaret(
-                caret: rawCaret,
-                acceptFrom: u.acceptFrom,
-                acceptTo: u.acceptTo),
+              showCaret: blockShowsCaret(
+                  caret: rawCaret,
+                  acceptFrom: u.acceptFrom,
+                  acceptTo: u.acceptTo),
               // ★ F16：导出抓图时不画这个虚线小框（它是编辑态的标记）
               showEditingAids: !_hideForCapture,
             ),

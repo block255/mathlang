@@ -169,6 +169,22 @@ int? displayTexStartAt(String source, int x) {
   return r.contentStart;
 }
 
+/// ★★★ 2026-11-01：这个 tex **一点墨迹都没有**吗（只有空白类命令）？
+///
+/// 用途两处，都是"把留白当留白"：
+///   · `doc_view`：无墨迹的块**不缩放、不居中**（否则它的"内容起点"会落在页面中间 ⇒
+///     光标出现在一条缝里 —— 用户 2026-11-01 "这是什么鬼位置"）；
+///   · `_smartEditCore`：无墨迹的块在内容起点按退格 ⇒ **整块删掉**
+///     （原来 `smartBackspace` 在 rel==0 时返回 `none` ⇒ 用户"点退格也删不掉"）。
+///
+/// 认作"不画东西"的：`\ `（LaTeX 空格）、`\,` `\;` `\:` `\!`、`\quad` `\qquad`、
+/// 普通空白与换行、`~`（不换行空格）、空组 `{}`。
+bool isInklessTex(String tex) {
+  var s = tex.replaceAll(RegExp(r'\\(quad|qquad|,|;|:|!|[ ])'), '');
+  s = s.replaceAll(RegExp(r'[\s{}~]'), '');
+  return s.isEmpty;
+}
+
 /// `→`：下一个文档级光标落点。**跨 `$` 边界进公式，且光标不落在 `$` 上。**
 int nextCaretOffset(String source, int offset) {
   final int o = offset.clamp(0, source.length);
@@ -825,6 +841,21 @@ SmartEdit _smartEditCore(String source, int offset, {required bool forward}) {
   //   口径与 §4.6「删除要干脆」一致：**Enter 造出来的结构，一次退格整个撤销**。
   final SmartEdit? brk = _paragraphBreakDelete(source, o, forward: forward);
   if (brk != null) return brk;
+
+  // ★★★ 2026-11-01（用户："我点退格也删不掉"）：**无墨迹的行间块，退格一次整块删掉**。
+  //
+  // 现场：`$$\n\ \ \ …\n$$`（内容全是 `\ `）—— 点进去按退格**毫无反应**。
+  // 根因：`smartBackspace` 在段内 `rel == 0` 时直接返回 `SmartEdit.none`（"左边没东西可删"），
+  //   它只看得到 tex **里面**，看不到"外面还包着一个块"。
+  // 口径：这种块对用户就是一个"空白占位"，进得去、删不掉 ⇒ 属于"看得见的东西删不动"。
+  //   ⇒ **在这种块里任何位置按退格 / Delete ⇒ 把整个 `$$…$$`（含最后那个换行）一次删掉**
+  //     （不限于"内容起点"：实测用户在 589/591 上也按过，那里原来也是 `none`）。
+  //   （有墨迹的块不受影响：它们的内容是真的要一个字一个字删的。）
+  final MathRegion? ir = mathRegionAt(source, o);
+  if (ir != null && ir.isDisplay && isInklessTex(ir.tex)) {
+    final int end = (ir.closeEnd + 1).clamp(0, source.length);
+    return SmartEdit.remove(ir.openStart, end, ir.openStart);
+  }
 
   final MathRegion? r = mathRegionAt(source, o);
 
