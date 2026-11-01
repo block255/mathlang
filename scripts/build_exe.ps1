@@ -72,7 +72,11 @@ if (-not (Test-Path $exePath)) { throw "构建产物不存在: $exePath" }
 
 # 新旧校验：AOT 代码在 data\app.so，exe 时间戳不可靠
 $appSo = Join-Path $rel 'data\app.so'
+# ★ 2026-11-01：**排除生成的 app_info.dart** —— 它内容没变时不会重写（见 gen_app_info.ps1），
+#   但旧版本每轮都刷新 mtime ⇒ data\app.so 永远比它旧 ⇒ 构建被这条守卫误杀。
+#   版本号与 pubspec 的一致性由 test/core/version_single_source_test.dart 钉住。
 $newest = Get-ChildItem (Join-Path $app 'lib') -Recurse -File -Filter '*.dart' |
+    Where-Object { $_.Name -ne 'app_info.dart' } |
     Sort-Object LastWriteTime -Descending | Select-Object -First 1
 if ((Test-Path $appSo) -and $newest -and ((Get-Item $appSo).LastWriteTime -lt $newest.LastWriteTime)) {
     throw "产物比源码旧（data\app.so 早于 $($newest.Name)），构建可能没真的重跑"

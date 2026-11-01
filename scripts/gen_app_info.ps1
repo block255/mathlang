@@ -56,6 +56,16 @@ $text = ($lines -join "`r`n")
 
 # ★ 必须**不带 BOM**（Windows PowerShell 5.1 的 Set-Content -Encoding UTF8 会带 BOM，
 #   而 Dart 源码带 BOM 在某些工具链里会出问题）⇒ 用 .NET 显式写 UTF-8 无 BOM。
-[IO.File]::WriteAllText($outPath, $text, (New-Object System.Text.UTF8Encoding($false)))
+# ★★★ 2026-11-01：**内容没变就不写**（否则每次构建都刷新 mtime，
+#   `build_exe.ps1` 的"产物比源码旧"守卫会误报 —— 实测：flutter build 是增量空转，
+#   而 app_info.dart 每次都被重写 ⇒ data\app.so 永远比它旧 ⇒ 构建被 throw 打断）。
+$changed = $true
+if (Test-Path $outPath) {
+  $old = [IO.File]::ReadAllText($outPath, (New-Object System.Text.UTF8Encoding($false)))
+  if ($old -ceq $text) { $changed = $false }
+}
+if ($changed) {
+  [IO.File]::WriteAllText($outPath, $text, (New-Object System.Text.UTF8Encoding($false)))
+}
 
 Write-Host "   [版本] app_info.dart = $name+$build（来自 pubspec.yaml）" -ForegroundColor DarkGray
