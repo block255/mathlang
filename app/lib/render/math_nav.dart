@@ -143,6 +143,32 @@ class _Fence {
 
 // ---------------------------------------------------------------- ←→
 
+/// ★★★ 2026-11-01（反馈 10 / 22 / F15 同一个洞）：**光标不许落在行间块的围栏字符上**。
+///
+/// 行内早就有这条口径（见 [nextCaretOffset] 头注释："跨 `$` 边界进公式，**且光标不落在 `$` 上**"），
+/// 行间块一直没有 —— 于是：
+///   · `→` 从上一行末尾一步停在 `$$` 的**第一个 `$`** 上（那一格没有字形、位置也是假的）；
+///   · `←` 从公式第一个位置出去，也停在 `$` 上；
+///   · 点"块前面那段空白"落到的也是那一格。
+/// 而**在那一格打字就是把围栏劈开**：`$$` 变成 `w$$` / `$w$` ⇒ 这一行不再是围栏 ⇒
+/// 后面所有块的配对全体错位 ⇒ 一串 `[公式不完整]` ＋ 裸源码（用户两张图的相貌）。
+///
+/// ⇒ 判据（与"落点 vs 认领"分开）：
+///   · **认领范围**（谁画光标）可以含围栏，`→` 也可能路过；
+///   · **落点 / 插入点**必须在**内容里** —— 进块落到 `contentStart`，出块落到 `openStart - 1`。
+///
+/// 返回 `null` = [x] 不是任何行间块的开围栏起点。
+int? displayTexStartAt(String source, int x) {
+  if (x < 0 || x + 1 > source.length) return null;
+  // ★ 不能用"`x` 自己在不在某个数学段里"当前置条件：`$$` 那一行会被
+  //   `projectInline` 误当成一个空的行内公式（实测：294 那格被判成"行内区域"，
+  //   于是这条前置直接把它挡掉、落点仍停在围栏上）。只认"`x+1` 在一个行间块里、
+  //   且那个块的开围栏正好是 `x`"，这个判据本身已经唯一。
+  final MathRegion? r = mathRegionAt(source, x + 1);
+  if (r == null || !r.isDisplay || r.openStart != x) return null;
+  return r.contentStart;
+}
+
 /// `→`：下一个文档级光标落点。**跨 `$` 边界进公式，且光标不落在 `$` 上。**
 int nextCaretOffset(String source, int offset) {
   final int o = offset.clamp(0, source.length);
@@ -157,7 +183,9 @@ int nextCaretOffset(String source, int offset) {
     // ★★★ 2026-10-28（用户拍板"段间距不承接字符"）：**段落分隔符那一格不是位置** ——
     //   `甲⏎|⏎乙` 的那个 `|` 在版面上没有行盒（高度 0），画不出光标。所以 `→`
     //   从上一行行末**一步跨到**下一段行首（`core/paragraph_break.dart` 有完整判据）。
-    return skipParagraphSeparator(source, o + 1, forward: true);
+    final int x = skipParagraphSeparator(source, o + 1, forward: true);
+    // ★★★ 2026-11-01：落点是行间块的开围栏 ⇒ 直接进到**内容起点**（不落在 `$` 上）
+    return displayTexStartAt(source, x) ?? x;
   }
   final CaretSiteTable t = buildCaretSites(r.tex);
   final CaretSite s = t.snap(r.rel(o));
@@ -272,7 +300,19 @@ int nextCaretOffset(String source, int offset) {
       (t.sites[next].offset < r.tex.length || r.isDisplay)) {
     return r.abs(t.sites[next].offset);
   }
-  return r.closeEnd; // 段内没有更靠右的位点了 → 走出到 `$` 之后
+  // ★★★ 2026-11-01（F15）：**行间块的 tex 末尾也要能往前走**。
+  //   原来这里对行间块也 `return r.closeEnd`（= 块最后一行的行尾）⇒ 在那一格再按 `→`
+  //   又算回同一格 ⇒ **按了没反应**（实测 292→292、3096→3096）。
+  //   行内公式没有这个问题：跳完 tex 末位点还有 `closeEnd` 这个"公式之后"可去。
+  //   ⇒ 行间块的下一步 = **块后第一行行首**（段落分隔符照样跳过）。
+  if (r.isDisplay) {
+    final int y = skipParagraphSeparator(
+        source, (r.closeEnd + 1).clamp(0, source.length),
+        forward: true);
+    // ★ 紧贴的下一个块 ⇒ 落点又会是它的开围栏 ⇒ 同样要挪进内容起点
+    return displayTexStartAt(source, y) ?? y;
+  }
+  return r.closeEnd; // 行内：`$` 不可见 ⇒ 走出到 `$` 之后
 }
 
 /// ★★★ 2026-10-24（批 12）：两站之间**全是不可见字符** ⇒ 两根位点画在同一根像素上。
@@ -514,7 +554,14 @@ int prevCaretOffset(String source, int offset) {
     break;
   }
   if (back >= 0) return r.abs(t.sites[back].offset);
-  return r.openStart; // 段内第一个位点 → 走出到 `$` 之前
+  // ★★★ 2026-11-01：**行间块的 `←` 出口不许落在开围栏上**（与 [displayTexStartAt] 同一条口径）。
+  //   原来一律 `return r.openStart` ⇒ 对行间块就是"停在 `$$` 的第一个 `$` 上"，
+  //   而那一格没有字形、打字会把围栏劈开。⇒ 行间块退到**上一行的末尾**。
+  if (r.isDisplay) {
+    return skipParagraphSeparator(source, (r.openStart - 1).clamp(0, source.length),
+        forward: false);
+  }
+  return r.openStart; // 行内：段内第一个位点 → 走出到 `$` 之前
 }
 // ★ 注意：`←` **不做**「跳过 tex 末位点」那件事（与 [nextCaretOffset] 有意不对称）——
 //   从公式外面按 `←` 就是要**进到公式末尾**继续改这段数学，那是正当落点。

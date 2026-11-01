@@ -1715,10 +1715,19 @@ class DocViewState extends State<DocView> {
             ),
             );
             if (!cons.maxWidth.isFinite) return math;
+            // ★★★ 2026-11-01（反馈 22）：**零高度的公式盒 ＋ FittedBox ⇒ NaN 缩放**。
+            //   实测（用户文档第 34–36 行那个只含 `\ `（LaTeX 空格）的块）：
+            //   Math 盒 = `Size(1000, 0)` ⇒ `BoxFit.scaleDown` 算 `min(w/1000, 0/0)`
+            //   ⇒ **NaN** ⇒ 整块的坐标变换变 NaN ⇒ 竖条被"画"到 NaN 坐标
+            //   ⇒ 屏幕上**一个像素都没有**（`showCaret=true`、`bar` 也有值，属于静默失败）。
+            //   ⇒ 给子节点一个 1px 的下限（看不见），把除法的分母从 0 变成有限值。
             return FittedBox(
               fit: BoxFit.scaleDown,
               alignment: Alignment.center,
-              child: math,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(minWidth: 1, minHeight: 1),
+                child: math,
+              ),
             );
             }),
           ),
@@ -2187,7 +2196,16 @@ class DocViewState extends State<DocView> {
           final bool drawsCaret = idx >= 0 && _caret == rows[idx];
           // ★ 没有真行可落（这一片只有**段距**）⇒ 它归**下一段**：点它落下一段行首。
           //   判据：段距是 `leadingGap`，挂在下一段的 item 上、页首还会被丢掉 ⇒ 属于下一段。
-          final List<int> land = rows.isEmpty ? <int>[u.acceptFrom] : rows;
+          //
+          // ★★★ 2026-11-01（反馈 10）：**行间块的"行首"是内容起点，不是围栏那一格**。
+          //   原来这里用 `u.acceptFrom` —— 而我把块的认领起点改成 `sliceStart` 之后，
+          //   它正好是 `$$` 的第一个 `$` ⇒ 点块前那段空白会落到围栏字符上，
+          //   一打字就把围栏劈开（`w$$`）⇒ 后面全体配对错位。
+          //   ⇒ 用与方向键**同一个函数**（`displayTexStartAt`）算内容起点，两处不会漂移。
+          final int landFirst = u.type == BlockType.math
+              ? (displayTexStartAt(widget.buffer.buf, u.acceptFrom) ?? u.renderBase)
+              : u.acceptFrom;
+          final List<int> land = rows.isEmpty ? <int>[landFirst] : rows;
           final List<double> landDy = rows.isEmpty ? <double>[gap / 2] : dys;
           children.add(_BlankSlot(
             id: 'blank@${run.first}',
