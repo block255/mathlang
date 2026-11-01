@@ -89,12 +89,12 @@ void main() {
       expect(r.caret, 1);
     });
 
-    test('去花括号后光标跟着内容走（不能偏出内容）', () {
+    test('★ 2026-11-01 起不再去花括号：tex 与光标都原样', () {
       // ★ 批 11 之后这一条改成**段中**的用例（段末不再去括号）
       const String src = r'x^{2}+1';
       final NormalizeResult r = normalizeTex(src, 4); // 光标在 2 之后（`}` 之前）
-      expect(r.tex, r'x^2+1');
-      expect(r.caret, 3, reason: '原来在 2 之后 → 现在也在 2 之后');
+      expect(r.tex, r'x^{2}+1');
+      expect(r.caret, 4, reason: '没有编辑 ⇒ 光标原样不动');
     });
   });
 
