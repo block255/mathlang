@@ -414,8 +414,10 @@ class _InlineMathTextState extends State<InlineMathText> {
       final int? rel = caretHere ? pl?.localRel : slotPl?.localRel;
       if (rel != null) {
         final CaretSite site = buildCaretSites(s.tex).snap(rel);
-        caretDepth = site.path.length;
-        caretScript = isScriptPath(site.path);
+        // ★ 反馈 8：粘合位点按脚本档画（画/插同源，见 `caretVisualLevel`）
+        final ({int depth, bool script}) lv = caretVisualLevel(site);
+        caretDepth = lv.depth;
+        caretScript = lv.script;
       }
     }
 

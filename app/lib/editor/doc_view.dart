@@ -1633,7 +1633,9 @@ class DocViewState extends State<DocView> {
         //   ★ 位点表按**源码** `text` 建（不是注入过的 `tex`）—— 注入会挪偏移。
         //   ★ 块前/块后那两格用 `caretEdge` 那条路，不看这个值。
         final int texRel = slotCaretAbs == null ? -1 : slotCaretAbs - u.renderBase;
-        final bool caretScript = texRel >= 0 && isScriptSite(text, texRel);
+        // ★ 反馈 8：粘合位点按脚本档画（与行内公式同一函数，画/插同源）
+        final bool caretScript = texRel >= 0 &&
+            caretVisualLevel(buildCaretSites(text).snap(texRel)).script;
         // ⚠️ 2026-10-15 晚：原先这里给整段行间公式刷淡色底（§6.5 旧版），**已撤** ——
         //    它把"渲染提示"画成了"一个对象"（用户指出 `$\frac{a}{b}=\sqrt{2}$` 是三个对象）。
         //    见 `inline_math_text.kMathRangeColor` 的注释与《编辑地基与手感》§六-6。

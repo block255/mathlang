@@ -397,6 +397,22 @@ bool isScriptPath(List<SlotStep> path) {
   return cmd == '^' || cmd == '_';
 }
 
+/// 光标这一格的**视觉层级**（[depth] = 槽层深，[script] = 是否按脚本档画）。
+///
+/// ★★★ 2026-11-01（反馈 8）：**粘合位点**（基座与它自己的 `^`/`_` 之间、同一基座两个脚本
+///   之间、裸参数的内容开头）在**数据上属于外层**，但插入会被 `neutralPoint`
+///   挪进**脚本内容开头**。按外层画就会出现用户实测的那种错位：
+///   「光标高度看来显然是跟在 f 后面的，但打出来的导数撇是这个很低的高度而且很小」。
+/// 口径：**画/插同源**（§11.27 同一条）⇒ 粘合位点按**脚本档**画，位置与高度都跟脚本第一个
+///   位点一致（`caret_sites._emit` 的注释本来就写着"视觉上与脚本自己的第一个位点同一根像素"）。
+({int depth, bool script}) caretVisualLevel(CaretSite site) {
+  // 已经在脚本槽里（含"基座的两个脚本之间"那种粘合位点）⇒ 深度不动
+  if (isScriptPath(site.path)) return (depth: site.path.length, script: true);
+  // 外层粘合位点（基座与它的第一个 `^`/`_` 之间）⇒ 插入会被挪进脚本 ⇒ 按脚本档画
+  if (site.glue) return (depth: site.path.length + 1, script: true);
+  return (depth: site.path.length, script: false);
+}
+
 /// 这个位点前面的那个 `^` / `_`，是不是挂在**闭合定界符**后面（`\right|` / `\right)` …）。
 ///
 /// 判据：从 [off] 往前跳过 `{` 与空格，遇到 `^`/`_` 后，再看它前面的文本是否以
@@ -667,6 +683,26 @@ SmartEdit? _paragraphBreakDelete(String source, int o, {required bool forward}) 
 /// 为什么不是"碰到标记就删"：那样**删它上面的空行**也会把分页符带走
 ///   （探针实测 `Delete @7` 在标记上一行的空行里，分页符照样被删）——用户本意完全不是这个。
 /// ⇒ 判据落在**这次编辑的结果**上（结果里有没有残片），不在"离标记多近"上。
+/// 选区正好落在"被包装基座的唯一内容"上 ⇒ 扩到**整个对象**（反馈 14b）。
+///
+/// 为什么单列一条：`EditView` 有选区时走的是**区间删除**（`_deleteRange`），
+/// 完全绕开 `smartBackspace` / `smartDelete` 的结构判据 ⇒ 单选一个 `C` 再删，
+/// 会留下 `\mathrm{}_{n}^{m}`（空主体虚线框，用户直接看到"框"）。
+/// 口径依据：§3.2「删除粒度 ≡ 双击粒度」—— 双击 `C` 本来就会选中整个组合数，
+/// **单选一个字形不是可选单位**。
+///
+/// 返回文档级的整个对象区间；不在数学段里 / 选区不是"唯一内容" ⇒ `null`（不动）。
+({int start, int end})? expandPackedBaseInDoc(String doc, int from, int to) {
+  if (from >= to) return null;
+  final MathRegion? r = mathRegionAt(doc, from);
+  if (r == null) return null;
+  if (from < r.contentStart || to > r.contentStart + r.tex.length) return null;
+  final ({int start, int end})? span =
+      packedBaseObjectAt(r.tex, from - r.contentStart, to - r.contentStart);
+  if (span == null) return null;
+  return (start: r.contentStart + span.start, end: r.contentStart + span.end);
+}
+
 SmartEdit smartEditAt(String source, int offset, {required bool forward}) {
   final int o = offset.clamp(0, source.length);
   final SmartEdit raw = _smartEditCore(source, o, forward: forward);

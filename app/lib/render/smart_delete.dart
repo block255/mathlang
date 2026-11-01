@@ -803,7 +803,26 @@ SmartEdit _deleteCore(CaretSiteTable t, int rel) {
   final _Span? wrapR = _absorbFontOnlyWrapper(t, reg, objR, forward: true);
   if (wrapR != null) return SmartEdit.remove(wrapR.start, wrapR.end, wrapR.start);
   if (objR == null) return SmartEdit.none;
+  // ★★★ 2026-11-01（反馈 14b，与 [smartBackspace] 的 14a **对称**）：
+  //   正向删同理 —— 要删的原子若是 `\<font>{…}` 包装里唯一的内容、且包装后紧跟挂件，
+  //   那个对象就是"包装 + 挂件"，单删内容会留下空主体（`\mathrm{}_{n}^{m}` = 虚线框）。
+  //   实测（探针 2026-11-01）：`Del` 在 0..8 任意位置都只删 `[8,9)` 那个 `C` ⇒ 全线中招。
+  final ({int start, int end})? asObjectR =
+      _packedBaseWithAttachments(t.tex, objR);
+  if (asObjectR != null) {
+    return SmartEdit.remove(asObjectR.start, asObjectR.end, asObjectR.start);
+  }
   return SmartEdit.remove(objR.start, objR.end, objR.start);
+}
+
+/// 公开版：`[from,to)`（相对一段 tex）正好是"被包装基座的唯一内容"时，
+/// 返回**整个对象**的区间（包装起点 … 挂件终点）；否则 `null`。
+///
+/// 给"选区删除 / 剪切"用 —— 那条路不走结构删除（`EditView._deleteRange`），
+/// 所以要在切片之后单独扩一次（反馈 14b）。
+({int start, int end})? packedBaseObjectAt(String tex, int from, int to) {
+  if (from >= to) return null;
+  return _packedBaseWithAttachments(tex, _Span(from, to));
 }
 
 // ---------------------------------------------------------------------------

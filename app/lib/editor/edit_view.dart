@@ -41,6 +41,7 @@ import '../ui/env_size_dialog.dart';
 import '../render/math_nav.dart';
 import '../render/site_adjacency.dart';
 import '../render/normalize.dart';
+import '../render/script_nest.dart';
 import '../render/selection_range.dart';
 import '../render/smart_delete.dart';
 import '../render/visible_atoms.dart' show VisibleAtom, lexVisibleAtoms;
@@ -665,6 +666,11 @@ class EditViewState extends State<EditView> {
   ///   所以"删掉触发的词 + 插入模板"必须合成**一次**写入，否则要按两下 `Ctrl+Z`）。
   void _insertTexViaSymbolPath(String tex,
       {required bool template, bool display = false}) {
+    // ★★★ 2026-11-01（反馈 7）：面板/快捷键连点「下标」不再套娃（判据见 [_scriptNestRefused]）。
+    if (template && (tex == '^{}' || tex == '_{}') &&
+        _scriptNestRefused(tex.startsWith('^'))) {
+      return;
+    }
     _breakUndoGroup(); // 模板/符号插入独占一步
     final SymbolInsertResult r = applySymbolInsert(
       doc: _buf.buf,
@@ -731,9 +737,21 @@ class EditViewState extends State<EditView> {
   /// 有基座 ⇒ `^{}`（作用于前面那个原子）；**没有基座**（公式开头 / 正文里）⇒ `{}^{}`
   /// —— 空的基座组 `{}` 在 TeX 里合法，直接写 `^{}` 会得到 `Parser Error: Expected group`。
   void insertScript({required bool sup}) {
+    if (_scriptNestRefused(sup)) return; // ★ 反馈 7：已经在这一层脚本里 ⇒ 不再套
     final String cmd = sup ? '^' : '_';
     final bool hasBase = _hasBaseAtom();
     _insertTexViaSymbolPath(hasBase ? '$cmd{}' : '{}$cmd{}', template: true);
+  }
+
+  /// ★★★ 2026-11-01（反馈 7）：光标已经站在**同种脚本槽**里（或那个槽里还没有基座）
+  /// ⇒ 再插一次 `^{}` / `_{}` 只会套成 `f_{_{}}`（公式不完整；连按还会越来越小、越往下）。
+  /// 判据是纯函数 [scriptInsertWouldNest]（`render/script_nest.dart`，8 条守卫钉着）。
+  bool _scriptNestRefused(bool sup) {
+    if (_buf.hasSelection) return false; // 替换选区是另一回事
+    final MathRegion? r = mathRegionAt(_buf.buf, _buf.caret);
+    if (r == null) return false;
+    final int rel = (_buf.caret - r.contentStart).clamp(0, r.tex.length);
+    return scriptInsertWouldNest(r.tex, rel, sup: sup);
   }
 
   /// 光标前（同一段数学里）有没有可以当基座的可见原子
@@ -1304,8 +1322,15 @@ class EditViewState extends State<EditView> {
     //     · 端点落在某个 `$…$` / `$$…$$` **内部** ⇒ 扩到那一段的边界；
     //     · 整段都在公式内部 ⇒ 不动（照旧删内容）。
     final ClipboardSlice sl = clipboardSlice(_buf.buf, from, to);
-    final SmartEdit ed = reclaimEmptiedMath(
-        _buf.buf, SmartEdit.remove(sl.start, sl.end, sl.start));
+    // ★★★ 2026-11-01（反馈 14b）：选区正好是"被包装基座的唯一内容"（如组合数的 `C`）
+    //   ⇒ 扩到**整个对象**（含 `^`/`_` 挂件）。否则删完会剩 `\mathrm{}_{n}^{m}`
+    //   —— 屏幕上就是一个空主体虚线框。口径：§3.2「删除粒度 ≡ 双击粒度」。
+    final ({int start, int end})? packed =
+        expandPackedBaseInDoc(_buf.buf, sl.start, sl.end);
+    final int ds = packed?.start ?? sl.start;
+    final int de = packed?.end ?? sl.end;
+    final SmartEdit ed =
+        reclaimEmptiedMath(_buf.buf, SmartEdit.remove(ds, de, ds));
     _mutate(() => _buf.replace(ed.from!, ed.to!, ''));
     if (_buf.caret != ed.caret) _buf.setCaret(ed.caret);
   }
