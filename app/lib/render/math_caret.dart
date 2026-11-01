@@ -337,14 +337,8 @@ class _MathWithCaretState extends State<MathWithCaret> {
             alignedEq = b;
             break;
           }
-          final bool hasContent = boxes.any((LeafBox b) {
-            if (b.kind != LeafBoxKind.glyph) return false;
-            if (!box.inflate(1).contains(b.rect.center)) return false;
-            final String t = (b.text ?? '').trim();
-            if (t.isEmpty) return false;
-            if (identical(b, alignedEq)) return false;
-            return true;
-          });
+          final bool hasContent =
+              envCellHasContent(boxes, box, alignedEq: alignedEq);
           if (!hasContent) {
             // ★★★ 2026-10-24（批 19 · F1-c 续，用户四张图）：**框只圈"填区"，不许盖在等号身上**。
             //   用户原话：「你这个右部框直接画在了等号身上」。右格的填区在 `=` **右边**，

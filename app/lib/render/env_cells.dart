@@ -702,6 +702,34 @@ Rect? envCellBoxAt({
   return g == null ? null : envCellBoxIn(g, row, col);
 }
 
+/// 格子"有没有内容" —— 决定**画不画虚线框**。
+///
+/// ★★★ 2026-11-01（反馈 21）：判据从"字形盒文本 `trim()` 非空"改成
+///   "**看得见的字，或者占了宽度**"。用户实测：分段框空行里打空格（引擎写成 `\ `），
+///   框不但没消失，还变成一个**又窄又高的矩形**（宽 = 该列被上面分式撑宽、
+///   高 = 行带被撑高）—— 因为 `\ ` 画出来的字形盒**文本是空格**（`trim()` 后为空），
+///   旧判据判"空" ⇒ 框照画。
+///
+/// 对照实测（20 px，`scanLeafBoxes`）：
+///   · `\\\ \ \ `（用户真打了空格）⇒ 三个字形盒 `" " w=5.0` ⇒ **应当算内容**；
+///   · `\\ `（模板塞的普通空格）⇒ **一个盒都没有** ⇒ 仍是空格子 ⇒ 照画框（旧守卫要的就是它）；
+///   · 我们注入的 `\rule{1em}{0pt}` 是 [LeafBoxKind.pad] ⇒ 本就不参与。
+bool envCellHasContent(
+  List<LeafBox> boxes,
+  Rect cellBox, {
+  LeafBox? alignedEq,
+}) {
+  for (final LeafBox b in boxes) {
+    if (b.kind != LeafBoxKind.glyph) continue;
+    if (!cellBox.inflate(1).contains(b.rect.center)) continue;
+    if (identical(b, alignedEq)) continue;
+    if ((b.text ?? '').trim().isNotEmpty) return true;
+    // ★ 文本是空白（`\ ` 画出来就是空格）但**占了宽度** ⇒ 用户真往里打了东西
+    if (b.rect.width > 0.5) return true;
+  }
+  return false;
+}
+
 /// 已经在网格上的格框。
 Rect? envCellBoxIn(EnvGrid g, int row, int col) {
   final Rect? band = g.rowBand[row];
