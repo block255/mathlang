@@ -1,4 +1,4 @@
-﻿// 数语引擎 · 数学段里的**光标**：零尺寸锚点 + 自绘竖条（高度**随当地那一行自适应**）
+// 数语引擎 · 数学段里的**光标**：零尺寸锚点 + 自绘竖条（高度**随当地那一行自适应**）
 //
 // ★★ 为什么不用引擎自带的 `\cursor{}`（2026-10-15 晚用户实测后定）：
 //   引擎的 `CursorNode` 是一根 **1.5 × (0.875 × 字号)** 的实心竖条，它**真的参与排版**。
@@ -141,10 +141,6 @@ class _MathWithCaretState extends State<MathWithCaret> {
   @visibleForTesting
   Rect? get debugCaretBar => _bar;
 
-  /// 边界刻度（§6.5「甲」）——守卫用：**不许与竖条重叠**（重叠就会把光标盖成淡色）。
-  @visibleForTesting
-  Rect? get debugTick => _tick;
-
   /// ★ 测试钩子（批 19）：这一帧算出来的**空槽/格框垫子**（含"当前格"的格框）
   @visibleForTesting
   List<SlotPad> get debugPads => _pads;
@@ -154,8 +150,9 @@ class _MathWithCaretState extends State<MathWithCaret> {
   /// ★ 空槽占位垫（④-1）—— **与光标在不在无关，恒要量**（§6.1：空槽就该一直看得见）
   List<SlotPad> _pads = const <SlotPad>[];
 
-  /// ★ ④-4「甲」瞬时边界刻度（只在"公式之前 / 之后"那两格出现）
-  Rect? _tick;
+  // ★★★ 2026-11-01：**④-4「甲」瞬时边界刻度已撤**（`_tick` 字段随之删除）。
+  //   用户判定它"从来没起到边界的提示作用"，而且"把编码结构的辨认责任丢给用户"。
+  //   判据与证据见 `notes/design/位点与结构导航.md` §6.5「2026-11-01 复核」＋台账 F14。
 
   /// 选区底色块（⑤）：按原子铺，纯绘制
   List<Rect> _bands = const <Rect>[];
@@ -249,7 +246,6 @@ class _MathWithCaretState extends State<MathWithCaret> {
           );
 
     Rect? bar;
-    Rect? tick;
     if (at != null) {
       // ★★ **层级决定行**（2026-10-16 用户提出，§11.27）：
       //   · 公式内部（含主行 / 分子 / 分母 / 上下限 / 次数）⇒ 那一层的 ¶ 盒；
@@ -332,25 +328,15 @@ class _MathWithCaretState extends State<MathWithCaret> {
           width: widget.caretWidth,
           fontSize: widget.textFontSize ?? widget.fontSize,
         );
-        // ★★ ④-4「甲」**瞬时边界刻度**（§6.5，2026-10-16 用户拍板"甲＋丙"）：
-        //   光标落在"公式之前 / 之后"那两格时，在**公式外侧**画一根 1px × 行高的灰刻度
-        //   ⇒ 用户看得见"公式的边界在哪"（竖条是插入点，刻度是边界）。
-        //   ★ 只在这两格出现、离开即消失（**不常驻、不包围**）—— 过闸表 §7.2 的允许形态。
-        //   ★ 画在外侧（`caretWidth + 1.5`）⇒ 不与竖条重叠。
-        // ★★★ 2026-11-01（用户实测"光标是淡色的 / 看不见"）：**刻度不许压在竖条上**。
-        //   批 10 把"块边界格"的**竖条**挪到了块边外（`-(caretWidth+1.5)` / `w+1.5`），
-        //   而刻度这里是按**同一个 x** 画的（注释还写着"画在外侧 ⇒ 不与竖条重叠" ——
-        //   那句话在批 10 之后就过期了）。结果：刻度（1px 淡色）后画，**盖住**竖条（1.5px 深色）
-        //   ⇒ 屏幕上看不到深色光标，只看到一根淡色细条；像素扫描实测：整个窗口里
-        //   `#1E88E5` **0 个像素**。
-        //   ⇒ 刻度再往外让 3px：两者错开，竖条恢复可见（刻度被裁掉也不影响功能）。
-        const double kTickGap = 3.0;
-        final double w =
-            (root is RenderBox && root.hasSize) ? root.size.width : 0.0;
-        final double x = widget.caretEdge == CaretEdge.before
-            ? -(widget.caretWidth + 1.5 + kTickGap)
-            : w + 1.5 + kTickGap;
-        tick = Rect.fromLTWH(x, bar.top, 1.0, bar.height);
+        // ★★★ 2026-11-01：**④-4「甲」边界刻度在这里撤销**（原来紧跟其后画一根
+        //   1px × 行高的灰刻度）。撤销理由与证据：
+        //   ① 它与这根竖条**在同一个分支里**算出来 ⇒ 刻度出现 ⟺ 竖条出现，永远并排，
+        //      从没有过"光标在别处、刻度单独指出边界"的时刻 ⇒ 它不可能起到边界提示作用；
+        //   ② 它画的是**结构边界**＝编码的事实，把"你要认得这是个公式结构"的责任推给用户
+        //      ⇒ 与原则 2「用户永远不需要看数学编码」冲突（平权）；
+        //   ③ 它要回答的问题已被 ③-A/B/C 的落点判据 ＋ 层级光标解掉。
+        //   ⇒ 现行口径：**甲 撤销、纯丙**（不做任何范围/边界提示）。
+        //   见 `notes/design/位点与结构导航.md` §6.5「2026-11-01 复核」＋台账 F14。
       }
     }
 
@@ -421,16 +407,13 @@ class _MathWithCaretState extends State<MathWithCaret> {
     //   既然格框已经算准，竖条就直接**贴进格框**（同 top、同高）⇒ 光标与框永远重合。
     if (envBox != null && at != null) {
       bar = Rect.fromLTWH(at.dx, envBox.top, widget.caretWidth, envBox.height);
-      tick = null;
     }
     if (!_samePads(pads, _pads) ||
         _bar != bar ||
-        _tick != tick ||
         !MathCaretPainter.sameRects(bands, _bands)) {
       setState(() {
         _bar = bar;
         _pads = pads;
-        _tick = tick;
         _bands = bands;
       });
     }
@@ -447,15 +430,14 @@ class _MathWithCaretState extends State<MathWithCaret> {
   @override
   Widget build(BuildContext context) {
     // ★★ 2026-10-20（F16）：导出抓图时**一个编辑辅助都不画**
-    //   （竖条 / 空槽虚线框 / 当前槽淡蓝底 / 边界刻度 / 选区底块）——
+    //   （竖条 / 空槽虚线框 / 当前槽淡蓝底 / 选区底块）——
     //   它们是"编辑态的可视化"，不是文档内容。
     final bool aids = widget.showEditingAids;
     final bool caretVisible = aids && widget.showCaret && _bar != null;
-    // ★ 只要"有竖条 / 有垫子 / 有刻度"就要挂 painter（垫子与光标在不在无关）
+    // ★ 只要"有竖条 / 有垫子"就要挂 painter（垫子与光标在不在无关）
     final bool any = aids &&
         (caretVisible ||
             _pads.isNotEmpty ||
-            _tick != null ||
             _bands.isNotEmpty); // ★ ⑤ 有选区底块也要挂 painter
     return CustomPaint(
       foregroundPainter: any
@@ -465,7 +447,6 @@ class _MathWithCaretState extends State<MathWithCaret> {
               caretVisible: caretVisible,
               pads: _pads,
               bands: _bands,
-              tick: _tick,
               // 虚线的"一格"跟随本段字号（不写死像素，§6.4）
               dashUnit: widget.fontSize / 16.0,
             )
@@ -1013,14 +994,15 @@ Rect _clipToSlotBand({
   return band;
 }
 
-/// 画**竖条 ＋ 空槽占位框 ＋ 瞬时边界刻度**（三者同一支画笔，一次 `CustomPaint`）
+/// 画**竖条 ＋ 空槽占位框 ＋ 选区底块**（同一支画笔，一次 `CustomPaint`）
+///
+/// ★ 2026-11-01：**瞬时边界刻度（旧 ④-4「甲」）已撤**，所以这里没有 `tick` 了。
 class MathCaretPainter extends CustomPainter {
   const MathCaretPainter({
     required this.rect,
     required this.color,
     this.caretVisible = true,
     this.pads = const <SlotPad>[],
-    this.tick,
     this.dashUnit = 1.0,
     this.bands = const <Rect>[],
   });
@@ -1029,14 +1011,11 @@ class MathCaretPainter extends CustomPainter {
   final Rect rect;
   final Color color;
 
-  /// 竖条在不在（`false` = 光标不在这段里 ⇒ 只画垫子 / 刻度）
+  /// 竖条在不在（`false` = 光标不在这段里 ⇒ 只画垫子）
   final bool caretVisible;
 
   /// 空槽占位垫（④-1）：空槽 ⇒ 虚线灰框；当前槽 ⇒ 实线蓝框 ＋ 淡蓝底
   final List<SlotPad> pads;
-
-  /// ★ ④-4「甲」**瞬时边界刻度**（只出现在"公式之前 / 之后"那两格；离开即消失）
-  final Rect? tick;
 
   /// 虚线的尺度（= 本段字号 / 16 ⇒ 跟随字号，不写死像素）
   final double dashUnit;
@@ -1072,10 +1051,6 @@ class MathCaretPainter extends CustomPainter {
       }
     }
     if (caretVisible) canvas.drawRect(rect, Paint()..color = color);
-    final Rect? t = tick;
-    if (t != null) {
-      canvas.drawRect(t, Paint()..color = const Color(kSlotDashColorValue));
-    }
   }
 
   @override
@@ -1083,7 +1058,6 @@ class MathCaretPainter extends CustomPainter {
       old.rect != rect ||
       old.color != color ||
       old.caretVisible != caretVisible ||
-      old.tick != tick ||
       old.dashUnit != dashUnit ||
       !sameRects(old.bands, bands) ||
       !_samePads(old.pads, pads);

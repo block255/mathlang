@@ -414,57 +414,20 @@ void main() {
   });
 
   // ─────────────────────────────────────────────────────────────
-  // 五、★ ④-4「甲」**瞬时**边界刻度（§6.5，2026-10-16 用户拍板"甲＋丙"）
-  //     只在"公式之前 / 之后"那两格出现，**离开即消失**；不连线、不包围、不覆盖内容。
+  // 五、★ ④-4「甲」**瞬时**边界刻度 —— ★★★ 2026-11-01 **已撤**（台账 F14）
+  //
+  // 撤掉的理由（用户判定 ＋ 复核证据，见《位点与结构导航》§6.5「2026-11-01 复核」）：
+  //   ① 刻度与竖条在**同一个分支**里算出来 ⇒ 出现即并排，从没有过"光标在别处、
+  //      刻度单独指出边界"的时刻 ⇒ 它**不可能**起到边界提示作用；
+  //   ② 它画的是**结构边界**＝编码的事实 ⇒ 把"你要认得这是个公式结构"的责任推给用户
+  //      ⇒ 与原则 2「用户永远不需要看数学编码」冲突；
+  //   ③ 它要回答的问题已被 ③-A/B/C 的落点判据 ＋ 层级光标解掉。
+  // ⇒ 现在"这一格有没有刻度"这个问题不再存在；**新红线在下面六组的像素级那条**：
+  //   「公式外侧除了竖条，一个灰像素都不许有」。
   // ─────────────────────────────────────────────────────────────
-  group('④-4 瞬时边界刻度', () {
-    Future<void> pumpEdge(WidgetTester tester, CaretEdge edge) async {
-      await tester.pumpWidget(MaterialApp(
-        home: Scaffold(
-          body: Center(
-            child: MathWithCaret(
-              tex: renderMathTex(r'\frac{a}{b}', caretRel: 0),
-              showCaret: true,
-              caretEdge: edge,
-              textFontSize: 16,
-              mathKey: GlobalKey(),
-              fontSize: 16,
-            ),
-          ),
-        ),
-      ));
-      await tester.pumpAndSettle();
-    }
-
-    testWidgets('★ 公式之后那一格 ⇒ 有刻度（改前没有这个概念 ⇒ 红）',
-        (WidgetTester tester) async {
-      await pumpEdge(tester, CaretEdge.after);
-      final MathCaretPainter p = _painterOf(tester)!;
-      expect(p.tick, isNotNull,
-          reason: '★ §6.5「甲」：这两格要看得见"公式的边界在哪"（竖条是插入点、刻度是边界）');
-      final Size ms = tester.getSize(find.byType(Math));
-      expect(p.tick!.left, greaterThanOrEqualTo(ms.width),
-          reason: '画在公式**外侧** ⇒ 与竖条分开，不与内容重叠');
-      expect(p.tick!.height, closeTo(p.rect.height, 0.01),
-          reason: '刻度高 = 那一格的行高（与铅笔条同高）');
-    });
-
-    testWidgets('公式之前那一格 ⇒ 刻度在左外侧', (WidgetTester tester) async {
-      await pumpEdge(tester, CaretEdge.before);
-      final MathCaretPainter p = _painterOf(tester)!;
-      expect(p.tick, isNotNull);
-      expect(p.tick!.right, lessThanOrEqualTo(0.0));
-    });
-
-    testWidgets('光标在公式**内部** ⇒ 没有刻度（不常驻、不包围）',
-        (WidgetTester tester) async {
-      await pumpEdge(tester, CaretEdge.none);
-      expect(_painterOf(tester)!.tick, isNull);
-    });
-  });
 
   // ─────────────────────────────────────────────────────────────
-  // 六、★★ **像素级**验证：虚线 / 淡蓝底 / 外侧刻度**真的画出来了**
+  // 六、★★ **像素级**验证：虚线 / 淡蓝底**真的画出来了**；竖条之外**不许**再画别的记号
   //
   // 为什么单列：`pads` / `tick` 字段只能证明"我们打算画"，证明不了"画出来了、
   // 而且没被裁掉"。经验 #14/#10：**细线在压缩截图里会消失** ⇒ 一律程序扫像素。
@@ -539,7 +502,7 @@ void main() {
               '没有纯色，所以看"最蓝的一个像素"必须明显比底色更蓝（底色只有 26）');
     });
 
-    testWidgets('★ ④-4 刻度画在公式**外侧**，且没有被重绘边界裁掉',
+    testWidgets('★★★ 边界那一格**只画竖条**：旧刻度那两条竖带里一个灰像素都不许有（F14）',
         (WidgetTester tester) async {
       await tester.pumpWidget(MaterialApp(
         home: Scaffold(
@@ -556,14 +519,29 @@ void main() {
       await tester.pumpAndSettle();
       final MathCaretPainter p = _painterOf(tester)!;
       final Rect math = mathInCanvas(tester);
-      final int grayRight = await _countColor(tester, _kDash,
-          tol: 40, where: (Offset px) => px.dx >= math.right - 0.5);
-      debugPrint('刻度局部 ${p.tick}  Math 宽 ${math.width}  右侧灰像素 $grayRight');
-      expect(p.tick!.left, greaterThanOrEqualTo(math.width),
-          reason: '局部坐标上它就在公式右边之外');
-      expect(grayRight, greaterThan(3),
-          reason: '★ 刻度必须**真的可见**：公式右侧要有灰刻度像素'
-              '（画在外侧 + 不被外层重绘边界裁掉）');
+      // 旧「甲」刻度的落点（局部 `-(caretWidth+1.5+3)` / `w+1.5+3` ⇒ 公式外侧 4.5px 起）。
+      // 现在那里必须**空**。只扫这两条窄带：公式外侧更远处没有任何会画灰色的东西，
+      // 而"字形抗锯齿溢出的中性灰"也不会跑到这两条带里（带在公式盒之外 4~8px）。
+      final int leftBand = await _countColor(tester, _kDash,
+          tol: 40,
+          where: (Offset px) =>
+              px.dx >= math.left - 8.5 && px.dx <= math.left - 3.5);
+      final int rightBand = await _countColor(tester, _kDash,
+          tol: 40,
+          where: (Offset px) =>
+              px.dx >= math.right + 3.5 &&
+              px.dx <= math.right + 8.5 &&
+              px.dy >= p.rect.shift(math.topLeft).top - 1 &&
+              px.dy <= p.rect.shift(math.topLeft).bottom + 1);
+      debugPrint('旧刻度竖带里的灰像素：左 $leftBand 右 $rightBand'
+          '（改前：右带 ~20 个；公式=$math）');
+      expect(rightBand, 0,
+          reason: '★ ④-4「甲」已撤：边界那一格**只画竖条**，公式右侧那条刻度带必须是空的。'
+              '它从没起到边界提示作用（与竖条同分支算出、永远并排），'
+              '还把"这是公式结构"的辨认责任丢给用户（与平权冲突）');
+      expect(leftBand, 0,
+          reason: '★ 同上（"公式之前"那一侧）。现在那一格由**行**画竖条，不归块');
+      expect(p.caretVisible, isTrue, reason: '前提：这一帧竖条确实画出来了（否则上面的"空"不算数）');
     });
   });
 }

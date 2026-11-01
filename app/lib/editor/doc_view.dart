@@ -387,77 +387,49 @@ class _Unit {
 /// ★★★ 2026-10-24（批 21）：**行间块的边界竖条归谁**（`before` / `after` 各一格）。
 ///
 /// 用户实测「有时候同时存在两个光标」：两个**紧挨着**的行间块（中间只有一个 `\n`）
-/// 让同一个偏移**同时**属于 A 的"块之后"（`base + length`）与 B 的"块之前"（`base - 1`）
-/// ⇒ 两块各画一根竖条 ⇒ 屏幕上两根光标。
+/// 让同一个偏移**同时**属于 A 的"块之后"与 B 的"块之前" ⇒ 两块各画一根 ⇒ 两根光标。
 ///
-/// 口径：
-///   ① 只认**紧贴**的那两格（相等判据；旧的 `<` / `>` 连更远的空白都算，更容易撞）；
-///   ② 两个块**共享**那一格时（左邻是另一个行间块的收尾 `$$`）⇒ 让给**左边那块**
-///      （它画"块之后"），本块不画"块之前"。
+/// ★★★ 2026-11-01：**根因不是判据松，是"块之前那一格"本来就不属于块**。
+///   块认领 `sliceStart - 1`（③-C 加的，理由是"与行内公式两端对称"），
+///   而那一格要么是**上一行的末尾**、要么是**段落分隔符**（零高度、不是位置）、
+///   要么是**前一块自己最后一行的行尾** —— 三种都不是"块的行内位置"。
+///   ⇒ 改成 `acceptFrom = sliceStart`（块自己的行首）之后，两块**不再重叠**：
+///   A 的 `acceptTo` 与 B 的 `acceptFrom` 差 1 ⇒ **共享格这个概念消失了**，
+///   `sharesLeftCell` 那条"让给左边"的特例整条删除。
+///
+/// 现在的口径：
+///   · `before` = 光标正落在本块**自己的行首**那一格（`acceptFrom`）；
+///   · `after`  = 光标正落在本块**自己的行尾**那一格（`acceptTo`）。
+///   两格都只属于本块，与邻居无关 ⇒ 不需要任何"让位"。
 @visibleForTesting
 ({bool before, bool after}) blockEdgeClaim({
   required int? caret,
   required int acceptFrom,
   required int acceptTo,
-  required bool sharesLeftCell,
 }) =>
     (
-      before: caret != null && caret == acceptFrom && !sharesLeftCell,
+      before: caret != null && caret == acceptFrom,
       after: caret != null && caret == acceptTo,
     );
 
 /// ★★★ 2026-10-24（批 22）：**这一块要不要把光标画出来**。
 ///
-/// 用户实测「点两个分段的花括号中间那一块，出现两个光标」—— 不是边界竖条那套，
-/// 而是**两个单元的认领区间在那一格重叠**：A 的 `acceptTo` 与 B 的 `acceptFrom` 是同一个偏移
-/// （两块之间只有一个 `\n`）⇒ 两个 `MathWithCaret` 都 `showCaret = true`
-/// ⇒ 一根画在 A 的 tex 末尾、一根画在 B 的 tex 开头 ⇒ 屏幕上两根。
-/// ⇒ 共享那一格**只归左边那块**（右边那块不画）。
+/// 用户实测「点两个分段的花括号中间那一块，出现两个光标」—— 两个单元的认领区间
+/// 在那格重叠。**根因同 [blockEdgeClaim]（2026-11-01 更正）**：重叠来自
+/// "块多认领了 `sliceStart - 1`"。认领改成 `sliceStart` 后重叠自然消失，
+/// 所以这里不再需要"共享格让给左边"那条判据。
 ///
-/// ★★★ 2026-10-24（批 25）：**补上"光标在不在这块"的区间判据**。
-///   批 23 的探针发现：上面这条只判了 `caret != null` + 共享格，
-///   **没判光标是否落在本块的 `[acceptFrom, acceptTo]`** ⇒ 只要文档里有光标，
-///   **每个**公式块都得到 `true`（实测 4 块 4 个 true）。
-///   今天没画出 k 根竖条，全靠两道巧合：① `doc_view` 只对含光标的单元注锚点
-///   （`showCursor: caretAbs != null`）；② `MathWithCaret._measure` 的 `findCaretAnchor`
-///   找不到那个零尺寸 `ColoredBox` 就返回 null。
-///   ⇒ 一旦注入链变化（给所有块注锚点）或 `findCaretAnchor` 加兜底，屏幕上会同时冒出 k 根。
-///   ⇒ 判据补齐后，`showCaret` 才真的等于它的名字（`math_caret.dart` 的注释原话：
-///   "光标在不在这段数学里（不在 ⇒ 连竖条也不画）"）。
-///
-/// ★ 区间是**闭区间**：`acceptFrom` = 块之前那一格、`acceptTo` = 块之后那一格，两格都归本块
-///   （③-C 定的口径，别改），所以用 `>=` / `<=`；共享格仍由上面那条让给左边。
+/// ★ 仍保留批 25 的**区间判据**（`caret` 必须落在本块 `[acceptFrom, acceptTo]` 内）：
+///   原来只判 `caret != null` ⇒ 只要文档里有光标，**每个**公式块都得到 `true`
+///   （实测 4 块 4 个 true），全靠"只给含光标的单元注锚点"这个巧合才没画出 k 根。
+///   判据补齐后，`showCaret` 才真的等于它的名字（"光标在不在这段数学里"）。
 @visibleForTesting
 bool blockShowsCaret({
   required int? caret,
   required int acceptFrom,
   required int acceptTo,
-  required bool sharesLeftCell,
 }) =>
-    caret != null &&
-    caret >= acceptFrom &&
-    caret <= acceptTo &&
-    !(sharesLeftCell && caret == acceptFrom);
-
-/// ★★★ 2026-10-24（批 23）：**空行与"下一个行间块"抢同一格 ⇒ 空行让位**。
-///
-/// 用户文档（20:0x 第二组图）：`aaa` + 三个行间块，**块与块之间空一行**
-/// （`$$\n…\n$$\n\n$$\n…`）。那个空行的行首偏移**正好等于**下一块的 `acceptFrom`
-/// （行间块认领 `sliceStart - 1`，而 `sliceStart - 1` 就是这个空行自己的 `\n`）
-/// ⇒ 空行槽画一根文本光标（页面左边行首）、块画一根"块之前"边界条（块的左缘）
-/// ⇒ 屏幕上两根竖条，用户读成"两个光标"。
-///
-/// 口径（与批 21/22 的边界条同源）：**一个偏移只画一根**；两边都合法时
-/// **让块来画**（"块之前"条贴着块的左缘，正好表示"光标要进这块"）。
-/// ★ 空行**前后没有行间块**时（`nextAcceptFrom` 为 null 或与它不相等）照旧自己画 ——
-/// 否则普通空行会变成"光标消失"。
-@visibleForTesting
-bool blankLineDrawsCaret({
-  required int? caret,
-  required int blankStart,
-  required int? nextAcceptFrom,
-}) =>
-    caret == blankStart && blankStart != nextAcceptFrom;
+    caret != null && caret >= acceptFrom && caret <= acceptTo;
 
 /// 供外部（状态栏 / 实验页）显示的分页统计。
 class DocViewStats {
@@ -1431,7 +1403,17 @@ class DocViewState extends State<DocView> {
               sliceStart,
             // ★ 与行内公式的「两端各多认领一格」对称：**块前那一格**也算（否则光标从上面
             //   往下走进块时，最后一格没人管 ⇒ 又是"光标消失"）
-            BlockType.math => sliceStart > 0 ? sliceStart - 1 : 0,
+            //
+            // ★★★ 2026-11-01（临时实验，未提交）：**撤掉"多认领前面那一格"**。
+            //   理由见 `notes/design/位点与结构导航.md` §6.5（2026-11-01 复核）＋台账 F13/F14：
+            //   ① 行间块独占整行，`sliceStart - 1` 要么是**上一行的末尾**（归那一行）、
+            //      要么是**段落分隔符**（零高度、不是位置）、要么是**前一块自己最后一行的行尾**
+            //      —— 三种都不是"块的行内位置"；
+            //   ② 当初加它的理由是"与行内公式两端对称"，而那个对称不成立（行内两端是同行里的
+            //      字符间隙，行间两端是行/段的边界）；
+            //   ③ 现场只有"块之后那一格"（`acceptTo`）有用户实测，`acceptTo` 不动。
+            //   ⇒ 块的行首 = 自己的 `$$` 那一格。
+            BlockType.math => sliceStart,
             BlockType.divider => sliceStart,
             _ => null,
           },
@@ -1469,17 +1451,6 @@ class DocViewState extends State<DocView> {
     final snippet = s.length > 24 ? '${s.substring(0, 24)}…' : s;
     return '$name「$snippet」';
   }
-
-  /// 空行要不要把"行首那一格的光标"**让给下一个单元**（2026-11-01 补）。
-  ///
-  /// 只让给**块**：行间公式 / 分界线 / 分页符 —— 它们自己会画"块之前/之后"的边界条，
-  /// 若空行也画就是同一格两根竖条（批 23 / 批 38 的病灶）。
-  /// **普通段落/标题/列表不让**：它们不画边界条，让了就两处都没有 ⇒ 光标消失
-  /// （用户 2026-11-01 实测：本行数学子位点按 Enter、下一行已有文本）。
-  static bool _blankYieldsTo(_Unit u) =>
-      u.type == BlockType.math ||
-      u.type == BlockType.divider ||
-      u.type == BlockType.pageBreak;
 
   /// 块间距（挂在该块第一个 FlowUnit 的 leadingGap 上）
   double _gapBefore(BlockType t) {
@@ -1652,27 +1623,20 @@ class DocViewState extends State<DocView> {
         //      `caretAbs > renderEnd` **永远不成立**（2026-10-16 实测：用户看到的
         //      "行间还是分母位高度"就是这个），块后那一格会退回数学层标准。
         final int? rawCaret = _caret;
-        // ★★★ 2026-10-24（批 21，用户实测"有时候会出现同时存在两个光标"）：
-        //   边界竖条只在光标**紧贴**这一块时才画 —— 原来是 `< / >`，
-        //   于是"两个行间块之间那一段空白"同时满足 A 的"块之后"和 B 的"块之前"
-        //   ⇒ **两个块各画一根竖条** ⇒ 屏幕上两根光标。
-        //   改成**相等**判据：A 只认 `A.end`、B 只认 `B.start - 1`。
+        // ★★★ 2026-11-01：**"连改三处"的历史在这里收口**。
         //
-        //   ★ 但两个**紧挨着**的行间块（中间只有一个 `\n`）会让这个格**同时**属于
-        //     A 的"块之后"与 B 的"块之前" ⇒ 仍然两根。判据：本块左邻是不是**另一个行间块的收尾 `$$`**
-        //     （`buf[renderBase-1] == '\n' && buf[renderBase-2] == '$'`）⇒ 这一格**让给左边那块**
-        //     （它画"块之后"），本块不画"块之前" ⇒ 共享格上恒为**一根**竖条。
-        final String src = widget.buffer.buf;
-        // 左邻是不是**另一个行间块的收尾 `$$`**（`acceptFrom` 那一格是换行、再前一格是 `$`）
-        final bool sharesLeftCell = u.acceptFrom >= 1 &&
-            u.acceptFrom < src.length &&
-            src[u.acceptFrom] == '\n' &&
-            src[u.acceptFrom - 1] == r'$';
+        // 批 21 发现"两个紧挨的块各画一根"⇒ 把 `< / >` 改成**相等**判据；
+        // 批 22 发现"两个单元的区间重叠"⇒ 加"共享格让给左边"（`sharesLeftCell`）；
+        // 批 23 发现"空行与下一块抢同一格"⇒ 加"空行让位"。
+        // **三次都是同一个病**：块认领了 `sliceStart - 1`（块**前**面那一格），
+        // 而那一格在三种真实文档里分别属于：上一行的末尾 / 段落分隔符（不是位置）/
+        // 前一块自己最后一行的行尾 —— 没有一种该归本块。
+        // ⇒ 认领改成 `sliceStart`（块自己的行首）后，**重叠在构造上就不存在了**，
+        //   `sharesLeftCell` 与"空行让位"两条特例一并删除（见 `blockEdgeClaim` 的注释）。
         final ({bool before, bool after}) edge = blockEdgeClaim(
           caret: rawCaret,
           acceptFrom: u.acceptFrom,
           acceptTo: u.acceptTo,
-          sharesLeftCell: sharesLeftCell,
         );
         final bool beforeBlock = edge.before;
         final bool afterBlock = edge.after;
@@ -1687,12 +1651,11 @@ class DocViewState extends State<DocView> {
             child: EmptyMathMark(
               width: display * 1.2,
               height: display * 1.1,
-              // ★ 批 22：共享那一格让给左边那块 ⇒ 本块不画（否则屏幕上两根光标）
+              // ★ 2026-11-01：不再有"共享格让给左边"（重叠在构造上已消失）
             showCaret: blockShowsCaret(
                 caret: rawCaret,
                 acceptFrom: u.acceptFrom,
-                acceptTo: u.acceptTo,
-                sharesLeftCell: sharesLeftCell),
+                acceptTo: u.acceptTo),
               // ★ F16：导出抓图时不画这个虚线小框（它是编辑态的标记）
               showEditingAids: !_hideForCapture,
             ),
@@ -1724,13 +1687,12 @@ class DocViewState extends State<DocView> {
             // ★ ⑤ 选区：行间公式整块是一个对象（用户拍板）—— 被选中就铺整块
             selFrom: selFrom,
             selTo: selTo,
-            // 块前那一格（`renderBase - 1`）也要画 —— 它已被本单元认领（acceptFrom）
-            // ★ 批 22：共享那一格让给左边那块 ⇒ 本块不画（否则屏幕上两根光标）
+            // 块**自己的行首**那一格（`acceptFrom = $$` 的位置）也要画 —— 它已被本单元认领
+            // ★ 2026-11-01：不再有"共享格让给左边"（重叠在构造上已消失）
             showCaret: blockShowsCaret(
                 caret: rawCaret,
                 acceptFrom: u.acceptFrom,
-                acceptTo: u.acceptTo,
-                sharesLeftCell: sharesLeftCell),
+                acceptTo: u.acceptTo),
             // ★ 批 16：脚本槽 ⇒ 竖条变矮（判据同上，源码位点）
             caretScript: caretScript,
             // ★ F8：主行位点 ⇒ 只在最高的那类字形里选行
@@ -2216,34 +2178,13 @@ class DocViewState extends State<DocView> {
           final double gapBefore = atStart ? 0.0 : _gapBefore(u.type);
           final List<double> dys = _blankDys(rows.length, gap: gapBefore);
           final int idx = rows.isEmpty ? -1 : (_caretLineIndexInRun(rows) ?? -1);
-          // ★★★ 2026-11-01（用户实测：Enter 之后光标在空行上、打得进字，但**看不见**）：
-          //   原来"共享格一律让给块"，可块**自己也可能不画** —— `blockShowsCaret` 里
-          //   `sharesLeftCell && caret == acceptFrom` 时它让给左边那块（批 22 的口径）
-          //   ⇒ 空行槽让位、块也不画 ⇒ **两处都不画 ⇒ 光标消失**（只剩旁边那根淡色刻度）。
-          //   判据改成：**确认块真的会画，才让**。
-          final bool yieldsToBlock = _blankYieldsTo(u);
-          final String srcBuf = widget.buffer.buf;
-          final bool blockWillDraw = yieldsToBlock &&
-              blockShowsCaret(
-                caret: _caret,
-                acceptFrom: u.acceptFrom,
-                acceptTo: u.acceptTo,
-                sharesLeftCell: u.acceptFrom >= 1 &&
-                    u.acceptFrom < srcBuf.length &&
-                    srcBuf[u.acceptFrom] == '\n' &&
-                    srcBuf[u.acceptFrom - 1] == r'$',
-              );
-          final bool drawsCaret = idx >= 0 &&
-              blankLineDrawsCaret(
-                caret: _caret,
-                blankStart: rows[idx],
-                // ★★★ 2026-11-01（反馈 2 续）：**只让给"块"（行间公式 / 分界线 / 分页符）**。
-                //   原来无条件传 `u.acceptFrom` ⇒ 空行后面跟**普通段落**时也把光标让掉，
-                //   而那个段落自己又不在这格画 ⇒ 两处都不画 ⇒ **光标消失**
-                //   （用户实测：本行数学子位点按 Enter、下一行已有文本）。
-                //   批 23 定的本意就是"空行后是普通段落 ⇒ 照常画"，只是调用处没分类型。
-                nextAcceptFrom: blockWillDraw ? u.acceptFrom : null,
-              );
+          // ★★★ 2026-11-01：**空行不再让位给块**。
+          //   原来这里是"共享格让位"（批 22/23 的口径）：空行行首 == 下一块的 `acceptFrom`
+          //   ⇒ 空行槽不画、由块画那根"块之前"边界条。
+          //   现在块的认领起点是**它自己的行首**（`$$` 那一格），与空行行首相差 1 ⇒
+          //   **两格不再重合** ⇒ 空行照常自己画，块画它自己那一格，天然各一根。
+          //   （"让位"整条判据随之删除；`blankLineDrawsCaret` / `_blankYieldsTo` 已移除。）
+          final bool drawsCaret = idx >= 0 && _caret == rows[idx];
           // ★ 没有真行可落（这一片只有**段距**）⇒ 它归**下一段**：点它落下一段行首。
           //   判据：段距是 `leadingGap`，挂在下一段的 item 上、页首还会被丢掉 ⇒ 属于下一段。
           final List<int> land = rows.isEmpty ? <int>[u.acceptFrom] : rows;

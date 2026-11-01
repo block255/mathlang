@@ -1,24 +1,30 @@
-// 批 40 · **光标归属的全域守卫**（先红后绿）
+// 批 40 · **光标归属的全域守卫**（先红后绿）；★★ 2026-11-01 收紧并扩语料。
 //
-// 不变量（2026-10-28 修订 —— 用户拍板"段间距不承接字符"）：
-//   ① 每个偏移**要么**有一根光标（它是某个视觉行的行首/行尾），
+// ## 不变量（2026-11-01 版，用户拍板后的口径）
+//   ① 每个偏移**要么恰好一根光标**（它是某个视觉行的行首/行尾），
 //      **要么**它是**段落分隔符**（两段之间那个零高度的空行）⇒ 那时**一根都不许有**；
-//   ② 有光标时，同一个偏移的所有竖条必须落在**同一行**（`top` 相同）—— 分处两地就是"双光标"。
-//      ★ 允许"同一像素上叠两根"（块边界条 + 光标条的重叠是历史行为，不是这次的病）。
+//   ② 「恰好一根」是**计数**，不是"同一行" —— 旧版允许"同一像素叠两根"，
+//      正是这条宽松让 F13（块边缘一根 + 空行行首一根）躲过了守卫。
 //
-// ★★ 为什么改了命题（2026-10-28）：2026-10-26 那版写的是「每个偏移**至少**有一根」——
-//   **那条命题本身是错的**。分隔符那一格在版面上**没有行盒**（高度 0），它不该有位置；
-//   而"每个偏移都必须有"逼着渲染层给它编一个 y ⇒ 只能画进段距 ⇒ 用户看到的
-//   「段间距能当一个容器行把光标放进去」。**用实现迁就一条错的断言**，这就是那次返工的根。
+// ## 这一版修掉的两个守卫缺陷（2026-11-01 复盘）
+//   ① **语料里一份行间块都没有** ⇒ 块的那条分支从来没跑过（F13 就长在那儿）。
+//      现在语料里有一半是 `$$…$$`：块前紧贴文字 / 块前空一行 / 两块紧贴 / 块在文首。
+//   ② **只数 `Container(width:1.5)`** ⇒ 而**行间块的竖条是 `CustomPaint` 画的**
+//      （`MathCaretPainter`），数不到。现在两种都数。
 //
-// 这份文档是**判据本身**的守卫：批 38/38-回归/39 三次都是在"谁画光标"上加条件，
-// 每次补一头漏一头。有了它，任何一处判据改坏都会在这里红。
+// ## 为什么命题是"恰好一根"而不是"至少一根"
+//   2026-10-26 那版写的是「每个偏移**至少**有一根」，被 2026-10-28 推翻：
+//   分隔符那一格在版面上**没有行盒**（高度 0），它不该有位置；
+//   逼着渲染层给它编一个 y，就会变成用户说的"段间距能当一个容器行"。
+//   ⇒ 命题必须是**有且只有一根 / 分隔符零根**。
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mathlang/core/doc_buffer.dart';
-import 'package:mathlang/editor/blank_runs.dart';
-import 'package:mathlang/editor/edit_view.dart';
+import 'package:mathlang/core/doc_settings.dart';
+import 'package:mathlang/core/paragraph_break.dart';
+import 'package:mathlang/editor/doc_view.dart';
+import 'package:mathlang/render/math_caret.dart';
 
 Future<DocBuffer> _mount(WidgetTester tester, String doc) async {
   tester.view.physicalSize = const Size(900, 5200);
@@ -27,69 +33,57 @@ Future<DocBuffer> _mount(WidgetTester tester, String doc) async {
   addTearDown(tester.view.resetDevicePixelRatio);
   final DocBuffer buf = DocBuffer(doc);
   await tester.pumpWidget(MaterialApp(
-    home: Scaffold(body: SingleChildScrollView(child: EditView(buffer: buf))),
+    home: Scaffold(
+      body: SingleChildScrollView(
+        child: DocView(buffer: buf, settings: DocSettings.defaults),
+      ),
+    ),
   ));
-  tester.state<EditViewState>(find.byType(EditView)).focusInput();
-  await tester.pumpAndSettle();
+  for (var i = 0; i < 8; i++) {
+    await tester.pump();
+  }
   return buf;
 }
 
-/// 光标竖条的 (left, top)（`Container(width:1.5)` 那一族）
-List<Offset> _bars(WidgetTester tester) {
-  final List<Offset> out = <Offset>[];
+/// 屏上**所有**竖条的位置：(left, top) ＋ 来源标签。
+///
+/// 两个来源都要数：
+///   · 文本层 / 空行槽 / 末页槽：`Container(width:1.5)`；
+///   · **行间块**：`MathCaretPainter`（`CustomPaint` 画的，`Container` 数不到 —— 这正是旧版的漏）。
+List<(Offset, String)> _bars(WidgetTester tester) {
+  final List<(Offset, String)> out = <(Offset, String)>[];
   for (final Element e in find.byType(Container).evaluate()) {
     final Widget w = e.widget;
     if (w is! Container) continue;
     final BoxConstraints? c = w.constraints;
     if (c == null || c.minWidth != 1.5 || c.maxWidth != 1.5) continue;
     final RenderObject? ro = e.renderObject;
-    if (ro is RenderBox && ro.hasSize) out.add(ro.localToGlobal(Offset.zero));
+    if (ro is RenderBox && ro.hasSize) {
+      out.add((ro.localToGlobal(Offset.zero), 'text'));
+    }
   }
-  out.sort((Offset a, Offset b) => a.dy.compareTo(b.dy));
+  for (final Element e in find.byType(CustomPaint).evaluate()) {
+    final CustomPainter? p = (e.widget as CustomPaint).foregroundPainter;
+    if (p is! MathCaretPainter || !p.caretVisible) continue;
+    final RenderObject? ro = e.renderObject;
+    if (ro is! RenderBox) continue;
+    out.add((ro.localToGlobal(p.rect.topLeft), 'math'));
+  }
+  out.sort(((Offset, String) a, (Offset, String) b) => a.$1.dy.compareTo(b.$1.dy));
   return out;
 }
 
-Future<({int count, Set<double> tops})> _at(
-    WidgetTester tester, DocBuffer buf, int off) async {
-  buf.setCaret(off);
-  await tester.pump();
-  await tester.pump();
-  final List<Offset> bars = _bars(tester);
-  return (
-    count: bars.length,
-    tops: <double>{for (final Offset o in bars) o.dy.roundToDouble()},
-  );
-}
-
-/// 文档里**所有"不是位置"的偏移** = 段落分隔符那一格（`blankRowStart` 给出的前缀）。
+/// 文档里**不是位置**的偏移 = 段落分隔符（`core/paragraph_break.dart` 的判据）。
 Set<int> _separators(String s) {
   final Set<int> out = <int>{};
-  final List<int> heads = <int>[0];
-  for (var i = 0; i < s.length; i++) {
-    if (s[i] == '\n') heads.add(i + 1);
-  }
-  var prevBlank = false;
-  for (final int h in heads) {
-    if (h >= s.length) break; // 文末 EOF 不是数据行
-    final int nl = s.indexOf('\n', h);
-    final int end = nl < 0 ? s.length : nl;
-    final bool blank = s.substring(h, end).trim().isEmpty;
-    if (blank && !prevBlank) {
-      final List<int> run = blankRunFrom(s, h);
-      final int start = blankRowStart(
-        atDocStart: h == 0,
-        atDocEnd: run.isNotEmpty && run.last + 1 >= s.length,
-      );
-      for (var k = 0; k < start && k < run.length; k++) {
-        out.add(run[k]);
-      }
-    }
-    prevBlank = blank;
+  for (var i = 1; i < s.length; i++) {
+    if (isParagraphSeparator(s, i)) out.add(i);
   }
   return out;
 }
 
 const Map<String, String> kDocs = <String, String>{
+  // ── 纯文本（旧语料，保留：末页槽 / 分页符 / 文首文末空行）──────────────
   '① 单行': '甲\n',
   '② 两段': '甲\n\n乙\n',
   '③ 文末空行': '甲\n\n乙\n\n',
@@ -97,19 +91,19 @@ const Map<String, String> kDocs = <String, String>{
   '⑤ 页尾空行 + 分页符': '甲\n\n乙\n\n\n\n\n<!-- pagebreak -->\n丙\n',
   '⑥ 分页符在文末': '甲\n<!-- pagebreak -->\n\n\n',
   '⑦ 用户那份单页': 'aa\n\nbb\n\ncc\n\n啊啊\n\n你好\n',
-  // ★★ 2026-10-26 用户手测：「每一次打完字符都有双光标」——
-  //   **打字之后的缓冲区没有尾换行**（`aa` / `aa⏎⏎bb`），这是这批文档里缺的形态。
   '⑨ 打字中（无尾换行）': 'aa\n\nbb\n\ncc',
   '⑩ 单字无尾换行': '甲',
-  // ★ 2026-10-28：**文首空行**（`leadingBlankHeight = n × 行高`，每个都占一行、都没有分隔符）。
   '⑪ 文首两个空行': '\n\n甲\n',
   '⑫ 段间两行空行': '甲\n\n\n\n乙\n',
-  '⑧ 自然溢出': '一行文字\n\n一行文字\n\n一行文字\n\n一行文字\n\n一行文字\n\n'
-      '一行文字\n\n一行文字\n\n一行文字\n\n一行文字\n\n一行文字\n\n'
-      '一行文字\n\n一行文字\n\n一行文字\n\n一行文字\n\n一行文字\n\n'
-      '一行文字\n\n一行文字\n\n一行文字\n\n一行文字\n\n一行文字\n\n'
-      '一行文字\n\n一行文字\n\n一行文字\n\n一行文字\n\n一行文字\n\n'
-      '一行文字\n\n一行文字\n\n一行文字\n\n一行文字\n\n一行文字\n',
+  // ── ★★ 行间块（2026-11-01 新增：旧语料一份都没有 ⇒ F13 从没被这条守卫覆盖）──
+  'Ⓐ 块前紧贴文字': '甲\n\$\$\nx\n\$\$\n乙\n',
+  'Ⓑ 块前空一行（分隔符）': '甲\n\n\$\$\nx\n\$\$\n\n乙\n',
+  'Ⓒ 块前真空行（k=3）': '甲\n\n\n\$\$\nx\n\$\$\n\n\n乙\n',
+  'Ⓓ 两块紧贴': '甲\n\n\$\$\nx\n\$\$\n\$\$\ny\n\$\$\n\n乙\n',
+  'Ⓔ 两块之间空一行': '甲\n\n\$\$\nx\n\$\$\n\n\$\$\ny\n\$\$\n\n乙\n',
+  'Ⓕ 块在文首': '\$\$\nx\n\$\$\n\n乙\n',
+  'Ⓖ 块在文末': '甲\n\n\$\$\nx\n\$\$\n',
+  'Ⓗ 三块紧贴': '\$\$\na\n\$\$\n\$\$\nb\n\$\$\n\$\$\nc\n\$\$\n',
 };
 
 void main() {
@@ -118,24 +112,31 @@ void main() {
       final DocBuffer buf = await _mount(tester, d.value);
       final Set<int> seps = _separators(d.value);
       final List<String> dead = <String>[];
-      final List<String> split = <String>[];
+      final List<String> dup = <String>[];
       final List<String> onSep = <String>[];
       for (var off = 0; off <= d.value.length; off++) {
-        final ({int count, Set<double> tops}) r = await _at(tester, buf, off);
+        buf.setCaret(off);
+        await tester.pump();
+        await tester.pump();
+        final List<(Offset, String)> bars = _bars(tester);
         if (seps.contains(off)) {
-          if (r.count != 0) onSep.add('$off→${r.count} 根');
+          if (bars.isNotEmpty) {
+            onSep.add('$off→${bars.map(((Offset, String) b) => b.$2).join('+')}');
+          }
           continue;
         }
-        if (r.count == 0) dead.add('$off');
-        if (r.tops.length > 1) {
-          split.add('$off→${r.tops.map((double y) => y.toStringAsFixed(0)).join('/')}');
+        if (bars.isEmpty) dead.add('$off');
+        if (bars.length > 1) {
+          dup.add('$off→${bars.length}根 '
+              '${bars.map(((Offset, String) b) => '${b.$2}(${b.$1.dx.toStringAsFixed(0)},'
+                  '${b.$1.dy.toStringAsFixed(0)})').join(' ')}');
         }
       }
       expect(onSep, isEmpty,
           reason: '⚠️ 段落分隔符那一格画了光标（它零高度、不是位置）：${onSep.join('、')}');
       expect(dead, isEmpty, reason: '⚠️ 死区（一根光标条都没有）：${dead.join('、')}');
-      expect(split, isEmpty,
-          reason: '⚠️ 一根光标画在两处（双光标）：${split.take(20).join(' , ')}');
+      expect(dup, isEmpty,
+          reason: '⚠️ 同一偏移出现多根竖条（双光标）：${dup.take(20).join(' , ')}');
     });
   }
 }

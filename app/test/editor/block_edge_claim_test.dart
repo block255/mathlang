@@ -1,143 +1,91 @@
-// ★★★ 2026-10-24（批 21）：**行间块的边界竖条归谁** —— 不许出现"两个光标"。
+// ★★★ 2026-10-24（批 21）建立：**行间块的边界竖条归谁** —— 不许出现"两个光标"。
+// ★★★ 2026-11-01 改写（口径变了，见 `notes/design/位点与结构导航.md` §6.5 与台账 F13/F14）：
 //
-// 用户实测（三个行间块挨着的那一段）："我在中间这块点，有时候会出现同时存在两个光标的情况"。
-// 真因：**紧挨着的两个行间块**让同一个偏移**同时**属于 A 的"块之后"与 B 的"块之前"
-//   ⇒ 两块各画一根竖条。旧判据是 `< / >`（比大小）⇒ 连离得**更远**的空白也同时满足两块。
+// ## 改了什么
+// 旧口径：块认领 `sliceStart - 1`（块**前面**那一格）＋ 一条"共享格让给左边那块"的特例
+//        （`sharesLeftCell`）。
+// 新口径：块只认 **它自己占的那一格起**（`acceptFrom = sliceStart` ＝ 自己的 `$$`），
+//        于是相邻两块 A=[11,22] / B=[23,34] **不再重叠** ⇒ 特例整条删除。
 //
-// ★ 边界用的是单元自己认领的区间 `acceptFrom` / `acceptTo`（不是 `renderBase ± 1`）：
-//   行间块认领的是**整片源码**（`$$` 围栏与行尾都算，见文档里 ③-C 那条），
-//   所以"块前/块后"那两格就是 `acceptFrom` / `acceptTo`。
+// ## 为什么（三条现场都指向同一个病）
+// 那一格在真实文档里只有三种身份，**没有一种该归本块**：
+//   · 上一行文字的末尾 ⇒ 归那一行；
+//   · 段落分隔符（`\n\n` 的第二个、零高度）⇒ **不是位置**，谁都不该画；
+//   · 前一块自己最后一行的行尾 ⇒ 归前一块（`sharesLeftCell` 当年就是在补这一种）。
+// 当初加它的理由是"与行内公式两端对称"，而那个对称不成立：
+// 行内公式两端是**同一行里的字符间隙**（真实位置），行间块两端是**行 / 段的边界**。
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mathlang/editor/doc_view.dart';
 
 void main() {
-  // 一个行间块认领 [11, 22]：11 = 块前那一格，22 = 块后那一格
-  const int acceptFrom = 11;
-  const int acceptTo = 22;
+  // 两个**紧贴**的行间块：A 认 [11, 22]，B 认 [23, 34]（A 的行尾是 22，B 的行首是 23）
+  const int aFrom = 11;
+  const int aTo = 22;
+  const int bFrom = 23;
+  const int bTo = 34;
 
-  test('★ 紧贴块的两格：各归本块（不多不少）', () {
-    final ({bool before, bool after}) b = blockEdgeClaim(
-        caret: acceptFrom,
-        acceptFrom: acceptFrom,
-        acceptTo: acceptTo,
-        sharesLeftCell: false);
-    expect(b.before, isTrue);
-    expect(b.after, isFalse);
+  group('blockEdgeClaim（边界那两格）', () {
+    test('★ 自己的行首 / 行尾各归本块，别处一概不画', () {
+      final ({bool before, bool after}) atFrom = blockEdgeClaim(
+          caret: aFrom, acceptFrom: aFrom, acceptTo: aTo);
+      expect(atFrom.before, isTrue);
+      expect(atFrom.after, isFalse);
 
-    final ({bool before, bool after}) a = blockEdgeClaim(
-        caret: acceptTo,
-        acceptFrom: acceptFrom,
-        acceptTo: acceptTo,
-        sharesLeftCell: false);
-    expect(a.after, isTrue);
-    expect(a.before, isFalse);
+      final ({bool before, bool after}) atTo = blockEdgeClaim(
+          caret: aTo, acceptFrom: aFrom, acceptTo: aTo);
+      expect(atTo.after, isTrue);
+      expect(atTo.before, isFalse);
+
+      for (final int caret in <int>[aFrom - 3, aFrom + 1, aTo - 1, aTo + 3]) {
+        final ({bool before, bool after}) c =
+            blockEdgeClaim(caret: caret, acceptFrom: aFrom, acceptTo: aTo);
+        expect(c.before || c.after, isFalse, reason: 'caret=$caret');
+      }
+      final ({bool before, bool after}) none =
+          blockEdgeClaim(caret: null, acceptFrom: aFrom, acceptTo: aTo);
+      expect(none.before || none.after, isFalse);
+    });
+
+    test('★★★ 紧贴两块**不再共享任何一格**（新口径的核心）', () {
+      // 旧口径下 aTo == bFrom（同一格两块各画一根）；新口径两者差 1。
+      expect(bFrom, aTo + 1, reason: 'B 的行首紧接在 A 的行尾之后，且**不是同一格**');
+      for (var caret = aFrom; caret <= bTo; caret++) {
+        final ({bool before, bool after}) a =
+            blockEdgeClaim(caret: caret, acceptFrom: aFrom, acceptTo: aTo);
+        final ({bool before, bool after}) b =
+            blockEdgeClaim(caret: caret, acceptFrom: bFrom, acceptTo: bTo);
+        final int n = (a.before || a.after ? 1 : 0) + (b.before || b.after ? 1 : 0);
+        expect(n <= 1, isTrue, reason: 'caret=$caret 被 $n 个块同时画');
+      }
+    });
   });
 
-  test('★★ 共享那一格（左邻是另一块）⇒ 本块不画"块之前"（让给左边那块）', () {
-    final ({bool before, bool after}) shared = blockEdgeClaim(
-        caret: acceptFrom,
-        acceptFrom: acceptFrom,
-        acceptTo: acceptTo,
-        sharesLeftCell: true);
-    expect(shared.before, isFalse, reason: '改前：两块各画一根 ⇒ 屏幕两根光标');
-    expect(shared.after, isFalse);
-  });
+  group('blockShowsCaret（要不要画整根）', () {
+    test('★ 闭区间：两端都归本块，外面一概不画', () {
+      expect(blockShowsCaret(caret: aFrom, acceptFrom: aFrom, acceptTo: aTo), isTrue);
+      expect(blockShowsCaret(caret: aTo, acceptFrom: aFrom, acceptTo: aTo), isTrue);
+      expect(blockShowsCaret(caret: aFrom + 5, acceptFrom: aFrom, acceptTo: aTo),
+          isTrue);
+      // 批 25：光标不在这块的区间里 ⇒ 一律 false（改前只判 `caret != null`）
+      for (final int caret in <int>[aFrom - 1, aTo + 1, 0, 999]) {
+        expect(
+            blockShowsCaret(caret: caret, acceptFrom: aFrom, acceptTo: aTo),
+            isFalse,
+            reason: 'caret=$caret 在 [11,22] 之外');
+      }
+      expect(blockShowsCaret(caret: null, acceptFrom: aFrom, acceptTo: aTo),
+          isFalse);
+    });
 
-  test('★ 离得**远**的空白（既不相邻也不共享）⇒ 两块都不画', () {
-    // 旧判据（`caret > end` / `caret < start`）在这里会**同时**为真 ⇒ 两根竖条
-    for (final int caret in <int>[acceptFrom - 3, acceptTo + 3]) {
-      final ({bool before, bool after}) c = blockEdgeClaim(
-          caret: caret,
-          acceptFrom: acceptFrom,
-          acceptTo: acceptTo,
-          sharesLeftCell: false);
-      expect(c.before || c.after, isFalse, reason: 'caret=$caret');
-    }
-  });
-
-  test('★ 块内（`acceptFrom < caret < acceptTo`）⇒ 走数学层，不画边界条', () {
-    for (final int caret in <int>[acceptFrom + 1, acceptTo - 1]) {
-      final ({bool before, bool after}) c = blockEdgeClaim(
-          caret: caret,
-          acceptFrom: acceptFrom,
-          acceptTo: acceptTo,
-          sharesLeftCell: false);
-      expect(c.before || c.after, isFalse, reason: 'caret=$caret');
-    }
-  });
-
-  test('★★ 共享那一格**只有一个块画光标**（用户：点两个分段中间出现两根）', () {
-    // A 的 acceptTo = B 的 acceptFrom = 同一个偏移 ⇒ 两块都认领 ⇒ 两个 MathWithCaret 都 showCaret
-    expect(
-        blockShowsCaret(
-            caret: acceptFrom,
-            acceptFrom: acceptFrom,
-            acceptTo: acceptTo,
-            sharesLeftCell: true),
-        isFalse,
-        reason: '共享格让给左边那块 ⇒ 本块不画（改前：两块都画 ⇒ 屏幕两根光标）');
-    // 左邻不是行间块 / 光标不在那一格 ⇒ 照常画
-    expect(
-        blockShowsCaret(
-            caret: acceptFrom,
-            acceptFrom: acceptFrom,
-            acceptTo: acceptTo,
-            sharesLeftCell: false),
-        isTrue);
-    expect(
-        blockShowsCaret(
-            caret: acceptTo,
-            acceptFrom: acceptFrom,
-            acceptTo: acceptTo,
-            sharesLeftCell: true),
-        isTrue,
-        reason: '共享的是"块之前"，"块之后"不受影响');
-    expect(
-        blockShowsCaret(
-            caret: null,
-            acceptFrom: acceptFrom,
-            acceptTo: acceptTo,
-            sharesLeftCell: true),
-        isFalse);
-  });
-
-  // ★★★ 批 25：**光标不在这块的区间里 ⇒ 一律 false**（改前的判据只判 `caret != null`，
-  //   于是文档里只要有一个光标，每个公式块的 showCaret 都是 true）。
-  test('★★ 光标**不在**本块区间 ⇒ 不画（区间判据，批 25）', () {
-    for (final int caret in <int>[acceptFrom - 1, acceptTo + 1, 0, 999]) {
-      expect(
-          blockShowsCaret(
-              caret: caret,
-              acceptFrom: acceptFrom,
-              acceptTo: acceptTo,
-              sharesLeftCell: false),
-          isFalse,
-          reason: 'caret=$caret 在本块 [11,22] 之外');
-    }
-    // 闭区间两端仍归本块（块之前 / 块之后那两格，③-C 定的口径）
-    expect(
-        blockShowsCaret(
-            caret: acceptFrom,
-            acceptFrom: acceptFrom,
-            acceptTo: acceptTo,
-            sharesLeftCell: false),
-        isTrue);
-    expect(
-        blockShowsCaret(
-            caret: acceptTo,
-            acceptFrom: acceptFrom,
-            acceptTo: acceptTo,
-            sharesLeftCell: false),
-        isTrue);
-    // 区间内部照常
-    expect(
-        blockShowsCaret(
-            caret: acceptFrom + 5,
-            acceptFrom: acceptFrom,
-            acceptTo: acceptTo,
-            sharesLeftCell: true),
-        isTrue,
-        reason: '共享规则只影响 acceptFrom 那一格');
+    test('★★★ 全域：任意偏移上，紧贴两块最多只有一个声称"光标在我这儿"', () {
+      for (var caret = aFrom; caret <= bTo; caret++) {
+        final bool a =
+            blockShowsCaret(caret: caret, acceptFrom: aFrom, acceptTo: aTo);
+        final bool b =
+            blockShowsCaret(caret: caret, acceptFrom: bFrom, acceptTo: bTo);
+        expect(a && b, isFalse, reason: 'caret=$caret 两块都声称 ⇒ 屏幕两根');
+      }
+    });
   });
 }

@@ -73,24 +73,9 @@ Rect? _caretBar(WidgetTester tester) {
   return all.isEmpty ? null : all.first;
 }
 
-/// ★ ④-4「甲」**瞬时边界刻度**（`MathCaretPainter.tick`）—— 只在这两格出现，离开即消失
-List<Rect> _ticks(WidgetTester tester) {
-  final List<Rect> out = <Rect>[];
-  for (final Element e in find.byType(MathWithCaret).evaluate()) {
-    final RenderObject? ro = e.renderObject;
-    if (ro is! RenderBox) continue;
-    void walk(RenderObject o) {
-      if (o is RenderCustomPaint && o.foregroundPainter is MathCaretPainter) {
-        final Rect? t = (o.foregroundPainter! as MathCaretPainter).tick;
-        if (t != null) out.add(t);
-      }
-      o.visitChildren(walk);
-    }
-
-    walk(ro);
-  }
-  return out;
-}
+// ★ 2026-11-01：`_ticks()` 这个探针函数随「甲」一起删除（刻度已撤，`MathCaretPainter.tick`
+//   字段不存在了）。**新红线**在 `test/render/math_caret_test.dart` 六组那条像素级测试：
+//   「公式外侧除竖条外一个灰像素都不许有」。见台账 F14。
 
 void main() {
   // ─────────────────────────────────────────────────────────────
@@ -302,51 +287,20 @@ void main() {
   });
 
   // ─────────────────────────────────────────────────────────────
-  group('E ④-4「甲」瞬时边界刻度（§6.5：只在公式前后那两格、离开即消失）', () {
-    testWidgets('★ 行中公式：之后那一格 ⇒ 有刻度；文字里、公式内部 ⇒ 没有',
-        (WidgetTester tester) async {
-      final DocBuffer buf = DocBuffer(r'AB$\frac{c}{d}$CD');
-      await _mount(tester, buf);
-
-      // ① 闭合 `$` 之后那一格（15 = 公式之后）
-      buf.setCaret(15);
-      await tester.pump();
-      await tester.pump();
-      expect(_ticks(tester).length, 1,
-          reason: '★ 这两格要看得见"公式的边界"（改前：没有任何提示）');
-
-      // ② 正文文字里（16）⇒ 一格都不该有
-      buf.setCaret(16);
-      await tester.pump();
-      await tester.pump();
-      expect(_ticks(tester), isEmpty, reason: '刻度**只**属公式前后那两格，不许常驻');
-
-      // ③ 公式内部（7 = 分子末尾附近）⇒ 也没有
-      buf.setCaret(7);
-      await tester.pump();
-      await tester.pump();
-      expect(_ticks(tester), isEmpty, reason: '公式内部靠**层级光标**表达，再画刻度就成了"容器感"');
-
-      // ④ "公式之前"（开 `$` 那一格 = 2）—— ★ 这一格被**前面的文字段**先认领了
-      //    （`caretPlacement` 是**先到先得**：文字段 `AB` 覆盖 `[0,2]`）
-      //    ⇒ 它由**文本层**画光标、不属数学段 ⇒ **没有刻度**。
-      //    这不变量要钉住：否则"同一格被两段抢"会变成随机行为。
-      buf.setCaret(2);
-      await tester.pump();
-      await tester.pump();
-      expect(_ticks(tester), isEmpty,
-          reason: '有文字在前时，"公式之前那一格"是**文字段的末尾**（先到先得）⇒ 不画刻度');
-    });
-
-    testWidgets('★ 行首公式：之前那一格（数据上属数学段）⇒ 有刻度',
-        (WidgetTester tester) async {
-      final DocBuffer buf = DocBuffer(r'$\frac{c}{d}$CD');
-      await _mount(tester, buf);
-      buf.setCaret(0); // 开 `$` 那一格，左边没有文字段 ⇒ 由数学段认领（edge=before）
-      await tester.pump();
-      await tester.pump();
-      expect(_ticks(tester).length, 1,
-          reason: '★ 这一格数据上属数学段 ⇒ 必须给"公式边界"提示（画在公式**左外侧**）');
-    });
-  });
+  // E 组（④-4「甲」瞬时边界刻度）**已整组删除** —— 2026-11-01 用户判定撤掉（台账 F14）。
+  //
+  // 原 E 组守的是："公式之后那一格有刻度、文字里没有、公式内部没有、
+  // 行中公式的'之前那一格'归文字段所以也没有"。
+  // 现在刻度整体不存在，这些断言全部失去对象。
+  //
+  // ⇒ **新的红线**不在这个文件里，而在两处：
+  //   ① `test/render/math_caret_test.dart` 六组的像素级测试：
+  //      「公式外侧除竖条外**一个灰像素都不许有**」（防它被悄悄画回来）；
+  //   ② `test/editor/caret_ownership_global_test.dart`：
+  //      「每个可达偏移**恰好一根**竖条」（防"同一格两个主人"再长出来）。
+  //
+  // ★ 仍然成立、且**没有被这次改动动摇**的那条口径：
+  //   行中公式的"之前那一格"（开 `$` 的位置）归**前面的文字段**（先到先得）——
+  //   所以那一格画的是**文字的光标**，与公式无关。守卫仍在 A/B/C/D 组里（同权 + 层级）。
+  // ─────────────────────────────────────────────────────────────
 }
