@@ -895,7 +895,13 @@ _Span? _objectLeftOf(CaretSiteTable t, int rel) {
   //    里面一个可见原子都没有（如 `\text{}`）⇒ 对象就是它自己 —— 否则会变成删不掉的陷阱。
   //    ⚠️ 例外：整个项**本身就是那一个原子**时（`x` / `\alpha`），要走 ③ ——
   //    因为紧跟它的脚本属于它（`x^2` 是一个 TeX 原子）。
-  if (!isOpaqueItem(it)) {
+  //    ⚠️ 例外二（2026-11-01 · B 用户实测）：**裸组后面紧跟 `^`/`_` 时，它是"某个对象的基座"**
+  //      ⇒ 也不能按透明包装只取组里最后一个原子。
+  //      现场：`{f^{\prime}}_{+}` 的"对象之后"退格只删了 `\prime`，留下 `{f^{}}_{+}`。
+  //      探针坐实（16:4x）：那一格先退到挂件起点（§4.0' 那一支），在这里裸组被当包装 ⇒ 删内层；
+  //      而"基座 + 紧跟的脚本"才是 §4.0 的一个对象。
+  //      ⇒ 判据：**后面没跟脚本**才走透明包装（`{ab}` / `\text{abc}` 的逐字编辑不受影响）。
+  if (!isOpaqueItem(it) && _trailingScriptsEnd(reg.items, idx) == it.end) {
     final VisibleAtom? a = _lastAtomIn(t.tex, it.start, it.end, rel);
     if (a != null && !(a.start == it.start && a.end == it.end)) {
       return _Span(_bareScriptStart(t.tex, reg, a.start), a.end);
