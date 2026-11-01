@@ -57,7 +57,24 @@ void main() {
     expect(_newlinesBetween(buf.buf, '后'), 3);
   });
 
-  testWidgets('**行内**公式的分式里按 Enter 也只多一行（用户 11-01 复验没修到的那条）',
+  testWidgets('**文末**的子位点按 Enter ⇒ 只下**一**行（不多下一行）', (WidgetTester t) async {
+    // 用户 2026-11-01 复验：文末按 Enter 时，光标会跑到"空行的再下一个空行"
+    final DocBuffer buf = DocBuffer('前\n\$\$\n\\frac{a}{b}\n\$\$\n');
+    await _mount(t, buf);
+    buf.setCaret(buf.buf.indexOf('{a}') + 1);
+    await t.pumpAndSettle();
+    await t.sendKeyEvent(LogicalKeyboardKey.enter);
+    await t.pumpAndSettle();
+    // 只补 1 个换行，光标落到**紧跟块之后的第一个空行**（= at+1，不是 at+2）
+    final int close = buf.buf.lastIndexOf(r'$$');
+    expect(buf.caret, close + 3, reason: '光标落在块后第一个空行（改前多下一行）');
+    expect(buf.buf.substring(close + 2), '\n\n', reason: '块后只多一个换行');
+    final Finder bars = find.byWidgetPredicate((Widget w) =>
+        w is Container && w.color == const Color(0xFF1E88E5));
+    expect(bars.evaluate().length, 1, reason: '光标必须看得见');
+  });
+
+  testWidgets('**行内**公式的分式里按 Enter：段间只多一个真行空行，光标不消失',
       (WidgetTester t) async {
     final DocBuffer buf = DocBuffer('前\n文字 \$\\frac{a}{b}\$ 后\n');
     await _mount(t, buf);

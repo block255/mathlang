@@ -433,11 +433,25 @@ class EditViewState extends State<EditView> {
       if (inStructure || enterRegion.isDisplay) {
         final int at = enterRegion.closeEnd.clamp(0, _buf.length);
         _mutate(() {
-          // ★★★ 2026-11-01（用户复验：空行出来了但**光标消失**）：
-          //   版面模型里"公式行 + `\n`×k + 下一行"的 k 决定中间有几行：
-          //     k=1 ⇒ 同一段的两行（行距）；k=2 ⇒ 一个空行但**零高度**（只是段距）；
-          //     k=3 ⇒ **一个真行**的空行（能承接光标）—— 只读基准 2 的 A-空行-B 就是它。
-          //   所以"只多一行"= 把 k 凑到 **3**，再把光标放到那个**真行**上（第 2 个空行的行首）。
+          // ★★★ 2026-11-01（用户复验两轮）：两种位置的空行模型**不一样** ——
+          //   · **段间**（后面还有正文）：`A + \n×k + B` 的 k=1 ⇒ 同段两行、k=2 ⇒
+          //     一个空行但**零高度**（只是段距）、k=3 ⇒ 一个**真行**的空行。
+          //     ⇒ 要凑到 k=3，光标落第 2 个空行行首（at+2，第一个是零高分隔符）。
+          //   · **文末**（`at` 之后全是换行符）：每个空行都是真行（`trailingBlankHeight = n×行高`，
+          //     没有"分隔符"那一说）⇒ 只补 **1 个** `\n`，光标落**下一条**空行行首（at+1）。
+          //   第一版两种情况都用"凑 k=3 + at+2" ⇒ 文末会**多下一行**（用户实测）。
+          var tail = true;
+          for (var i = at; i < _buf.length; i++) {
+            if (_buf.buf[i] != '\n') {
+              tail = false;
+              break;
+            }
+          }
+          if (tail) {
+            _buf.replace(at, at, '\n');
+            _buf.setCaret((at + 1).clamp(0, _buf.length));
+            return;
+          }
           int k = 0;
           while (at + k < _buf.length && _buf.buf[at + k] == '\n') {
             k++;
