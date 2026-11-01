@@ -155,5 +155,40 @@ void main() {
       expect(e.deletes, isTrue);
       expect(afterSpace.replaceRange(e.from!, e.to!, ''), '甲\n\n\n乙\n');
     });
+
+    testWidgets('★ 空块要能**点进去**（点虚线框 ⇒ 光标落在块的内容起点）',
+        (WidgetTester tester) async {
+      const String afterSpace = '甲\n\n\$\$\n\\ \n\$\$\n\n乙\n';
+      tester.view.physicalSize = const Size(900, 2600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final DocBuffer buf = DocBuffer(afterSpace);
+      int? tapped;
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: DocView(
+              buffer: buf,
+              settings: DocSettings.defaults,
+              onTapOffset: (int at, Offset g, TapSource s) => tapped = at,
+            ),
+          ),
+        ),
+      ));
+      for (var i = 0; i < 10; i++) {
+        await tester.pump();
+      }
+      // 点虚线小框的正中间
+      final Finder mark = find.byType(EmptyMathMark);
+      expect(mark, findsWidgets);
+      await tester.tap(mark.first);
+      await tester.pump();
+      expect(tapped, isNotNull,
+          reason: '★ 改前：空块**没有任何点击处理** ⇒ 点它什么都不发生（用户："3 点不进去"）');
+      final int contentStart = displayTexStartAt(afterSpace, afterSpace.indexOf(r'$$'))!;
+      expect(tapped, contentStart,
+          reason: '★ 落点应当与方向键进块一致（块的内容起点）');
+    });
   });
 }

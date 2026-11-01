@@ -1660,16 +1660,27 @@ class DocViewState extends State<DocView> {
         final bool inkless = isInklessTex(text);
         if (text.trim().isEmpty || inkless) {
           return Center(
-            child: EmptyMathMark(
-              width: display * 1.2,
-              height: display * 1.1,
-              // ★ 2026-11-01：不再有"共享格让给左边"（重叠在构造上已消失）
-              showCaret: blockShowsCaret(
-                  caret: rawCaret,
-                  acceptFrom: u.acceptFrom,
-                  acceptTo: u.acceptTo),
-              // ★ F16：导出抓图时不画这个虚线小框（它是编辑态的标记）
-              showEditingAids: !_hideForCapture,
+            // ★★★ 2026-11-01（用户实测："3 点不进去"）：**空块要能点进去**。
+            //   原来这里只有 `EmptyMathMark`，**没有任何点击处理** ⇒ 点它什么都不发生
+            //   （只有箭头能移进去）。而"抓出来的鬼"最自然的动作就是**点它、看它、删它**。
+            //   ⇒ 点一下 ⇒ 光标落在**块的内容起点**（`u.renderBase`，与方向键同一个落点）。
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTapDown: widget.onTapOffset == null
+                  ? null
+                  : (TapDownDetails d) => widget.onTapOffset!(
+                      u.renderBase, d.globalPosition, TapSource.math),
+              child: EmptyMathMark(
+                width: display * 1.2,
+                height: display * 1.1,
+                // ★ 2026-11-01：不再有"共享格让给左边"（重叠在构造上已消失）
+                showCaret: blockShowsCaret(
+                    caret: rawCaret,
+                    acceptFrom: u.acceptFrom,
+                    acceptTo: u.acceptTo),
+                // ★ F16：导出抓图时不画这个虚线小框（它是编辑态的标记）
+                showEditingAids: !_hideForCapture,
+              ),
             ),
           );
         }
