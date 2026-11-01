@@ -191,6 +191,37 @@ class _MathWithCaretState extends State<MathWithCaret> {
     });
   }
 
+  /// **这一行盒子的中心**（相对本公式根盒的局部 y）；拿不到 = `null`。
+  ///
+  /// ★★★ 2026-11-01（用户两图对比 · 尺子收成一处）：
+  ///   文字侧竖条是怎么放的？`_caretInset = (行盒 − 1.25em)/2`
+  ///   ⇒ 竖条**居中于行盒**。实测（16pt / 行距 1.7，行盒 27.2）：
+  ///     段落顶 95.6、公式顶 101.3、文字条 99.0..119.0（中心 109.0）
+  ///     ⇒ 文字条顶 = 段落顶 + 3.4 ≈ 段落顶 + (27.2 − 20)/2 ✓
+  ///   而行内公式就**长在这一行里** ⇒ 它的行盒中心 = 段落盒中心（段是单行时）。
+  ///   所以这里不再挑字形、也不再问引擎的排版器（后者比我们低 2.3px：
+  ///   它按字体自然行高 ≈22.6 算，我们按"字号×行距" = 27.2 算）。
+  ///
+  /// ★ 只在**单行段**上生效（罕见的多行段退回旧行为，绝不画错位置）：
+  ///   判据 = 段盒高不超过 1.25em 的 1.6 倍（行距上限内）。
+  double? _lineBoxCenterLocal(RenderObject root) {
+    if (root is! RenderBox || !root.hasSize) return null;
+    RenderParagraph? para;
+    RenderObject? cur = root.parent;
+    while (cur != null) {
+      if (cur is RenderParagraph) {
+        para = cur;
+        break;
+      }
+      cur = cur.parent;
+    }
+    if (para == null || !para.hasSize) return null;
+    final double h = textCaretHeight(widget.textFontSize ?? widget.fontSize);
+    if (para.size.height > h * 1.6) return null; // 多行段 ⇒ 不知道是哪一行，退回
+    final Offset rootInPara = root.localToGlobal(Offset.zero, ancestor: para);
+    return -rootInPara.dy + para.size.height / 2;
+  }
+
   void _measure() {
     final BuildContext? mc = widget.mathKey.currentContext;
     if (mc == null) return;
@@ -243,7 +274,15 @@ class _MathWithCaretState extends State<MathWithCaret> {
         if (mainRowInline) {
           final double h =
               textCaretHeight(widget.textFontSize ?? widget.fontSize);
-          final double cy = rowBox.center.dy;
+          // ★★★ 2026-11-01（用户两图对比 · 尺子收成一处）：**中心跟着"行"走**。
+          //
+          // 现状（探针：同一格 × 三种邻居）= 11.7 / 7.5 / 7.5 ⇒ 跳 4.2px，
+          //   且 11.7 那档比文字侧低 4.0px —— 因为它取的是"挑中的那个字形盒"的中心。
+          // 现在取**行盒中心**（= 段落盒中心，单行段）——与文字侧那条 `_caretInset` 同源：
+          //   文字侧 = 行顶 + (行盒 − 1.25em)/2 + 1.25em/2 = **行盒中心**。
+          // ⇒ 两处只有一个定义（"行盒中心"），邻居无关。拿不到就退回旧行为。
+          final double? lineCenter = _lineBoxCenterLocal(root);
+          final double cy = lineCenter ?? rowBox.center.dy;
           bar = Rect.fromLTRB(
               at.dx, cy - h / 2, at.dx + widget.caretWidth, cy + h / 2);
         } else {
