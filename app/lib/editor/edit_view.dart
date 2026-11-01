@@ -498,6 +498,17 @@ class EditViewState extends State<EditView> {
   void _commitText(String rawText,
       {int autoWrapped = 0, bool isEnter = false, bool padDone = false}) {
     if (rawText.isEmpty) return;
+    // ★★★ 2026-11-01（用户拍板 2）：**撇不写裸字符** —— 数学段里打 `'` 直接写 `^{\prime}`。
+    //   为什么：`'` 是 `^{\prime}` 的语法糖，但裸字符在模型里只是"普通字符" ⇒ `f'` 不是
+    //   一个对象（后面的 `_{-}` 会贴到**撇**身上）⇒ 删除行为随打字顺序变（用户实测：
+    //   `f'_{+}` 在 f 后退格只删 f；`f_{-}'` 在整体后退格只删 f_{-}，残骸相反）。
+    //   写成 `^{\prime}` 之后，撇就是普通的 `^` 脚本，与 `x^{2}` 同一套模型。
+    //   ★ 老文档里的裸撇由 `normalizeTex` 在提交点兜底（render/normalize.dart）。
+    if (rawText == "'" && !isEnter && !_buf.hasSelection) {
+      if (mathRegionAt(_buf.buf, _buf.caret) != null) {
+        rawText = _hasBaseAtom() ? r'^{\prime}' : r'{}^{\prime}';
+      }
+    }
     // ★★★ 2026-10-28：**两条 Enter 通道汇到这里**（键事件走 `_onKey` → `_enter()`；
     //   平台文本通道 / IME 提交到达时就是一段裸 `\n`）。
     //   写几个换行只有一份规则（`_enterPayload`），所以这里转一次手 —— 否则
@@ -679,6 +690,11 @@ class EditViewState extends State<EditView> {
   ///   所以"删掉触发的词 + 插入模板"必须合成**一次**写入，否则要按两下 `Ctrl+Z`）。
   void _insertTexViaSymbolPath(String tex,
       {required bool template, bool display = false}) {
+    // ★★★ 2026-11-01（用户拍板 2）：面板「导数撇」也不写裸字符（与打字同一条口径）。
+    if (tex == "'") {
+      final MathRegion? mr0 = mathRegionAt(_buf.buf, _buf.caret);
+      if (mr0 != null) tex = _hasBaseAtom() ? r'^{\prime}' : r'{}^{\prime}';
+    }
     // ★★★ 2026-11-01（反馈 7）：面板/快捷键连点「下标」不再套娃（判据见 [_scriptNestRefused]）。
     if (template && (tex == '^{}' || tex == '_{}') &&
         _scriptNestRefused(tex.startsWith('^'))) {

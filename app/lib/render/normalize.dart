@@ -83,6 +83,62 @@ NormalizeResult normalizeTex(String tex, int caretRel) {
     //   已知代价（用户 2026-11-01 接受）：老文档里已存在的裸参数（导入的 md 如 `a_n`）
     //   不会被自动补括号 ⇒ 那几格的「对象之后」仍然缺；新写的都带括号。
 
+    // ★★★ 2026-11-01（用户拍板 1–4）：**撇号归一成 `^{\prime}`**。
+    //
+    // 为什么（探针实测，`f'_{+}` / `f_{+}'` 两种打字顺序）：
+    //   `'` 是 `^{\prime}` 的语法糖，但**在源码里它只是个普通字符** ⇒ `f'` 不是"一个对象"，
+    //   而是「`f`」+「带下标的撇」；`_{-}` 于是贴在**撇**身上，不贴在 f 身上。
+    //   后果全是"顺序依赖"：退格在 off=7 只删 `f`（留 `'_{+}`）、在 off=5 只删 `f_{-}`（留 `'`）；
+    //   两种顺序删出来的残骸相反，且"f 与下标之间"那一格的语义也不一致。
+    // 归一之后：`f'` → `f^{\prime}` ⇒ 撇变成**普通的 `^` 脚本**，与 `x^{2}` 同一套模型
+    //   ⇒ 一个对象、删整块、位点一致，**打字顺序不再影响任何行为**。
+    // ★ 渲染完全等价（实测：`f'` 与 `f^{\prime}` 都是 14.39×13.89、叶盒 `"f""′"` 一致；
+    //   `f'_{-}` / `f^{\prime}_{-}` / `f_{-}'` / `f_{-}^{\prime}` 四种一律 18.91×20.31）。
+    // ★ 跳过 `\text{}` / `\mbox{}` / `\hbox{}` 里的撇（那是正文，`don't` 不许改）。
+    {
+      final List<({int from, int to})> textRanges = _textArgRanges(cur);
+      var i = 0;
+      while (i < cur.length) {
+        if (cur[i] != "'") {
+          i++;
+          continue;
+        }
+        var j = i;
+        while (j < cur.length && cur[j] == "'") {
+          j++;
+        }
+        final bool inText = textRanges
+            .any((({int from, int to}) g) => i >= g.from && j <= g.to);
+        if (!inText) {
+          final int n = j - i;
+          final String repl = '^{${List<String>.filled(n, r'\prime').join()}}';
+          edits.add((from: i, to: j, repl: repl, lead: 0));
+        }
+        i = j;
+      }
+    }
+
+    // ★★★ 2026-11-01（用户拍板 1–4，第二步）：**脚本顺序归一 —— 撇的脚本永远排第一**。
+    //
+    // 为什么需要它：`f'_{+}` 与 `f_{+}'` 是**同一张画面**的两种写法
+    // （`f^{\prime}_{+}` / `f_{+}^{\prime}`，实测两者渲染完全一致 18.91×20.31）。
+    // 但它们的**位点 / 删除行为不同**（`f^{\prime}_{+}` 末尾退格只删挂件、`f_{+}^{\prime}` 删整块）
+    // ⇒ 只把撇归一成 `^{\prime}` 还不够，必须让**两种打字顺序产出同一份源码**。
+    // 判据：TeX 里同一基座的多个脚本**顺序无关** ⇒ 把 `^{\prime…}` 移到最前，
+    //   其余脚本保持原相对顺序。一轮只换一对，由外层 ≤8 轮循环收敛，幂等。
+    final RegExp scriptThenPrime = RegExp(
+      r'(_\{[^{}]*\}|\^\{[^{}]*\})(\^(?:\{(?:\\prime)+\}))',
+    );
+    for (final Match m in scriptThenPrime.allMatches(cur)) {
+      if (m.group(1)!.startsWith(r'^{\prime')) continue; // 已经是"撇在前" ⇒ 不动
+      edits.add((
+        from: m.start,
+        to: m.end,
+        repl: '${m.group(2)!}${m.group(1)!}',
+        lead: 0,
+      ));
+    }
+
     if (edits.isEmpty) break;
 
     // 去掉互相重叠的：**外层优先**（嵌套的空结构只删最外层就够）
@@ -110,4 +166,35 @@ NormalizeResult normalizeTex(String tex, int caretRel) {
     total += kept.length;
   }
   return NormalizeResult(cur, caret, total);
+}
+
+/// `\text{}` / `\mbox{}` / `\hbox{}` 的**内容区间**（不含命令名与花括号本身）。
+///
+/// 用途：撇号归一成 `^{\prime}` 时要跳过正文里的撇（`\text{don't}` 是散文，不是数学）。
+List<({int from, int to})> _textArgRanges(String tex) {
+  final List<({int from, int to})> out = <({int from, int to})>[];
+  for (final String cmd in <String>[r'\text', r'\mbox', r'\hbox']) {
+    var i = 0;
+    while (true) {
+      final int at = tex.indexOf(cmd, i);
+      if (at < 0) break;
+      var k = at + cmd.length;
+      if (k < tex.length && tex[k] == '{') {
+        var depth = 0;
+        var j = k;
+        for (; j < tex.length; j++) {
+          if (tex[j] == '{') depth++;
+          if (tex[j] == '}') {
+            depth--;
+            if (depth == 0) break;
+          }
+        }
+        if (j < tex.length) out.add((from: k + 1, to: j));
+        i = j + 1;
+      } else {
+        i = k;
+      }
+    }
+  }
+  return out;
 }
