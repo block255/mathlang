@@ -306,13 +306,33 @@ AutoExpand? _planScript(String doc, int caret, String mark,
   //   现场（用户图 17）：正文 `合E={(-1)` 后面按 Shift+6 ⇒ 判据只看前一个字符 `)` ⇒ 不是字母数字
   //   ⇒ 直接放弃 ⇒ 打进去一个**字面 `^`**。改成：`)` `]` `}` 先找配对开括号，
   //   找得到就**把整对括号（含内容）一起搬进公式**：`(-1)` ⇒ `$(-1)^{}$`。
-  //   ★ 两条护栏：① 括号里**不许有 `$`**（跨公式的括号没法这么搬，留给"相邻公式合并"）；
-  //     ② 只在本行内找配对（跨行的括号不算"一个视觉对象"）。
+  //   ★ 护栏：只在本行内找配对（跨行的括号不算"一个视觉对象"）。
+  //   ★★ 2026-11-01 补（用户拍板"甲"）：括号里**恰好是一整段 `$…$`** 时也要能当基座 ——
+  //   现场（讨论稿 §一「多段同行」）：`$\lim_{x\to\infty}$($\frac{…}{2020}$)` 后面按 Shift+6。
+  //   原来吃到"括号里不许有 `$`"这条护栏 ⇒ 返回 null ⇒ 打进一个字面 `^`。
+  //   现在把那段 tex **内联**进来、整对括号并成一段：`$(\frac{…}{2020})^{}$`。
+  //   ★ 只认"**恰好一整段**"：混着正文（`($x$ + 1)`）或两段公式仍放过 ——
+  //     并进去会把正文字体变成数学、还会吃掉空格，那是**改内容**不是排版。
   if (from == caret) {
     final String prev = doc[caret - 1];
     final int? openAt = _matchedOpenBefore(doc, caret - 1);
-    if (openAt != null && !doc.substring(openAt, caret).contains(r'$')) {
-      from = openAt;
+    if (openAt != null) {
+      final String inner = doc.substring(openAt + 1, caret - 1);
+      if (!inner.contains(r'$')) {
+        from = openAt;
+      } else {
+        final String? soleTex = _soleMathSpanTex(inner);
+        if (soleTex == null) return null; // 混着正文 / 两段 / 空段 ⇒ 不搬
+        return AutoExpand(
+          from: openAt,
+          caret: caret,
+          // 替换整对括号，内容内联 ⇒ 围栏从两对收成一对。
+          tex: '\$($soleTex)$slot\$',
+          kind: AutoExpandKind.script,
+          template: asTemplate,
+          matched: mark,
+        );
+      }
     } else if (prev == r'$') {
       // ★★ **并回原段**（口径 §4.1）：光标紧跟在一对 `$…$` 的收尾 `$` 之后 ⇒
       //   把 `^{}` 写进**那段公式**（在收尾 `$` 之前插），而不是往正文里插字符。
@@ -366,6 +386,20 @@ int? _matchedOpenBefore(String doc, int closeAt) {
     }
   }
   return null;
+}
+
+/// [inner] = 一对括号里的内容。若它**恰好是一整段 `$…$`**（两端是围栏、里面再没有 `$`），
+/// 返回那段 tex；否则 `null`。
+///
+/// ★ 2026-11-01（用户拍板"甲"）：**只认"恰好一整段"**。混着正文时把内容搬进数学，
+///   会把正文字体变成数学字体、还会吃掉空格 —— 那是**改内容**，不是排版。
+String? _soleMathSpanTex(String inner) {
+  if (inner.length < 2) return null;
+  if (!inner.startsWith(r'$') || !inner.endsWith(r'$')) return null;
+  final String tex = inner.substring(1, inner.length - 1);
+  if (tex.contains(r'$')) return null; // 两段 / 围栏不配
+  if (tex.trim().isEmpty) return null; // 空段 ⇒ 合并出来是空基座
+  return tex;
 }
 
 /// 正文里"视觉连续的一段"用的字符集：**ASCII 字母 / 数字**（汉字按批 18 是断点）。
