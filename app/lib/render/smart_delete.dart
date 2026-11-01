@@ -1,4 +1,4 @@
-﻿// 数语引擎 · 结构感知删除（S3-4 · smart delete）
+// 数语引擎 · 结构感知删除（S3-4 · smart delete）
 //
 // 规格：notes/design/位点与结构导航.md §四。目标手感：**像删字符一样干脆，但永不留下半个坏公式**。
 //
@@ -629,7 +629,71 @@ SmartEdit _backspaceCore(CaretSiteTable t, int rel) {
       return SmartEdit.remove(r - 1, r, r - 1);
     }
   }
+  // ★★★ 2026-11-01（反馈 14a）：**删掉"被包装的基座"会把对象变成空主体**。
+  //   现场：`\mathrm{C}_{n}^{m}` 在对象之后按退格 ⇒ 通则只删那个 `C`
+  //   ⇒ 剩 `\mathrm{}_{n}^{m}` ⇒ 屏幕上出现一个**虚线框**（用户："组合数这里不应该是个框"）。
+  //   判据：要删的这个原子正好是 `\<font>{…}` 包装里**唯一**的内容、且包装后面紧跟挂件
+  //   ⇒ 它们合起来才是"一个对象"（与 `x^{2}` 里裸 `x` 同级）⇒ 一起删。
+  final ({int start, int end})? asObject =
+      _packedBaseWithAttachments(t.tex, obj);
+  if (asObject != null) {
+    return SmartEdit.remove(asObject.start, asObject.end, asObject.start);
+  }
   return SmartEdit.remove(obj.start, obj.end, obj.start);
+}
+
+/// 只换字体 / 只做包装的命令（删空就一起走；**可见容器不在此列**）。
+///
+/// ★ 必须收录清楚：`\sqrt{…}` / `\frac{…}` 这类**画了东西**的容器不在表里 ——
+///   它们的参数删空了要留空槽（既有四条守卫钉着："根号里删掉 x ⇒ 留空槽"）。
+const Set<String> _kFontOnlyWrapperCommands = <String>{
+  'mathrm', 'mathbf', 'mathit', 'mathsf', 'mathtt', 'mathcal', 'mathbb',
+  'mathfrak', 'boldsymbol', 'operatorname',
+  'text', 'textrm', 'textnormal', 'textup', 'textit', 'textbf', 'textsf',
+  'texttt', 'mbox', 'hbox',
+};
+
+/// [obj] 是某个 `\<font>{…}` 包装里**唯一**的内容、且包装后面紧跟 `^`/`_` 挂件
+/// ⇒ 返回"包装 + 全部挂件"的区间（= 一个对象）；否则 `null`。
+///
+/// 只在"删掉它会让基座变空"这一种情形下用它（见调用处），其余一律走通则。
+({int start, int end})? _packedBaseWithAttachments(
+    String tex, _Span obj) {
+  if (obj.start < 0 || obj.end > tex.length) return null;
+  // 包装：`\<cmd>{` 紧贴 obj.start，且 obj.end 紧贴 `}`（= 它是包装里唯一的内容）
+  final Match? w =
+      RegExp(r'\\([A-Za-z]+)\{$').firstMatch(tex.substring(0, obj.start));
+  if (w == null) return null;
+  if (!_kFontOnlyWrapperCommands.contains(w.group(1)!)) return null;
+  if (obj.end >= tex.length || tex[obj.end] != '}') return null;
+  final int wrapperStart = obj.start - w.group(0)!.length;
+  var i = obj.end + 1; // 跳过包装的 `}`
+  var sawScript = false;
+  while (i < tex.length && (tex[i] == '^' || tex[i] == '_')) {
+    sawScript = true;
+    i++;
+    if (i < tex.length && tex[i] == '{') {
+      var depth = 0;
+      for (; i < tex.length; i++) {
+        if (tex[i] == '{') depth++;
+        if (tex[i] == '}') {
+          depth--;
+          if (depth == 0) {
+            i++;
+            break;
+          }
+        }
+      }
+    } else {
+      i++; // 裸参数只有一个字符
+    }
+  }
+  if (!sawScript) {
+    // 没有挂件也是同一个道理：`\mathrm{C}` 里删掉 `C` 会剩 `\mathrm{}` 这个**空幽灵**
+    // （批 36「删空了别留幽灵」）⇒ 连包装一起走。
+    return (start: wrapperStart, end: obj.end + 1);
+  }
+  return (start: wrapperStart, end: i.clamp(0, tex.length));
 }
 
 /// 这一段源码是不是**纯语法**（没有任何内容字符）：花括号 / `^` / `_` / 反斜杠命令 / 定界符。
