@@ -275,17 +275,40 @@ AutoExpand? _planScript(String doc, int caret, String mark) {
       matched: mark,
     );
   }
-    // 正文里：光标前那一个字符当基座（`$…$` 由编辑层按模板统一包，别在这里自己加）
+  // ★★★ 2026-11-01（用户实测「`sin^` 只有 `n` 变字体，看起来怪」）：
+  //   **搬家范围按"视觉连续的一段"** —— 正文里把光标前**那一整串 ASCII 字母数字**
+  //   一起搬进公式（`sin` ⇒ `$sin^{}$`），而不是只搬最后一个字符。
+  //   ★ 与"删除粒度"是两件事：公式里 `s`/`i`/`n` 仍是**三个原子**
+  //     （口径见 `notes/handover/20261030反馈讨论稿.md` §3.4 附）。
+  //   ★ 汉字**不参与**这一串：批 18 定的"汉字 = 断点"，把它们拖进数学字体是不对的；
+  //     单个汉字 / 希腊字符仍按旧口径当基座（`_isNumeratorChar`）。
+  var from = caret;
+  while (from > 0 && _isAsciiWordChar(doc[from - 1])) {
+    from--;
+  }
+  if (from == caret) {
     final String prev = doc[caret - 1];
     if (!_isNumeratorChar(prev)) return null;
-    return AutoExpand(
-      from: caret - 1,
-      caret: caret,
-      tex: '$prev$mark{}',
-      kind: AutoExpandKind.script,
-      template: true,
-      matched: mark,
-    );
+    from = caret - 1;
+  }
+  final String base = doc.substring(from, caret);
+  return AutoExpand(
+    from: from,
+    caret: caret,
+    tex: '$base$mark{}',
+    kind: AutoExpandKind.script,
+    template: true,
+    matched: mark,
+  );
+}
+
+/// 正文里"视觉连续的一段"用的字符集：**ASCII 字母 / 数字**（汉字按批 18 是断点）。
+bool _isAsciiWordChar(String ch) {
+  if (ch.isEmpty) return false;
+  final int c = ch.codeUnitAt(0);
+  return (c >= 0x30 && c <= 0x39) ||
+      (c >= 0x41 && c <= 0x5A) ||
+      (c >= 0x61 && c <= 0x7A);
 }
 
 AutoExpand? _planFraction(String doc, int caret) {
