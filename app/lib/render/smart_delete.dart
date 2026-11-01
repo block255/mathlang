@@ -1,4 +1,4 @@
-// 数语引擎 · 结构感知删除（S3-4 · smart delete）
+﻿// 数语引擎 · 结构感知删除（S3-4 · smart delete）
 //
 // 规格：notes/design/位点与结构导航.md §四。目标手感：**像删字符一样干脆，但永不留下半个坏公式**。
 //
@@ -30,7 +30,6 @@
 import 'attachment.dart';
 import 'caret_sites.dart';
 import 'projection.dart' show isAsciiLetter;
-import 'scope_table.dart';
 import 'site_adjacency.dart';
 import 'visible_atoms.dart';
 
@@ -307,14 +306,7 @@ int _contentAtoms(String tex, _Attachment a) => lexVisibleAtoms(tex)
 // 删除
 // ---------------------------------------------------------------------------
 
-/// 作用域的最后一个可见字符是不是**用户手写的收尾括号**（`)` / `]`）—— 批 5 · H5。
-///
-/// ★ 为什么只认这两个：`\left…\right)` 那一族由 `_delimPairAt` **更早**接手（整对删），
-///   轮不到这里；`}` 通常是 `{…}` 的收尾（`\sin{x}`），删它没有"删括号"的语义。
-bool _endsWithPlainCloser(String tex, OpScope s) {
-  final String tail = tex.substring(s.start, s.end).trimRight();
-  return tail.endsWith(')') || tail.endsWith(']');
-}
+
 
 /// `Backspace`：段内相对偏移 [rel] 处往前删。
 /// ★★★ 2026-10-24（批 29）：**删除的产物必须是合法 tex** —— 不许把「控制词」和「字母」粘成新命令。
@@ -553,21 +545,16 @@ SmartEdit _backspaceCore(CaretSiteTable t, int rel) {
 
   final CaretSite s = t.snap(r);
 
-  // ★★★ 2026-10-24（批 10）：**"整块删操作对象"只保留给函数算子**。
+  // ★★★ 2026-11-01（反馈 3 · 口径 §3.1–3.2）：**"算子作用域整块删"这一档取消了**。
   //
-  // 用户实测（`\sum_{i=1}^{m}x+4`，从末尾连按退格）：删掉 `4`、`+`，
-  //   第三下把整个 `\sum…x` 一起删了 —— 他们的预期是"继续删 `x`"。
-  // 判据（也是 2026-10-15 那条口径的收窄）：**大算符**（`\sum` `\int` `\prod` … 带堆叠上下限）
-  //   的"整体"横跨上下限、视觉上是一大坨 ⇒ 删它属于"删一大块"，应该走**选中**；
-  //   而**函数算子**（`\sin` `\log` `\lim` …）的 `\sin x` 才是一个"字那么大的对象"，
-  //   光标停在它右端整块删是合理的（`2\sin x` 末尾退格 ⇒ 删 `\sin x`，既有守卫照旧绿）。
-  // ★ 删除粒度总原则（平权 ①）：**由选区决定**，不由"光标恰好在对象尾"决定。
-  final OpScope? scope = scopeEndingAt(t.tex, s.offset);
-  if (scope != null &&
-      !kStackedOperatorCommands.contains(scope.command) &&
-      !_endsWithPlainCloser(t.tex, scope)) {
-    return SmartEdit.remove(scope.start, scope.end, scope.start);
-  }
+  // 判据（用户 2026-11-01 拍板）：**切割只看看得见的三样 —— 墨迹 / 挂件 / 显式成对边界**。
+  //   `\lim` / `\sin` / `\log` 的"操作对象到哪儿结束"是**语义推断**（画不出边界）
+  //   ⇒ 不作数。"整体"只由选区产生（双击 / 三击 / 拖选）。
+  // 实测（改前）：`\lim_{x\to0}\frac{D(x)-1}{x}w` 在 `w` 后按退格 ⇒ **一次删掉 30 个字符**；
+  //   `\sin 2x` ⇒ 一次删 7 个字符。用户原话："不应该是点一次删 w、一次删分式、一次删极限符号吗"。
+  // ⇒ 删掉 `scopeEndingAt` 那条分支后，落回下面的通则：**左边最近那一个可见对象**
+  //   （`\frac{}{}` 仍是整体、`\mathrm{C}_{n}^{m}` 仍是整体 —— 它们有分数线/挂件）。
+  // ★ `_endsWithPlainCloser`（批 5 · H5 的补丁）随之退休：它是给作用域打的补丁。
 
   // ★★ §4.0' 挂件的边缘像素（见 [_attachmentEdgeAt]）：
   //    `⌫ = 左边最近的墨迹` —— 在挂件**右端那一格**上，左边的墨迹就是挂件里最后一个原子。
@@ -700,9 +687,8 @@ SmartEdit _deleteCore(CaretSiteTable t, int rel) {
 
   final CaretSite s = t.snap(r);
 
-  // ★ §4.7 **优先**（与 [smartBackspace] 对称）：光标停在操作对象的**左端** ⇒ 删整个操作对象
-  final OpScope? scope = scopeStartingAt(t.tex, s.offset);
-  if (scope != null) return SmartEdit.remove(scope.start, scope.end, scope.start);
+  // ★★★ 2026-11-01（与 [smartBackspace] 对称）：**算子作用域整块删取消** —— 见那边的说明。
+  //   向前删（Delete）也从"右边最近那一个可见对象"开始。
 
   // ★★ §4.0' 挂件边缘（§3.3：同一根像素 ⇒ 同一结果）
   //    `Del = 右边最近的墨迹` —— 在挂件**右端那一格**上，右边的墨迹在挂件**外面**；

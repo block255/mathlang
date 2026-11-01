@@ -280,36 +280,36 @@ void main() {
       expect(tex.substring(e.from!, e.to!), want);
     }
 
-    test(r'`\sin 2x` 末尾退格 → 整个 `\sin 2x`', () {
+    test(r'`\sin 2x` 末尾退格 → **只删 `x`**（作用域不再当整体 · 2026-11-01 口径）', () {
       const String tex = r'\sin 2x';
-      expectDeleted(tex, tex.length, tex);
+      expectDeleted(tex, tex.length, 'x');
     });
 
-    test(r'`\sin 2x+y` 里 `2x` 之后退格 → `\sin 2x`（`+y` 不动）', () {
-      expectDeleted(r'\sin 2x+y', 7, r'\sin 2x');
+    test(r'`\sin 2x+y` 里 `2x` 之后退格 → **只删 `x`**', () {
+      expectDeleted(r'\sin 2x+y', 7, 'x');
     });
 
-    // ★★ 2026-10-24（批 10）**口径变了，理由记在这里**：
-    //   用户实测（`\sum_{i=1}^{m}x+4` 连按退格）——「删掉 `4`、`+`，第三下把整个删了」，
-    //   预期是"继续删 `x`"。⇒ **大算符**（`\sum` `\int` …）不再"停在右端就整块删"，
-    //   改为逐字；整块删走**选中整个操作对象**。函数算子（`\sin`/`\log`）仍然整块删。
-    test(r'`\sum_{i=1}^{n}a_i b_i` 末尾退格 → **只删最后一个原子**（大算符不整块删）', () {
+    // ★★★ 2026-11-01（反馈 3 · 口径 §3.1–3.2）：**"作用域整块删"整档取消** ——
+    //   切割只看「墨迹 / 挂件 / 显式成对边界」；"算子的操作对象到哪儿结束"是**语义推断** ⇒ 不作数。
+    //   「整体」只由选区产生（双击 / 三击 / 拖选）。
+    //   实测（改后）：`\sin 2x` 末尾退格只删 `x`；`\lim…\frac{}{}w` 只删 `w`（改前一次 30 字符）。
+    test(r'`\sum_{i=1}^{n}a_i b_i` 末尾退格 → **只删最后一个原子**（大算符本来就不整块删）', () {
       const String tex = r'\sum_{i=1}^{n}a_i b_i';
       // 乙口径：字形 + 挂件 = 一个对象 ⇒ 先删挂件 `_i`
       expectDeleted(tex, tex.length, '_i');
     });
 
-    test(r'`\sin x\cdot y` 里 `x` 之后退格 → `\sin x`（显式乘号断开）', () {
-      expectDeleted(r'\sin x\cdot y', 6, r'\sin x');
+    test(r'`\sin x\cdot y` 里 `x` 之后退格 → **只删 `x`**', () {
+      expectDeleted(r'\sin x\cdot y', 6, 'x');
     });
 
-    test(r'`2\sin x` 末尾退格 → 只删 `\sin x`（`2` 不进来）', () {
+    test(r'`2\sin x` 末尾退格 → **只删 `x`**（`2` 与 `\sin` 都不进来）', () {
       const String tex = r'2\sin x';
-      expectDeleted(tex, tex.length, r'\sin x');
+      expectDeleted(tex, tex.length, 'x');
     });
 
-    test(r'`Delete` 在操作对象左端 → 整个对象（对称的另一面）', () {
-      expectDeleted(r'2\sin x', 1, r'\sin x', forward: true);
+    test(r'`Delete` 在 `\sin` 左端 → **只删算子自己**（作用域不再整块）', () {
+      expectDeleted(r'2\sin x', 1, r'\sin', forward: true);
     });
 
     test(r'★ 无值算子：`\sin` 末尾退格 → 删算子自己（不算"整个作用域"）', () {

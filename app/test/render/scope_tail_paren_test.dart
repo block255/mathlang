@@ -8,7 +8,9 @@
 // 口径（平权 ③「不许实现细节泄漏成地位差异」）：**作用域是派生的**，
 // 不许让它改变"删左边最近的墨迹"这条通用规则；收尾是手写括号时按通用规则删那一个字符。
 //
-// ★ 不许漂的：`\sin 2x` / `\sum_{i=1}^{n}a_i` 末尾退格**仍然整块删**（§4.7，用户已复验）。
+// ★ 2026-11-01（反馈 3 · 口径 §3.1–3.2）：**「作用域整块删」整档取消** ——
+//   本条 H5 的重心从此变成"结构性成立"（没有作用域可用，通用规则自然删那一个 `）`）；
+//   `\sin 2x` / `\sum…a_i` 末尾退格现在都**逐对象**删。
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mathlang/render/caret_sites.dart';
@@ -38,9 +40,9 @@ void main() {
     expect(deletedText(sumParen, 16), 'x');
   });
 
-  test(r'★ 对照：`\sin 2x` 末尾退格 ⇒ 仍然整块删整个操作对象', () {
+  test(r'★ 对照（2026-11-01 口径）：`\sin 2x` 末尾退格 ⇒ **只删 `x`**', () {
     const String tex = r'\sin 2x';
-    expect(deletedText(tex, tex.length), tex);
+    expect(deletedText(tex, tex.length), 'x');
   });
 
   test(r'★ 对照（批 10 收窄）：`\sum_{i=1}^{n}a_i` 末尾退格 ⇒ **只删挂件 `_i`**（大算符不再整块删）', () {
