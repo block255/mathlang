@@ -26,6 +26,7 @@ import '../lang/auto_expand.dart';
 import '../lang/block_ops.dart';
 import '../lang/break_split.dart';
 import '../lang/clipboard_slice.dart';
+import '../lang/math_escape.dart';
 import '../lang/math_spans.dart';
 import '../lang/paste_context.dart';
 import '../lang/smart_wrap.dart';
@@ -549,9 +550,11 @@ class EditViewState extends State<EditView> {
     // ★★ 自动分隔（2026-10-17 用户拍板）：**"命令词结不结束"不该由用户来判断**。
     //   TeX 的控制词只由字母组成，紧跟字母会被读成一个更长的命令名（`\sin` + `x` ⇒ `\sinx`）。
     //   ⇒ 插入字母、而光标正好停在控制词末尾时，**我们**先补一个空格（TeX 的规范分隔符）。
-    final String text = _needsCommandSeparator(_buf.buf, _buf.caret, rawText)
-        ? ' $rawText'
-        : rawText;
+    final String typed = escapeMathSyntax(rawText,
+        inMath: mathRegionAt(_buf.buf, _buf.caret) != null);
+    final String text = _needsCommandSeparator(_buf.buf, _buf.caret, typed)
+        ? ' $typed'
+        : typed;
     // ★★ 插入侧守门人（`render/insert_guard.dart`）：
     //   ① **块级换行不许落在数学段内部**（用户实测的路径：点进分式 → `→` 到行末
     //      （其实停在"闭合 `$` 之前那一格"）→ `Enter` → `$` 被配成单数 → **整行退化成源码**）。
