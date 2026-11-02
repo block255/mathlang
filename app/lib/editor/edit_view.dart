@@ -27,6 +27,7 @@ import 'blank_runs.dart';
 import '../lang/block_ops.dart';
 import '../lang/break_split.dart';
 import '../lang/clipboard_slice.dart';
+import '../lang/fenced_splice.dart';
 import '../lang/math_escape.dart';
 import '../lang/math_spans.dart';
 import '../lang/paste_context.dart';
@@ -792,20 +793,40 @@ class EditViewState extends State<EditView> {
   /// 两步合成**一次**写入：① 删掉被吃掉的触发内容；② 在原位插入展开出来的 tex。
   void _applyAutoExpand(AutoExpand ex) {
     _breakUndoGroup(); // 自动展开独占一步
-    final String trimmed = _buf.buf.replaceRange(ex.from, ex.caret, '');
-    final SymbolInsertResult r = applySymbolInsert(
-      doc: trimmed,
-      caret: ex.from,
-      selStart: ex.from,
-      selEnd: ex.from,
-      tex: ex.tex,
+    // ★★★ 2026-11-02（R-甲1/2「乙」）：**合并分支产出的是一整段行内公式**，
+    //   不能再交给 `applySymbolInsert`（它按"裸 tex"包壳/挪位）——
+    //   否则会二次包成 `$$…$$`，或被推出公式后补一个换行。
+    //   `spliceFencedInline` 只做"把 [from,to) 换成这段公式"，
+    //   紧贴的行内公式**合并围栏**、零新增字符；不是完整公式则返回 null 走老路。
+    final FencedSplice? fenced = spliceFencedInline(
+      doc: _buf.buf,
+      from: ex.from,
+      to: ex.caret,
+      fenced: ex.tex,
       template: ex.template,
     );
-    _mutate(() {
-      _buf.replace(0, _buf.length, r.doc);
-      _buf.setCaret(r.caret);
-    });
-    _stampWrapped(r.wrapped ? 1 : 0, spans: _spansAround(ex.from, r.caret));
+    if (fenced != null) {
+      _mutate(() {
+        _buf.replace(0, _buf.length, fenced.doc);
+        _buf.setCaret(fenced.caret);
+      });
+      _stampWrapped(0, spans: _spansAround(ex.from, fenced.caret));
+    } else {
+      final String trimmed = _buf.buf.replaceRange(ex.from, ex.caret, '');
+      final SymbolInsertResult r = applySymbolInsert(
+        doc: trimmed,
+        caret: ex.from,
+        selStart: ex.from,
+        selEnd: ex.from,
+        tex: ex.tex,
+        template: ex.template,
+      );
+      _mutate(() {
+        _buf.replace(0, _buf.length, r.doc);
+        _buf.setCaret(r.caret);
+      });
+      _stampWrapped(r.wrapped ? 1 : 0, spans: _spansAround(ex.from, r.caret));
+    }
     // ★ 终止符：空格被吃掉（`''`），`Enter` 保留 ⇒ 再走一次普通提交（它是块级动作）
     final String tail = ex.keptTerminator;
     if (tail.isNotEmpty) {

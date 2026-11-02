@@ -323,11 +323,17 @@ AutoExpand? _planScript(String doc, int caret, String mark,
       } else {
         final String? soleTex = _soleMathSpanTex(inner);
         if (soleTex == null) return null; // 混着正文 / 两段 / 空段 ⇒ 不搬
+        // ★★ 2026-11-02（R-甲5）：**括号种类保真**。这里原来写死 `(...)`，
+        //   于是 `[$\alpha$]` / `{$\alpha$}` 按 `^` 会**静默变成圆括号**。
+        //   ASCII `{` `}` 在数学里是**分组**（不画字形）⇒ 必须转义成 `\{` `\}`；
+        //   其余（`()`、`[]`、全角 `（）［］｛｝`）照原样。
+        final String openCh = doc[openAt];
+        final String closeCh = doc[caret - 1];
         return AutoExpand(
           from: openAt,
           caret: caret,
           // 替换整对括号，内容内联 ⇒ 围栏从两对收成一对。
-          tex: '\$($soleTex)$slot\$',
+          tex: '\$${_delimiterTex(openCh)}$soleTex${_delimiterTex(closeCh)}$slot\$',
           kind: AutoExpandKind.script,
           template: asTemplate,
           matched: mark,
@@ -351,7 +357,7 @@ AutoExpand? _planScript(String doc, int caret, String mark,
       return null;
     }
   }
-  final String base = doc.substring(from, caret);
+  final String base = _normalizeMathSpaces(doc.substring(from, caret));
   return AutoExpand(
     from: from,
     caret: caret,
@@ -362,15 +368,21 @@ AutoExpand? _planScript(String doc, int caret, String mark,
   );
 }
 
-/// [closeAt] 是一个闭合括号（`)` `]` `}`）⇒ 返回它**配对的开括号**下标（找不到 = null）。
+/// [closeAt] 是一个闭合括号（`)` `]` `}` / 全角 `）` `］` `｝`）⇒ 返回它**配对的开括号**下标
+/// （找不到 = null）。
 ///
 /// 只在本行内找（不跨 `\n`）：跨行的括号不是"一个视觉对象"。
+/// ★ 2026-11-02（R-甲6）：**全角括号也认**。中文输入法下打出的 `（x+a）` 以前只被当成
+///   两个普通字符 ⇒ 按 `^` 写字面量；用户拍板按"字符类"纳入（与"汉字 = 断点"同源）。
 int? _matchedOpenBefore(String doc, int closeAt) {
   final String close = doc[closeAt];
   final String open = switch (close) {
     ')' => '(',
     ']' => '[',
     '}' => '{',
+    '）' => '（',
+    '］' => '［',
+    '｝' => '｛',
     _ => '',
   };
   if (open.isEmpty) return null;
@@ -386,6 +398,40 @@ int? _matchedOpenBefore(String doc, int closeAt) {
     }
   }
   return null;
+}
+
+/// 升格时把**正文括号**搬进数学的写法。
+///
+/// ASCII `{` `}` 在 TeX 里是**分组**（不画字形）⇒ 必须转义成 `\{` `\}` 才能保持可见；
+/// 其余括号（`()`、`[]`、全角 `（）［］｛｝`）在数学里都是普通字符，照原样。
+String _delimiterTex(String ch) {
+  if (ch == '{') return r'\{';
+  if (ch == '}') return r'\}';
+  return ch;
+}
+
+/// 正文片段搬进数学时，**空白不能原样留着**：
+/// 数学模式把裸空格当词法分隔符、不占版面 ⇒ 位点表里会留下"同一像素两站"，
+/// 而且 ⌫ 删不到空格本身（只有整段回收时才一起没）。
+/// 规则（2026-11-02 用户拍板）：**每段连续空白 ⇒ 一个 `\ `**。
+/// ★ `\ ` 本身就是控制词的分隔符（`\alpha\ x` 合法）⇒ 不需要给命令名单独开后门。
+String _normalizeMathSpaces(String s) {
+  final StringBuffer out = StringBuffer();
+  var pending = false;
+  for (var i = 0; i < s.length; i++) {
+    final String ch = s[i];
+    if (ch == ' ' || ch == '\t' || ch == '\u3000') {
+      pending = true;
+      continue;
+    }
+    if (pending) {
+      out.write(r'\ ');
+      pending = false;
+    }
+    out.write(ch);
+  }
+  if (pending) out.write(r'\ ');
+  return out.toString();
 }
 
 /// [inner] = 一对括号里的内容。若它**恰好是一整段 `$…$`**（两端是围栏、里面再没有 `$`），

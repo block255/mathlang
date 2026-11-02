@@ -90,4 +90,43 @@ void main() {
     expect(ex.tex, r'$(\frac{a_{1}+a_{2020}}{2020})^{}$');
     expect(ex.template, isTrue, reason: '光标要落进 `^{}` 里');
   });
+
+  // ===== 2026-11-02（R-甲5 / R-甲6 / 空格归一）=====
+
+  test(r'⑨ 方括号保真：`[$\alpha$]` + `^` ⇒ `$[\alpha]^{}$`（改前变圆括号）', () {
+    final AutoExpand ex = _plan(r'前 [$\alpha$]', '^')!;
+    expect(ex.tex, r'$[\alpha]^{}$');
+  });
+
+  test(r'⑩ 花括号保真（转义）：`{$\alpha$}` + `^` ⇒ `$\{\alpha\}^{}$`', () {
+    final AutoExpand ex = _plan(r'前 {$\alpha$}', '^')!;
+    expect(ex.tex, r'$\{\alpha\}^{}$',
+        reason: r'数学里 { } 是分组、不画字形；必须转义成 \{ \} 才看得见');
+  });
+
+  test(r'⑪ 全角括号：`（$\alpha$）` + `^`', () {
+    final AutoExpand ex = _plan(r'前 （$\alpha$）', '^')!;
+    expect(ex.tex, r'$（\alpha）^{}$');
+  });
+
+  test(r'⑫ 升格空白 ⇒ `\ `：`(x + a)`', () {
+    final AutoExpand ex = _plan(r'前 (x + a)', '^')!;
+    expect(ex.tex, r'(x\ +\ a)^{}');
+  });
+
+  test(r'⑬ 连续空白折叠成一个 `\ `：`(a  b)`', () {
+    final AutoExpand ex = _plan(r'前 (a  b)', '^')!;
+    expect(ex.tex, r'(a\ b)^{}');
+  });
+
+  test(r'⑭ 全角括号 + 空白：`（x + a）`', () {
+    final AutoExpand ex = _plan('前 （x + a）', '^')!;
+    expect(ex.tex, r'（x\ +\ a）^{}');
+  });
+
+  test(r'⑮ 撇 + 方括号仍是保真的：`[$\alpha$]` + 撇', () {
+    const String doc = r'前 [$\alpha$]';
+    final AutoExpand ex = planPrimeInsert(doc: doc, caret: doc.length)!;
+    expect(ex.tex, r'$[\alpha]^{\prime}$');
+  });
 }
