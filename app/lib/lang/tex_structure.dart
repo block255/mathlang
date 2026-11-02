@@ -121,6 +121,8 @@ bool isCompleteFragment(String tex) {
   // 末尾停在"要参数的命令"上 ⇒ 参数没进来
   final Match? m = RegExp(r'\\([A-Za-z]+)\s*$').firstMatch(tex);
   if (m != null && requiredArgs(m.group(1)!) > 0) return false;
+  // 末尾停在 `^` / `_` 上 ⇒ 参数没进来
+  if (RegExp(r'[\^_]\s*$').hasMatch(tex)) return false;
   return true;
 }
 

@@ -27,6 +27,7 @@ import 'blank_runs.dart';
 import '../lang/block_ops.dart';
 import '../lang/break_split.dart';
 import '../lang/clipboard_slice.dart';
+import '../lang/delete_range.dart';
 import '../lang/fenced_splice.dart';
 import '../lang/math_escape.dart';
 import '../lang/math_spans.dart';
@@ -1245,11 +1246,18 @@ class EditViewState extends State<EditView> {
         return KeyEventResult.handled;
       }
       if (k == LogicalKeyboardKey.keyX) {
-        final ClipboardSlice sl = _selectionSlice;
-        if (sl.text.isNotEmpty) {
-          Clipboard.setData(ClipboardData(text: sl.text));
-          // ★ 剪切删的是**切片对应的源区间**（不是原选区）—— 否则公式里会留下半截 `$`
-          _deleteRange(sl.start, sl.end);
+        // ★★ 2026-11-02（选择边界批 · 定稿 §3.4）：**剪切 = 删什么就复制什么**。
+        //   先按"删除"的判据算出真正要删的区间，再把**这段区间**的文本放进剪贴板。
+        //   否则会出现"复制 `a`、删除 `a^2`"——用户静默丢掉 `^2`。
+        var range = planDeleteRange(_buf.buf, _buf.selectionStart, _buf.selectionEnd);
+        final ({int start, int end})? packed =
+            expandPackedBaseInDoc(_buf.buf, range.start, range.end);
+        if (packed != null) range = packed;
+        final String text =
+            clipboardTextForRange(_buf.buf, range.start, range.end);
+        if (text.isNotEmpty) {
+          Clipboard.setData(ClipboardData(text: text));
+          _deleteRange(range.start, range.end, planned: true);
         }
         return KeyEventResult.handled;
       }
@@ -1420,25 +1428,32 @@ class EditViewState extends State<EditView> {
   void _breakUndoGroup() => _lastEdit = null;
 
   /// 删一个区间（内部走「删空数学段 ⇒ 连定界符」那条判据）—— 选区删除 / 剪切共用。
-  void _deleteRange(int from, int to) {
+  ///
+  /// [planned]：区间已经由 `planDeleteRange` 算好（**剪切**用，保证"删什么就复制什么"）。
+  void _deleteRange(int from, int to, {bool planned = false}) {
     _breakUndoGroup(); // 选区删除/剪切独占一步
     // ★★★ 2026-10-24（用户实测"拖选删掉已有分段 ⇒ 显示公式不完整"）：
     //   选区跨进数学段却只删了一半 ⇒ `\begin{cases}` 留一半、`\end{cases}` 被删掉
     //   ⇒ 引擎解析失败 ⇒ 页面上红字 `[公式不完整]`。
-    //   ⇒ 删之前先把区间**扩到自洽边界**（与复制/剪切同一套规则 `clipboardSlice`）：
-    //     · 端点落在某个 `$…$` / `$$…$$` **内部** ⇒ 扩到那一段的边界；
-    //     · 整段都在公式内部 ⇒ 不动（照旧删内容）。
-    // ★ 2026-11-02：删除暂时走**旧路径**（`forClipboard: false`）——
-    //   复制已经换成"结构完整性"判据，删除要换成"查剩余"判据，分开改、分开验。
-    final ClipboardSlice sl =
-        clipboardSlice(_buf.buf, from, to, forClipboard: false);
+    // ★★ 2026-11-02（选择边界批 · 定稿 §3.3）：删除的判据是**查剩余**——
+    //   删完结构成立就照删；不成立才扩到最小单位（`planDeleteRange`）；
+    //   **不套用**复制的右向补全（`\frac{a}` 不再被补成整段）。
+    var ds = from;
+    var de = to;
+    if (!planned) {
+      final ({int start, int end}) r = planDeleteRange(_buf.buf, ds, de);
+      ds = r.start;
+      de = r.end;
+    }
     // ★★★ 2026-11-01（反馈 14b）：选区正好是"被包装基座的唯一内容"（如组合数的 `C`）
     //   ⇒ 扩到**整个对象**（含 `^`/`_` 挂件）。否则删完会剩 `\mathrm{}_{n}^{m}`
     //   —— 屏幕上就是一个空主体虚线框。口径：§3.2「删除粒度 ≡ 双击粒度」。
     final ({int start, int end})? packed =
-        expandPackedBaseInDoc(_buf.buf, sl.start, sl.end);
-    final int ds = packed?.start ?? sl.start;
-    final int de = packed?.end ?? sl.end;
+        expandPackedBaseInDoc(_buf.buf, ds, de);
+    if (packed != null) {
+      ds = packed.start;
+      de = packed.end;
+    }
     final SmartEdit ed =
         reclaimEmptiedMath(_buf.buf, SmartEdit.remove(ds, de, ds));
     _mutate(() => _buf.replace(ed.from!, ed.to!, ''));
