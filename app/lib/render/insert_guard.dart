@@ -136,8 +136,94 @@ class InsertPlan {
 /// ★ **不要**在这里顺手拦"插入一个 `$`" —— 那正是用户**新建公式**的路径（打 `$` 开始一段数学），
 ///   拦了就没法用了。
 InsertPlan planInsert(String source, int offset, String text) {
-  final InsertPlan core = _planCore(source, offset.clamp(0, source.length), text);
-  return _settle(source, core, text);
+  // ★★★ 2026-11-02（R-甲7）：**括号对必须同层**。
+  //   用户自然打字会形成"(` 在公式里、`)` 在公式外"（或反过来）⇒ 同一对括号分居两层，
+  //   既难看又让挂件（`^`/`_`/`'`）认不出"整对括号"。这里在**打闭合括号的那一刻**
+  //   就把它落到开括号所在的层；只认"紧贴公式边界"的情况（中间夹文字时不动，搬了会变语义）。
+  final int o = offset.clamp(0, source.length);
+  final int? layerOffset = _bracketLayerFix(source, o, text);
+  final InsertPlan core = _planCore(source, layerOffset ?? o, text);
+  final InsertPlan settled = _settle(source, core, text);
+  if (layerOffset == null) return settled;
+  return InsertPlan(
+    settled.offset,
+    moved: true,
+    why: '括号对必须同层：闭合括号落到开括号所在的层',
+    wrapBareArg: settled.wrapBareArg,
+    padding: settled.padding,
+  );
+}
+
+/// 闭括号 → 配对的开括号（含全角）；不是括号 ⇒ null。
+String? _pairOpenOf(String close) => switch (close) {
+      ')' => '(',
+      ']' => '[',
+      '}' => '{',
+      '）' => '（',
+      '］' => '［',
+      '｝' => '｛',
+      _ => null,
+    };
+
+/// **括号对必须同层**：返回闭合括号应该落到的偏移；不需要搬 ⇒ `null`。
+///
+/// 只处理两种"紧贴公式边界"的形状（都是自然打字能形成的）：
+///   A. 开括号在数学里、闭合括号打在正文（紧跟收尾 `$`）⇒ 落进公式（`contentEnd`）；
+///   B. 开括号在正文、闭合括号打在数学里（正好在收尾 `$` 之前）⇒ 落到公式之后（`closeEnd`）。
+/// 中间夹着别的文字、或开括号也在数学但不在同一段 ⇒ 不动。
+int? _bracketLayerFix(String source, int offset, String text) {
+  if (text.length != 1) return null;
+  final String close = text;
+  final String? open = _pairOpenOf(close);
+  if (open == null) return null;
+  final int o = offset.clamp(0, source.length);
+
+  // A. 开在数学、闭在正文：插入点紧跟一段**行内**公式的收尾 `$`
+  if (o > 0 && source[o - 1] == r'$' && (o < 2 || source[o - 2] != r'$')) {
+    final MathRegion? r = mathRegionAt(source, o - 1);
+    if (r != null && r.closeEnd == o && !r.isDisplay) {
+      final int? openAt = _matchedOpenFor(source, o - 1, close, open);
+      if (openAt != null && openAt >= r.contentStart && openAt < r.contentEnd) {
+        return r.contentEnd;
+      }
+    }
+  }
+
+  // B. 开在正文、闭在数学：插入点正好在收尾 `$` 之前
+  if (o < source.length &&
+      source[o] == r'$' &&
+      (o + 1 >= source.length || source[o + 1] != r'$')) {
+    final MathRegion? r = mathRegionAt(source, o);
+    if (r != null && r.contentEnd == o && !r.isDisplay) {
+      final int? openAt = _matchedOpenFor(source, o - 1, close, open);
+      if (openAt != null && openAt < r.openStart) {
+        // 开括号必须在**正文**里；若它也在数学里（另一段），两半都是数学 ⇒ 不搬
+        if (mathRegionAt(source, openAt) == null) return r.closeEnd;
+      }
+    }
+  }
+  return null;
+}
+
+/// 从 [from] 往前找"将被插入的那个闭合括号"的配对开括号。
+///
+/// ★ `depth` 从 **1** 起：被插入的闭括号本身不在文档里；从 1 起才不会把
+///   文档里已经配平的内层括号错当成目标（`\lim(\sin(x)+1` + `)` 要配外层 `(`）。
+int? _matchedOpenFor(String doc, int from, String close, String open) {
+  if (doc.isEmpty) return null;
+  var depth = 1;
+  final int start = from.clamp(0, doc.length - 1);
+  for (var i = start; i >= 0; i--) {
+    final String ch = doc[i];
+    if (ch == '\n') return null;
+    if (ch == close) {
+      depth++;
+    } else if (ch == open) {
+      depth--;
+      if (depth == 0) return i;
+    }
+  }
+  return null;
 }
 
 /// 规则 ①ⓞ② 的落点计算（不含 ③④ 的行边界处理）。
