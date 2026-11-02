@@ -84,13 +84,24 @@ void main() {
           reason: r'改前 `$\frac{a}$` 单独渲染必报"expected 2 args"');
     });
 
-    test(r'括号真不平衡（a}）⇒ 向外扩到平衡（{a}）', () {
-      const String doc = r'$\frac{a}{b}$';
+    test(r'括号真不平衡（a}）⇒ 向外扩到平衡（{a}）；裸组没有主人', () {
+      const String doc = r'$x{a}y$';
       final int s = doc.indexOf('{a}') + 1;
       final int e = s + 2; // `a}`
       final ClipboardSlice sl = clipboardSlice(doc, s, e);
       expect(sl.text, r'${a}$', reason: r'向左扩到配平的 {a}');
       expect(_dollars(sl.text), 2);
+    });
+
+    test(r'★ a} 切在分式参数里 ⇒ `{` 的主人 \frac 也带走（不是裸组）', () {
+      // 2026-11-02（选择边界批 · 定稿 §3.1）：`{` 的主人 = 紧挨在前的命令。
+      // 裸组 `{a}` 单独渲染是 `a`，但它**是分式的参数** ⇒ 片段必须是整个分式。
+      const String doc = r'$\frac{a}{b}$';
+      final int s = doc.indexOf('{a}') + 1;
+      final int e = s + 2; // `a}`
+      final ClipboardSlice sl = clipboardSlice(doc, s, e);
+      expect(sl.text, r'$\frac{a}{b}$',
+          reason: r'`{` 的主人 \frac 在选区左；裸 `{a}` 是半截对象');
     });
   });
 

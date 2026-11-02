@@ -1428,7 +1428,10 @@ class EditViewState extends State<EditView> {
     //   ⇒ 删之前先把区间**扩到自洽边界**（与复制/剪切同一套规则 `clipboardSlice`）：
     //     · 端点落在某个 `$…$` / `$$…$$` **内部** ⇒ 扩到那一段的边界；
     //     · 整段都在公式内部 ⇒ 不动（照旧删内容）。
-    final ClipboardSlice sl = clipboardSlice(_buf.buf, from, to);
+    // ★ 2026-11-02：删除暂时走**旧路径**（`forClipboard: false`）——
+    //   复制已经换成"结构完整性"判据，删除要换成"查剩余"判据，分开改、分开验。
+    final ClipboardSlice sl =
+        clipboardSlice(_buf.buf, from, to, forClipboard: false);
     // ★★★ 2026-11-01（反馈 14b）：选区正好是"被包装基座的唯一内容"（如组合数的 `C`）
     //   ⇒ 扩到**整个对象**（含 `^`/`_` 挂件）。否则删完会剩 `\mathrm{}_{n}^{m}`
     //   —— 屏幕上就是一个空主体虚线框。口径：§3.2「删除粒度 ≡ 双击粒度」。

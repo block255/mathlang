@@ -16,6 +16,7 @@
 //   `\frac{x^3}{\lvert\sin x\rvert^3}$` —— **缺开头 `$`、多结尾 `$`**（裸 substring 的必然结果）。
 
 import 'math_spans.dart';
+import 'tex_structure.dart';
 
 /// 一次复制/剪切要用的结果。
 ///
@@ -49,7 +50,11 @@ class ClipboardSlice {
 }
 
 /// 把选区 `[selStart, selEnd)` 变成自洽片段。区间可以反着给（`selStart > selEnd` 也行）。
-ClipboardSlice clipboardSlice(String doc, int selStart, int selEnd) {
+///
+/// [forClipboard]：`true` = 复制（走**结构完整性**判据：缺主人就向左扩）；
+/// `false` = 删除的**临时**旧路径（删除批会换成"查剩余"判据）。
+ClipboardSlice clipboardSlice(String doc, int selStart, int selEnd,
+    {bool forClipboard = true}) {
   final int lo = selStart <= selEnd ? selStart : selEnd;
   final int hi = selStart <= selEnd ? selEnd : selStart;
   var s = lo.clamp(0, doc.length);
@@ -77,7 +82,8 @@ ClipboardSlice clipboardSlice(String doc, int selStart, int selEnd) {
     if (doc.substring(s, e).contains(r'$')) {
       return ClipboardSlice(start: a.start, end: a.end, text: doc.substring(a.start, a.end));
     }
-    final ({int start, int end}) fix = _completeWithin(doc, s, e, a);
+    final ({int start, int end}) fix =
+        _completeWithin(doc, s, e, a, forClipboard: forClipboard);
     s = fix.start;
     e = fix.end;
     final String frag = doc.substring(s, e);
@@ -165,10 +171,30 @@ int _braceDepth(String s) {
   return d;
 }
 
-/// 在 [sp] 这个数学段内部把 `[s, e)` 修成**自洽**的片段：
-/// 先补结构参数（`\frac{a}` ⇒ `\frac{a}{b}`），再补括号配平。
+/// 在 [sp] 这个数学段内部把 `[s, e)` 修成**自洽**的片段。
+///
+/// ★★ 2026-11-02（选择边界批 · 定稿 §3.1）：**向左补主人** ＋ **右侧用栈补开壳**。
+///   旧实现只朝右补（`_completeArgs` / `_completeEnvs`），左边缺的主子没人管：
+///   · `{...}{2020}` —— 片段以参数的 `{` 开头，`\frac` 在选区左 ⇒ 丢分数线；
+///   · `x]{…}` —— `]` 的 `[` 在选区左 ⇒ 丢 `\sqrt[`；
+///   · `…\end{cases}` —— `\begin` 在选区左 ⇒ 孤立 `\end`。
+///   现在先把"没有主人的壳"的主子拉进来，再用**栈**补右侧（计数平不算数）。
 ({int start, int end}) _completeWithin(
-    String doc, int s, int e, MathSpan sp) {
+    String doc, int s, int e, MathSpan sp, {required bool forClipboard}) {
+  if (!forClipboard) {
+    // 删除的**临时**旧路径：保持 2026-11-02 之前的行为，等删除批整体换掉。
+    final ({int start, int end}) head = _completeArgs(doc, s, e, sp.end);
+    final ({int start, int end}) tail =
+        _completeTrailingCommand(doc, head.start, head.end, sp.end);
+    final ({int start, int end}) env =
+        _completeEnvs(doc, tail.start, tail.end, sp.end);
+    return _balanceWithin(doc, env.start, env.end, sp);
+  }
+  for (var k = 0; k < 8; k++) {
+    final int? owner = orphanOwnerBefore(doc, s, e);
+    if (owner == null || owner >= s) break;
+    s = owner;
+  }
   final ({int start, int end}) head = _completeArgs(doc, s, e, sp.end);
   final ({int start, int end}) tail =
       _completeTrailingCommand(doc, head.start, head.end, sp.end);
@@ -178,7 +204,17 @@ int _braceDepth(String s) {
   //   `[公式不完整]`。旧的自洽化只认 `\frac{a}` 这种**命令参数**，不认环境。
   final ({int start, int end}) env =
       _completeEnvs(doc, tail.start, tail.end, sp.end);
-  return _balanceWithin(doc, env.start, env.end, sp);
+  // ★ 右侧：未闭合的开壳（`{` / `\begin`）补到闭合为止（栈判据）。
+  var end = env.end;
+  while (end < sp.end && hasUnclosedOpener(doc.substring(env.start, end))) {
+    end++;
+  }
+  // 补不齐（原文本来就坏）⇒ 退到整段**内容**（不含定界符，避免再包一层 `$`）。
+  if (!isCompleteFragment(doc.substring(env.start, end))) {
+    final int pad = sp.display ? 2 : 1;
+    return (start: sp.start + pad, end: sp.end - pad);
+  }
+  return (start: env.start, end: end);
 }
 
 /// 片段里有**没闭合的 `\begin{X}`** ⇒ 把结尾扩到那个 `\end{X}` 之后（最多到 [limit]）。
@@ -268,43 +304,7 @@ int _braceDepth(String s) {
 /// 实测动因：拖选很容易停在 `\frac{a}` 这种"参数只选到一半"的地方，
 /// 那样的片段单独渲染必然报错（KaTeX: expected 2 args）。
 /// 只认"必须显式参数组"的结构命令；其余命令原样。
-int _requiredArgs(String name) {
-  switch (name) {
-    case 'frac':
-    case 'dfrac':
-    case 'tfrac':
-    case 'binom':
-    case 'dbinom':
-    case 'tbinom':
-    case 'overset':
-    case 'underset':
-    case 'stackrel':
-      return 2;
-    case 'sqrt':
-    case 'overline':
-    case 'underline':
-    case 'hat':
-    case 'bar':
-    case 'vec':
-    case 'dot':
-    case 'ddot':
-    case 'tilde':
-    case 'widehat':
-    case 'widetilde':
-    case 'overrightarrow':
-    case 'overleftarrow':
-    case 'text':
-    case 'textrm':
-    case 'textbf':
-    case 'mathrm':
-    case 'mathbf':
-    case 'mathcal':
-    case 'mathbb':
-    case 'operatorname':
-      return 1;
-  }
-  return 0;
-}
+int _requiredArgs(String name) => requiredArgs(name);
 
 ({int start, int end}) _completeArgs(String doc, int s, int e, int limit) {
   final Match? m = RegExp(r'^\\([A-Za-z]+)').firstMatch(doc.substring(s, e));
