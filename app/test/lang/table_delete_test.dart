@@ -22,7 +22,7 @@ void main() {
       final DeletePlan p = planDelete(_pm, s, e);
       expect(_apply(_pm, p),
           '\$\$\n\\begin{pmatrix}&\\\\c&d\\end{pmatrix}\n\$\$');
-      expect(p.clipboardText, r'$\begin{bmatrix}a&b\end{bmatrix}$',
+      expect(p.clipboardText, r'$\begin{matrix}a&b\end{matrix}$',
           reason: p.clipboardText);
     });
 
@@ -32,7 +32,7 @@ void main() {
       final DeletePlan p = planDelete(_pm, s, e);
       expect(_apply(_pm, p),
           '\$\$\n\\begin{pmatrix}&\\\\c&d\\end{pmatrix}\n\$\$');
-      expect(p.clipboardText, r'$\begin{bmatrix}a&b\end{bmatrix}$',
+      expect(p.clipboardText, r'$\begin{matrix}a&b\end{matrix}$',
           reason: p.clipboardText);
     });
 
@@ -75,7 +75,7 @@ void main() {
       expect(_apply(doc, p),
           '\$\$\n\\begin{bmatrix}a&&\\\\&&f\\end{bmatrix}\n\$\$',
           reason: _apply(doc, p));
-      expect(p.clipboardText, r'$\begin{bmatrix}b&c\\d&e\end{bmatrix}$',
+      expect(p.clipboardText, r'$\begin{matrix}b&c\\d&e\end{matrix}$',
           reason: p.clipboardText);
     });
   });

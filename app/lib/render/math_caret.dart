@@ -64,6 +64,7 @@ class MathWithCaret extends StatefulWidget {
     this.selTo,
     this.showEditingAids = true,
     this.caretDepth = -1,
+    this.caretCell,
     this.caretScript = false,
     this.caretMainRow = false,
   });
@@ -105,6 +106,11 @@ class MathWithCaret extends StatefulWidget {
   /// **不是**靠"行盒多高"去猜层（那样又是一份判据）。
   /// 用途只有一个：主行（行内公式）的竖条按**文本层标准**画高，子层仍按当地行盒。
   final int caretDepth;
+
+  /// ★★ 2026-11-03 晚：光标所在**哪一格** —— (行, 列, 环境序号)，由 env_table.cellAtOffset 算好。
+  /// 有了它就不靠**像素**猜格：''a&b'' 的''左格末尾''与''右格开头''是同一像素（& 零宽），
+  /// 像素判据只能二选一（老规则选左边）⇒ 空着的右格死活不画框（用户："只有第一列有框"）。
+  final ({int r, int c, int envIx})? caretCell;
 
   /// **选区**（⑤ 高亮）：tex 相对区间 `[selFrom, selTo)`；`null` = 这段没被选中
   final int? selFrom;
@@ -355,16 +361,31 @@ class _MathWithCaretState extends State<MathWithCaret> {
       final bool display = widget.mathStyle == MathStyle.display;
       // ★★ 2026-10-19（L19）：**一次建网格**，命中与画框走同一份几何
       //   （以前这里各建一次 ⇒ 每帧两遍叶盒扫描 + 两遍配对；也保证两者不会各判一套）。
-      final EnvGrid? grid = envGridNearest(
-          root: root,
-          tex: widget.tex,
-          displayStyle: display,
-          fontSize: widget.fontSize,
-          localPos: at);
-      final EnvCellHit? cell = grid == null ? null : envCellHitIn(grid, at);
+      // ★★ 2026-11-03 晚：**有"光标在哪一格"就直接用**，不靠像素猜 ——
+      //   `a&b` 里"左格末尾"与"右格开头"是同一像素（`&` 零宽），像素判据只能二选一
+      //   （老规则选左边）⇒ 空着的右格死活不画框（用户："只有第一列画了框"）。
+      final EnvGrid? grid = widget.caretCell != null
+          ? buildEnvGrid(
+              root: root,
+              tex: widget.tex,
+              displayStyle: display,
+              fontSize: widget.fontSize,
+              envIx: widget.caretCell!.envIx)
+          : envGridNearest(
+              root: root,
+              tex: widget.tex,
+              displayStyle: display,
+              fontSize: widget.fontSize,
+              localPos: at);
+      final EnvCellHit? cell = widget.caretCell != null
+          ? EnvCellHit(widget.caretCell!.r, widget.caretCell!.c,
+              atEnd: false, envIx: widget.caretCell!.envIx)
+          : (grid == null ? null : envCellHitIn(grid, at));
       if (grid != null && cell != null) {
         final Rect? box = envCellBoxIn(grid, cell.row, cell.col);
-        if (box != null && box.inflate(3).contains(at)) {
+        // 知道格子时**以格子为准**（不再用"框必须包住锚点"那条像素判据）
+        if (box != null &&
+            (widget.caretCell != null || box.inflate(3).contains(at))) {
           final List<LeafBox> boxes = scanLeafBoxes(root).eligible;
           // ★★★ 2026-10-24（批 19 · F1-c）：**模板自带的对齐记号不算"用户填的内容"**。
           //

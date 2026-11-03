@@ -220,7 +220,10 @@ List<EnvCell> cellsIn(EnvTable t, CellSpan span) {
 /// 这条带作为**剪贴板载荷**的 tex（带壳，不含 `$`）。
 ///
 /// · 整表 ⇒ 原样（保留原类型，`vmatrix` 还是 `vmatrix`）；
-/// · 局部表 ⇒ 中性 `bmatrix`（行列式不能带源类型：局部块不是方阵）；
+/// · 局部表 ⇒ 中性 **`matrix`**（*不带括号*）——
+///   ★★ 2026-11-03 晚（用户实测打回）：本来用 `bmatrix`，但源表本身常常就是 `bmatrix`
+///   ⇒ "整表复制"与"局部复制"在载荷里**长得一样** ⇒ 粘到正文时整表也被按行拆了。
+///   换成 `matrix` 之后：**`matrix` = 局部片段**、其它（`bmatrix`/`pmatrix`/`vmatrix`…）= 整表。
 ///   每行只带**这一带**的格 ⇒ 可能**参差**（`b&c` 与 `d`），粘贴时再补空；
 /// · 行单位（`cases` / `aligned`）⇒ **整行**，壳沿用原类型。
 String cellsPayload(EnvTable t, String tex, CellSpan span) {
@@ -240,7 +243,7 @@ String cellsPayload(EnvTable t, String tex, CellSpan span) {
   }
 
   final StringBuffer sb = StringBuffer();
-  sb.write(r'\begin{bmatrix}');
+  sb.write(r'\begin{matrix}');
   for (var r = span.r0; r <= span.r1 && r < t.rows.length; r++) {
     if (r > span.r0) sb.write(r'\\');
     final List<EnvCell> row = t.rows[r];
@@ -253,7 +256,7 @@ String cellsPayload(EnvTable t, String tex, CellSpan span) {
       sb.write(tex.substring(row[c].start, row[c].end).trim());
     }
   }
-  sb.write(r'\end{bmatrix}');
+  sb.write(r'\end{matrix}');
   return sb.toString();
 }
 
@@ -279,6 +282,157 @@ CellClear? cellClearPlan(EnvTable t, String tex, CellSpan span) {
     replacement: sb.toString(),
     payload: cellsPayload(t, tex, span),
   );
+}
+
+// ---------------------------------------------------------------------------
+// 粘进表内（落格）
+// ---------------------------------------------------------------------------
+
+/// 一次"把格写进表"的结果：`[from, to)` → [replacement]，光标落 [caretAfter]。
+class CellWrite {
+  const CellWrite({
+    required this.from,
+    required this.to,
+    required this.replacement,
+    required this.caretAfter,
+    required this.rows,
+    required this.cols,
+    required this.clipped,
+  });
+
+  final int from;
+  final int to;
+  final String replacement;
+
+  /// 最后一个写入格的**内容末尾**（tex 局部坐标）
+  final int caretAfter;
+
+  /// 实际写进去的行数 / 列数
+  final int rows;
+  final int cols;
+
+  /// 载荷比表大 ⇒ 有格没放下（调用方要在状态栏说一句）
+  final bool clipped;
+}
+
+/// 载荷 → 格网格；不是"矩阵族表载荷" ⇒ null。
+///
+/// ★ `cases` / `aligned` **不参与格分配**（口径：它们是整块环境，粘进表内 = 嵌套一个环境）。
+List<List<String>>? cellGridOf(String tex) {
+  final List<EnvTable> tables = envTablesIn(tex);
+  if (tables.isNotEmpty) {
+    final EnvTable t = tables.first;
+    if (t.kind != EnvKind.matrix) return null;
+    return <List<String>>[
+      for (final List<EnvCell> row in t.rows)
+        <String>[
+          for (final EnvCell c in row) tex.substring(c.start, c.end).trim(),
+        ],
+    ];
+  }
+  // 裸载荷（外部粘进来的 `a & b \\ c & d`）
+  if (!tex.contains('&') && !tex.contains(r'\\')) return null;
+  final List<List<EnvCell>> rows = _splitBody(tex, 0, tex.length);
+  return <List<String>>[
+    for (final List<EnvCell> row in rows)
+      <String>[for (final EnvCell c in row) tex.substring(c.start, c.end).trim()],
+  ];
+}
+
+/// 把 [grid] 写进表 `t` 从第 ([r0], [c0]) 格起的矩形（**超出边界裁剪**）。
+///
+/// 只改**格内容**，`&` / `\\` 与壳原样保留 ⇒ 一次 `replace`、**一步撤销**。
+CellWrite? cellWritePlan(
+    EnvTable t, String tex, int r0, int c0, List<List<String>> grid) {
+  if (grid.isEmpty) return null;
+  final List<EnvCell> targets = <EnvCell>[];
+  final List<String> writes = <String>[];
+  var clipped = false;
+  var rows = 0;
+  var cols = 0;
+  for (var i = 0; i < grid.length; i++) {
+    final int r = r0 + i;
+    if (r >= t.rows.length) {
+      clipped = true;
+      break;
+    }
+    var wroteRow = false;
+    for (var j = 0; j < grid[i].length; j++) {
+      final int c = c0 + j;
+      if (c >= t.rows[r].length) {
+        clipped = true;
+        break;
+      }
+      targets.add(t.rows[r][c]);
+      writes.add(grid[i][j]);
+      wroteRow = true;
+      if (j + 1 > cols) cols = j + 1;
+    }
+    if (wroteRow) rows++;
+  }
+  if (targets.isEmpty) return null;
+
+  final int from = targets.first.start;
+  final int to = targets.last.end;
+  final StringBuffer sb = StringBuffer();
+  var p = from;
+  var caretAfter = from;
+  for (var k = 0; k < targets.length; k++) {
+    final EnvCell cell = targets[k];
+    if (cell.start > p) sb.write(tex.substring(p, cell.start)); // 分隔符
+    sb.write(writes[k]);
+    caretAfter = from + sb.length; // 最后写进的那一格之后
+    p = cell.end > p ? cell.end : p;
+  }
+  if (p < to) sb.write(tex.substring(p, to));
+  return CellWrite(
+    from: from,
+    to: to,
+    replacement: sb.toString(),
+    caretAfter: caretAfter,
+    rows: rows,
+    cols: cols,
+    clipped: clipped,
+  );
+}
+
+/// 光标 [offset] 落在表里的哪一格；压在分隔符/空白上 ⇒ 最近的那一格。
+({int r, int c})? cellNear(EnvTable t, int offset) {
+  for (var r = 0; r < t.rows.length; r++) {
+    for (var c = 0; c < t.rows[r].length; c++) {
+      final EnvCell cell = t.rows[r][c];
+      if (offset >= cell.start && offset <= cell.end) return (r: r, c: c);
+    }
+  }
+  return _nearestCell(t, offset);
+}
+
+/// 光标 [offset] 落在**哪一格**：`(行, 列, 环境序号)`。
+///
+/// ★★ 2026-11-03 晚：画格框不能靠**像素**猜 —— `a&b` 里"左格末尾"与"右格开头"
+/// 是**同一个像素**（`&` 零宽），像素判据只能二选一（现在的规则选左边）⇒
+/// 光标明明在空着的右格里，框却画到左边那格 / 干脆不画（用户："只有第一列有框"）。
+/// 所以由**光标偏移**定格子，再交给绘制层。
+({int r, int c, int envIx})? cellAtOffset(String tex, int offset) {
+  final List<EnvTable> tables = envTablesIn(tex);
+  if (tables.isEmpty) return null;
+  // 环境序号 = 按 `\begin` 出现顺序（与 `SlotStep.envIx` 同一口径）
+  final List<EnvTable> sorted = List<EnvTable>.of(tables)
+    ..sort((EnvTable a, EnvTable b) => a.beginStart.compareTo(b.beginStart));
+  EnvTable? hit;
+  var ix = -1;
+  for (var i = 0; i < sorted.length; i++) {
+    final EnvTable t = sorted[i];
+    if (offset < t.bodyStart || offset > t.bodyEnd) continue;
+    if (hit == null || t.beginStart > hit.beginStart) {
+      hit = t;
+      ix = i;
+    }
+  }
+  if (hit == null || ix < 0) return null;
+  final ({int r, int c})? near = cellNear(hit, offset);
+  if (near == null) return null;
+  return (r: near.r, c: near.c, envIx: ix);
 }
 
 // ---------------------------------------------------------------------------

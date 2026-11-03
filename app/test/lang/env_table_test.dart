@@ -119,7 +119,7 @@ void main() {
       final EnvTable t = envTablesIn(_pm).single;
       expect(
         cellsPayload(t, _pm, (r0: 0, c0: 0, r1: 0, c1: 1)),
-        r'\begin{bmatrix}a&b\end{bmatrix}',
+        r'\begin{matrix}a&b\end{matrix}',
       );
       expect(
         cellsPayload(t, _pm, (r0: 0, c0: 0, r1: 1, c1: 1)),
@@ -131,7 +131,7 @@ void main() {
       final EnvTable t = envTablesIn(_vm).single;
       expect(
         cellsPayload(t, _vm, (r0: 0, c0: 0, r1: 1, c1: 2)),
-        r'\begin{bmatrix}a&b&c\\d&e&f\end{bmatrix}',
+        r'\begin{matrix}a&b&c\\d&e&f\end{matrix}',
       );
       // 整张行列式 ⇒ 还是 vmatrix
       expect(
@@ -168,7 +168,7 @@ void main() {
       // b→d：行 0 带 b,c；行 1 带 d ⇒ 两行格数不同（3×3 里 b→e 是 2+2，不参差）
       expect(
         cellsPayload(t, tex, (r0: 0, c0: 1, r1: 1, c1: 0)),
-        r'\begin{bmatrix}b&c\\d\end{bmatrix}',
+        r'\begin{matrix}b&c\\d\end{matrix}',
       );
       // 盖住所有**存在**的格 ⇒ 就算整表（原样带走）
       expect(
@@ -184,7 +184,7 @@ void main() {
       final CellClear c = cellClearPlan(t, _pm, (r0: 0, c0: 0, r1: 0, c1: 1))!;
       final String after = _pm.replaceRange(c.from, c.to, c.replacement);
       expect(after, r'\begin{pmatrix}&\\c&d\end{pmatrix}');
-      expect(c.payload, r'\begin{bmatrix}a&b\end{bmatrix}');
+      expect(c.payload, r'\begin{matrix}a&b\end{matrix}');
     });
 
     test('只清一格：只动那一格的内容', () {
@@ -192,7 +192,7 @@ void main() {
       final CellClear c = cellClearPlan(t, _pm, (r0: 1, c0: 0, r1: 1, c1: 0))!;
       final String after = _pm.replaceRange(c.from, c.to, c.replacement);
       expect(after, r'\begin{pmatrix}a&b\\&d\end{pmatrix}');
-      expect(c.payload, r'\begin{bmatrix}c\end{bmatrix}');
+      expect(c.payload, r'\begin{matrix}c\end{matrix}');
     });
 
     test('单行清中间一格：左右两格都不许动', () {
@@ -201,7 +201,7 @@ void main() {
       final CellClear c = cellClearPlan(t, tex, (r0: 0, c0: 1, r1: 0, c1: 1))!;
       final String after = tex.replaceRange(c.from, c.to, c.replacement);
       expect(after, r'\begin{bmatrix}a&&c\\d&e&f\end{bmatrix}');
-      expect(c.payload, r'\begin{bmatrix}b\end{bmatrix}');
+      expect(c.payload, r'\begin{matrix}b\end{matrix}');
     });
 
     test('跨行清一条带 ⇒ 只清带里的格（行 0 尾巴 + 行 1 开头）', () {
@@ -210,7 +210,7 @@ void main() {
       final CellClear c = cellClearPlan(t, tex, (r0: 0, c0: 1, r1: 1, c1: 1))!;
       final String after = tex.replaceRange(c.from, c.to, c.replacement);
       expect(after, r'\begin{bmatrix}a&&\\&&f\end{bmatrix}');
-      expect(c.payload, r'\begin{bmatrix}b&c\\d&e\end{bmatrix}');
+      expect(c.payload, r'\begin{matrix}b&c\\d&e\end{matrix}');
     });
   });
 }

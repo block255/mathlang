@@ -76,7 +76,7 @@ void main() {
     await tester.pumpAndSettle();
     await _press(tester, LogicalKeyboardKey.keyC);
 
-    expect(_lastClipboard(calls), r'$\begin{bmatrix}a&b\end{bmatrix}$');
+    expect(_lastClipboard(calls), r'$\begin{matrix}a&b\end{matrix}$');
   });
 
   testWidgets('Ctrl+C 选整张表 ⇒ 保留原类型（pmatrix 不变 bmatrix）',
@@ -115,7 +115,7 @@ void main() {
     await tester.pumpAndSettle();
     await _press(tester, LogicalKeyboardKey.keyX);
 
-    expect(_lastClipboard(calls), r'$\begin{bmatrix}a&b\end{bmatrix}$');
+    expect(_lastClipboard(calls), r'$\begin{matrix}a&b\end{matrix}$');
     expect(buf.buf, contains(r'\begin{pmatrix}&\\c&d\end{pmatrix}'),
         reason: '删格留空：${buf.buf}');
     // 一步撤销能回到原样（引擎会补文末换行，比内容不比那一个 `\n`）
@@ -134,7 +134,7 @@ void main() {
     buf.setCaret(buf.buf.length); // 文末 = 正文
     await tester.pumpAndSettle();
     final EditViewState state = tester.state<EditViewState>(find.byType(EditView));
-    state.pasteText(r'$\begin{bmatrix}a&b\end{bmatrix}$');
+    state.pasteText(r'$\begin{matrix}a&b\end{matrix}$');
     await tester.pumpAndSettle();
     expect(buf.buf, contains(r'$a\ b$'), reason: buf.buf);
     expect(buf.buf, isNot(contains(r'\begin{bmatrix}')), reason: buf.buf);

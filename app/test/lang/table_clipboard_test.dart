@@ -52,7 +52,7 @@ void main() {
       final int s = cellPos(_pm, 'a');
       final int e = cellPos(_pm, 'b') + 1;
       final ClipboardSlice sl = clipboardSlice(_pm, s, e);
-      expect(sl.text, r'$\begin{bmatrix}a&b\end{bmatrix}$', reason: sl.text);
+      expect(sl.text, r'$\begin{matrix}a&b\end{matrix}$', reason: sl.text);
       _expectSeparatorsInsideEnv(sl.text, '一行两格');
     });
 
@@ -67,7 +67,7 @@ void main() {
       final int s = cellPos(_vm, 'a');
       final int e = cellPos(_vm, 'f') + 1;
       final ClipboardSlice sl = clipboardSlice(_vm, s, e);
-      expect(sl.text, r'$\begin{bmatrix}a&b&c\\d&e&f\end{bmatrix}$',
+      expect(sl.text, r'$\begin{matrix}a&b&c\\d&e&f\end{matrix}$',
           reason: sl.text);
       _expectSeparatorsInsideEnv(sl.text, '行列式局部');
     });
@@ -77,7 +77,7 @@ void main() {
       final int s = cellPos(doc, 'b');
       final int e = cellPos(doc, 'c') + 1;
       final ClipboardSlice sl = clipboardSlice(doc, s, e);
-      expect(sl.text, r'$\begin{bmatrix}b&c\end{bmatrix}$', reason: sl.text);
+      expect(sl.text, r'$\begin{matrix}b&c\end{matrix}$', reason: sl.text);
     });
 
     test('横跨两行 ⇒ **高亮那一带**（不碰没选中的 `a`、`f`）', () {
@@ -86,7 +86,7 @@ void main() {
       final int s = cellPos(doc, 'b');
       final int e = cellPos(doc, 'e') + 1;
       final ClipboardSlice sl = clipboardSlice(doc, s, e);
-      expect(sl.text, r'$\begin{bmatrix}b&c\\d&e\end{bmatrix}$',
+      expect(sl.text, r'$\begin{matrix}b&c\\d&e\end{matrix}$',
           reason: sl.text);
     });
   });

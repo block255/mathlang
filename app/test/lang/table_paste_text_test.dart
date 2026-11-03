@@ -18,21 +18,21 @@ void main() {
   group('局部表片段（bmatrix 载荷）粘到正文', () {
     test(r'⇒ 按行落成行内公式，`&` 变空格', () {
       final PasteDecision d =
-          _atText(r'$\begin{bmatrix}b&c\\d&e\end{bmatrix}$');
+          _atText(r'$\begin{matrix}b&c\\d&e\end{matrix}$');
       expect(d.apply, PasteApply.tableLines);
       expect(d.payload, r'$b\ c$' '\n' r'$d\ e$', reason: d.payload);
       expect(d.note, isNotNull);
     });
 
     test('一行两格 ⇒ 一行落成一条行内公式', () {
-      final PasteDecision d = _atText(r'$\begin{bmatrix}a&b\end{bmatrix}$');
+      final PasteDecision d = _atText(r'$\begin{matrix}a&b\end{matrix}$');
       expect(d.apply, PasteApply.tableLines);
       expect(d.payload, r'$a\ b$', reason: d.payload);
     });
 
-    test('整表（pmatrix）⇒ 照旧 asIs（还是一个矩阵）', () {
+    test('整表（bmatrix，用户那份就是）⇒ 照旧 asIs（还是一个矩阵）', () {
       final PasteDecision d =
-          _atText(r'$\begin{pmatrix}a&b\\c&d\end{pmatrix}$');
+          _atText(r'$\begin{bmatrix}a&b\\c&d\end{bmatrix}$');
       expect(d.apply, PasteApply.asIs);
     });
 
@@ -48,7 +48,7 @@ void main() {
         caret: doc.indexOf('frac') + 2,
         selStart: doc.indexOf('frac') + 2,
         selEnd: doc.indexOf('frac') + 2,
-        payload: r'$\begin{bmatrix}b&c\\d&e\end{bmatrix}$',
+        payload: r'$\begin{matrix}b&c\\d&e\end{matrix}$',
       );
       expect(d.apply, isNot(PasteApply.tableLines), reason: d.apply.name);
     });

@@ -1762,6 +1762,16 @@ class EditViewState extends State<EditView> {
         final String text = plan.isEmpty ? raw : applySmartWrap(raw, plan);
         _commitText(text, autoWrapped: plan.runs.length);
         return;
+      case PasteApply.tableCells:
+        // ★★ 2026-11-03 晚（表批 B · 落格）：写进格子 —— 一次替换、一步撤销，
+        //   分隔符与壳原样保留（`cellWritePlan` 已经把"超界裁剪"算好）。
+        _breakUndoGroup();
+        _mutate(() {
+          _buf.replace(d.replaceFrom!, d.replaceTo!, d.payload);
+          _buf.setCaret(d.at!.clamp(0, _buf.length));
+        });
+        _note(d.note);
+        return;
       case PasteApply.tableLines:
         // ★★ 2026-11-03（表批 B）：局部表片段粘到**正文** ⇒ 按行落成行内公式
         //   （载荷已经是 `$…$` 每行一条，不再跑智能包裹）

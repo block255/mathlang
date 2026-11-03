@@ -42,10 +42,15 @@ enum PasteApply {
   /// 载荷是"文字 + 公式"混合，塞不进公式里：**推到公式之后**再按文字插入
   pushOut,
 
-  /// 载荷是**局部表片段**（我们补的中性 `bmatrix`）、落点在**正文**：
+  /// 载荷是**局部表片段**（我们补的中性 `matrix`）、落点在**正文**：
   /// **按行落成行内公式**（`&` → 空格），不再就地造一个矩阵。
   /// ★ 2026-11-03（用户拍板）：片段往往不是想要的矩阵形状，正文里没有第三个用处。
   tableLines,
+
+  /// 落点在**表内**、载荷也是一张表 ⇒ **写进格子**
+  /// （当前格为左上角、整格覆盖、超界裁剪）。
+  /// `payload` = 替换文本，`replaceFrom/To` = 区间，`at` = 落点后的光标。
+  tableCells,
 }
 
 class PasteDecision {
@@ -110,6 +115,12 @@ PasteDecision decidePaste({
     }
     return PasteDecision(apply: PasteApply.asIs, payload: payload);
   }
+
+  // ★★ 2026-11-03 晚（表批 B · 落格）：**落点在表内**且载荷是一张表 ⇒ 写格。
+  //   原来会把 `\begin{matrix}…\end{matrix}` 原样插进格子里，把外面那张表拆散
+  //   （用户实测：一粘就变成"一堆散字 + 一个新矩阵"）。
+  final PasteDecision? cells = _tableCellsDecision(r, probe, payload);
+  if (cells != null) return cells;
 
   final bool multi = payload.contains('\n');
   if (multi) {
@@ -257,12 +268,42 @@ String? _stripOnePiece(String s) {
   return null;
 }
 
-/// **局部表片段**（载荷是我们补的中性 `bmatrix`）⇒ 按行拆成行内公式；不是 ⇒ null。
+/// **落点在表内 + 载荷是矩阵族表** ⇒ 落格（超出边界裁剪，状态栏说明）；否则 null。
 ///
-/// ★ 只认 `bmatrix`：整表复制会**保留原类型**（`pmatrix` / `vmatrix` / …），
-///   所以"中性壳"正好是"局部片段"的标记。
-///   **已知取舍**：源本来就是 `bmatrix` 的整表，复制出来也是 `bmatrix`
-///   ⇒ 粘到正文时会按行落（而不是变成一个矩阵）。
+/// 口径（§3.2）：剥壳取格、当前格 = 左上角、**整格覆盖**、超界裁剪。
+/// `cases` / `aligned` 载荷不参与格分配（它们是整块环境，见 `cellGridOf`）。
+PasteDecision? _tableCellsDecision(
+    MathRegion r, int probe, String payload) {
+  final int local = probe - r.contentStart;
+  final EnvTable? target = envTableAt(r.tex, local);
+  if (target == null) return null;
+  final String? payloadTex = _stripOnePiece(payload) ?? _stripFences(payload);
+  if (payloadTex == null) return null;
+  final List<List<String>>? grid = cellGridOf(payloadTex.trim());
+  if (grid == null) return null;
+  final ({int r, int c})? at = cellNear(target, local);
+  if (at == null) return null;
+  final CellWrite? w = cellWritePlan(target, r.tex, at.r, at.c, grid);
+  if (w == null) return null;
+  final String size = '${w.rows} 行 × ${w.cols} 列';
+  return PasteDecision(
+    apply: PasteApply.tableCells,
+    payload: w.replacement,
+    replaceFrom: r.contentStart + w.from,
+    replaceTo: r.contentStart + w.to,
+    at: r.contentStart + w.caretAfter,
+    note: w.clipped
+        ? '已粘进表格（$size；超出表格边界的部分已裁剪）'
+        : '已粘进表格（$size）',
+  );
+}
+
+/// **局部表片段**（载荷是我们补的中性 `matrix`）⇒ 按行拆成行内公式；不是 ⇒ null。
+///
+/// ★ 只认 **`matrix`（不带括号）**：整表复制会**保留原类型**（`bmatrix` / `pmatrix` / `vmatrix` / …），
+///   所以"无括号的 `matrix`"正好是"局部片段"的标记。
+///   （2026-11-03 晚改：本来用 `bmatrix`，可源表本身常常就是 `bmatrix`
+///   ⇒ 整表复制也会被按行拆，用户实测打回。）
 List<String>? _tableRowsText(String payload) {
   final String? tex = _stripOnePiece(payload) ?? _stripFences(payload);
   if (tex == null) return null;
@@ -270,7 +311,7 @@ List<String>? _tableRowsText(String payload) {
   final List<EnvTable> tables = envTablesIn(s);
   if (tables.isEmpty) return null;
   final EnvTable t = tables.first;
-  if (t.name != 'bmatrix') return null;
+  if (t.name != 'matrix') return null;
   if (!s.contains('&') && !s.contains(r'\\')) return null;
   final List<String> lines = <String>[];
   for (final List<EnvCell> row in t.rows) {
