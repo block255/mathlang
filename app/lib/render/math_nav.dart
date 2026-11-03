@@ -658,11 +658,15 @@ bool _fenceBrokenByDelete(String source, int from, int to) {
   // （分页符的事在 `smartEditAt` 入口按"结果里有没有残片"统一处理，见那里的注释。）
   if (!onlyNewlines) return false;
 
-  // ① 围栏在行中间（前缀有非空白内容）
-  for (var k = merged.indexOf(_kMathFence);
-      k >= 0;
-      k = merged.indexOf(_kMathFence, k + 1)) {
-    if (merged.substring(0, k).trim().isNotEmpty) return true;
+  // ① 围栏被挪到行中间：右边那一行**行首的 `$$`** 前面接上了内容
+  //
+  // ★★★ 2026-11-03 深夜（用户："`$a$` 与 `$b$` 相邻为什么不行？"）：判据**收窄**了。
+  //   原来只要 `merged` 里出现 `$$`、且它前面有内容就判坏 —— 可 `$a$`+`$b$` 拼起来
+  //   正是 `$a$$b$`（**两个行内段**，实测切段 2 段、渲染成两个行内公式，完全合法）
+  //   ⇒ 那条判据把**合法形态**判成了坏，用户才被卡在"补了换行又删不掉"里。
+  //   现在只看"**行首 `$$`（行间围栏）被推到了行中间**"这种真坏事。
+  if (left.trimRight().isNotEmpty && right.trimLeft().startsWith(_kMathFence)) {
+    return true;
   }
   // ② 两个围栏粘成一行
   if (merged.contains(_kMathFence + _kMathFence)) return true;

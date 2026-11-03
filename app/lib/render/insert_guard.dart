@@ -428,6 +428,15 @@ InsertPadding padForRange(String src, int start, int end, String text) {
   final String lastLine = text.substring(text.lastIndexOf('\n') + 1);
   final bool leftDollar = s > 0 && src[s - 1] == r'$';
   final bool rightDollar = e < src.length && src[e] == r'$';
+  // ★★★ 2026-11-03 深夜（用户："我们难道不允许 `$……$$$ωΩ` 这种东西放在一个行内相邻着吗？"）：
+  //   规则 ⑤ 的判据**收窄成"连成 3 个以上 `$`"**（= 行间围栏参与其中），不再是"只要挨着 `$`"。
+  //   实测（讨论文档 §10.3）：`$a$$b$`（行内收尾 + 行内开头，两个 `$`）**切段完全正常**
+  //   （2 段行内、渲染成两个行内公式）；真正切坏的是 `$a$$$b$$` / `$$a$$$$b$$`（3 连、4 连）。
+  //   ⇒ 两个 `$` 相邻允许直接拼；`$$` 一沾就必须补换行。
+  final int beforeRun = _dollarRunBefore(src, s);
+  final int headRun = _dollarRunLeading(text);
+  final int tailRun = _dollarRunTrailing(text);
+  final int afterRun = _dollarRunAfter(src, e);
   // ★★ ★★★ 2026-10-26（批 37，用户 20261026 反馈 A2）：**落点在围栏行内部 ⇒ 任何载荷都得先换行**。
   //   现场：在空行间块里粘「即 $\forall…$」⇒ 载荷被推到收尾 `$$` 之后那一格，
   //   于是文档变成 `$$即 …` —— 那一行**以 `$$` 开头却没有收尾** ⇒
@@ -439,7 +448,7 @@ InsertPadding padForRange(String src, int start, int end, String text) {
   final bool prefix = s > 0 &&
       src[s - 1] != '\n' &&
       !text.startsWith('\n') &&
-      ((leftDollar && text.startsWith(r'$')) ||
+      ((leftDollar && text.startsWith(r'$') && beforeRun + headRun >= 3) ||
           _isBlockSyntaxLine(firstLine) ||
           atFenceLine);
   // ★★ 规则 ⑥（2026-10-17 b2-② 手验抓到的真缺陷）：**落点正好在"整行语法行"的行首**。
@@ -451,11 +460,41 @@ InsertPadding padForRange(String src, int start, int end, String text) {
   final bool suffix = e < src.length &&
       src[e] != '\n' &&
       !text.endsWith('\n') &&
-      ((rightDollar && text.endsWith(r'$')) ||
+      ((rightDollar && text.endsWith(r'$') && tailRun + afterRun >= 3) ||
           _isBlockSyntaxLine(lastLine) ||
           _isFenceLine(_nextLineAt(src, e)) ||
           atSyntaxLineStart);
   return InsertPadding(prefixNewline: prefix, suffixNewline: suffix);
+}
+
+/// `$` 连成的**前缀段长度**（[at] 之前紧挨着几个 `$`）
+int _dollarRunBefore(String s, int at) {
+  var n = 0;
+  while (at - 1 - n >= 0 && s[at - 1 - n] == r'$') {
+    n++;
+  }
+  return n;
+}
+
+/// [at] 起往后紧挨着几个 `$`
+int _dollarRunAfter(String s, int at) {
+  var n = 0;
+  while (at + n < s.length && s[at + n] == r'$') {
+    n++;
+  }
+  return n;
+}
+
+/// 文本**开头**连续几个 `$`
+int _dollarRunLeading(String t) => _dollarRunAfter(t, 0);
+
+/// 文本**结尾**连续几个 `$`
+int _dollarRunTrailing(String t) {
+  var n = 0;
+  while (t.length - 1 - n >= 0 && t[t.length - 1 - n] == r'$') {
+    n++;
+  }
+  return n;
 }
 
 /// 这一行是不是"整行语法"（块的起点/边界）——`$$` 围栏、```` ``` ````、标题、列表、分页符。

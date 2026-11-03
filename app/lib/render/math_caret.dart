@@ -353,6 +353,12 @@ class _MathWithCaretState extends State<MathWithCaret> {
         : <SlotPad>[];
     // ★ 环境空格子的"格框"（算出来后，竖条要跟它**完全重合**，见下面的覆盖）
     Rect? envBox;
+    // ★★★ 2026-11-03 深夜（用户 ①："竖条有**两种 y**，一种贴某行、一种浮在两行之间"）：
+    //   **边界位点**（两个环境之间 / 环境外面）不属于任何一格 ⇒ 拿不到格框 ⇒ 落进
+    //   `字号 × 1.25` 的兜底尺子（行带 24px、兜底 25px），位置又由锚点 y 定 ⇒ 上下各跨
+    //   相邻行一半，看着"不上不下"。这里按"**锚点落在哪条行带**（都不含就取最近的一条）"
+    //   给它一条行带 ⇒ 竖条高度 = 行带内缩（与有字格同一把尺子），且**永远只在一条视觉行上**。
+    Rect? caretBand;
     // ★★★ 2026-10-19（用户实测三条："框高度不一样"、"点下面空行时框和光标跑到上面把 d 盖住"、
     //   "点公式后面时里面也冒出一个框"）：
     //   框 = **光标所在那一格的"格框"**（x/宽取格子矩形，y/高取行带），
@@ -423,6 +429,10 @@ class _MathWithCaretState extends State<MathWithCaret> {
           }
         }
       }
+      // ★ 边界位点（没有格框）⇒ 记下"锚点所在/最近的那条行带"，给竖条用
+      if (envBox == null) {
+        caretBand = _nearestRowBand(grid, at.dy);
+      }
     }
     // ★★★ 2026-10-19（用户："点不同行会出现不同程度的光标和占位框分离"）：
     //   竖条的 y 原来由"光标所在层级"推（`findLocalRowBox`），在空格子里它会落到**相邻行**；
@@ -435,6 +445,15 @@ class _MathWithCaretState extends State<MathWithCaret> {
       bar = caretBarRect(
         at: at,
         localRowBox: envBox,
+        width: widget.caretWidth,
+        fontSize: widget.fontSize,
+      );
+    } else if (caretBand != null && at != null) {
+      // ★★★ 2026-11-03 深夜（用户 ① 的"两种 y"）：**边界位点也要贴一条行带**
+      //   （不是字号 × 1.25 的兜底尺子 —— 那把尺子比行带高、位置由锚点定 ⇒ 跨两条行界）。
+      bar = caretBarRect(
+        at: at,
+        localRowBox: caretBand,
         width: widget.caretWidth,
         fontSize: widget.fontSize,
       );
@@ -519,6 +538,25 @@ double textCaretHeight(double fontSize) => fontSize * 1.25;
 /// 自适应：上标 / 下标（0.7 倍字号）⇒ 9.3、主行 / 分子 / 分母 ⇒ 13.4。
 double mathCaretHeight(double localRowBoxHeight) =>
     localRowBoxHeight * (1 - 2 * kCaretInset);
+
+/// 离 [y] 最近的**行带**（含 [y] 的那条优先）；没有网格 / 没有行带 ⇒ null。
+///
+/// ★★ 2026-11-03 深夜：**边界位点**（两个环境之间、环境外面）没有格子，靠它给竖条找一条
+/// 视觉行 —— "竖条永远画在某一条视觉行上"（讨论文档 §9.12.3 第 2 条）。
+Rect? _nearestRowBand(EnvGrid? g, double y) {
+  if (g == null || g.rowBand.isEmpty) return null;
+  Rect? best;
+  var bestD = double.infinity;
+  for (final Rect b in g.rowBand.values) {
+    if (y >= b.top && y <= b.bottom) return b;
+    final double d = y < b.top ? b.top - y : y - b.bottom;
+    if (d < bestD) {
+      bestD = d;
+      best = b;
+    }
+  }
+  return best;
+}
 
 /// **文本层**竖条矩形：以**基线**为基准（拿不到文本行的行盒时用它）——
 /// 与文本侧"零宽条"同一个视觉标准（同高、同一个基线）。

@@ -45,6 +45,15 @@ Future<DocBuffer> _pump(WidgetTester tester, String doc) async {
 RenderBox _root() =>
     find.byType(MathWithCaret).last.evaluate().single.renderObject! as RenderBox;
 
+/// 画出来的竖条（`MathCaretPainter.caretVisible` 那一个）
+Rect? _paintedBar(WidgetTester tester) {
+  for (final Element e in find.byType(CustomPaint).evaluate()) {
+    final CustomPainter? p = (e.widget as CustomPaint).foregroundPainter;
+    if (p is MathCaretPainter && p.caretVisible) return p.rect;
+  }
+  return null;
+}
+
 void main() {
   setUpAll(() async => loadMathFonts());
 
@@ -102,5 +111,32 @@ void main() {
     expect(buf.caret, afterAll,
         reason: '点右侧空白应落"环境之后"（$afterAll），实际 ${buf.caret}'
             '（$lastCellEnd = 该行行末，是旧口径）');
+  });
+
+  testWidgets('④ 边界位点（两个环境之间）的竖条：整条落在**某一条行带**里',
+      (WidgetTester tester) async {
+    // 改前：边界位点没有格框 ⇒ 竖条走 `字号 × 1.25` 的兜底尺子
+    //   （display 字号 20 ⇒ 高 25px，而行带只有 24px）⇒ 必然跨过行界，看着"不上不下"。
+    final String doc = '${r'$$'}\n$kTwo\n${r'$$'}';
+    final DocBuffer buf = await _pump(tester, doc);
+    buf.setCaret(envTablesIn(kTwo).first.endEnd + 3); // 两个环境之间
+    await tester.pumpAndSettle();
+    final RenderBox root = _root();
+    final List<Rect> bands = <Rect>[];
+    for (var i = 0; i < envTablesIn(kTwo).length; i++) {
+      final EnvGrid? g = buildEnvGrid(
+          root: root, tex: kTwo, displayStyle: true, fontSize: 20, envIx: i);
+      if (g != null) bands.addAll(g.rowBand.values);
+    }
+    expect(bands, isNotEmpty);
+    final Rect? maybeBar = _paintedBar(tester);
+    expect(maybeBar, isNotNull, reason: '边界位点也必须有竖条');
+    final Rect bar = maybeBar!;
+    final bool fits =
+        bands.any((Rect b) => bar.top >= b.top - 0.5 && bar.bottom <= b.bottom + 0.5);
+    expect(fits, isTrue,
+        reason: '竖条 ${bar.top.toStringAsFixed(1)}..${bar.bottom.toStringAsFixed(1)}'
+            '（高 ${bar.height.toStringAsFixed(1)}）必须整条落在某一条行带内；'
+            '行带=${bands.map((Rect b) => '${b.top.toStringAsFixed(0)}..${b.bottom.toStringAsFixed(0)}').join(',')}');
   });
 }
