@@ -514,14 +514,27 @@ List<Rect> selectionBands({
     final bool rightDelim = isRightDelimiterText(t);
     final bool leftDelim = isLeftDelimiterText(t);
     if (!rightDelim && !leftDelim) return -1;
+    // ★★★ 2026-11-03 深夜（用户 ③）：**碎片按"落在哪个环境的范围里"判**。
+    //   碎片只可能由环境外框画出来（真原子没有这些字形）⇒ 不存在"误伤真原子"的风险；
+    //   而按"离盒缘几像素"判会漏：稀疏矩阵的补列把格区撑到括号**右边**
+    //   （实测格区右缘 188.4、括号右缘 162.1 ⇒ 距离 26px > 6px 阈）
+    //   ⇒ 碎片被判成"无主"，退回"跟着配对组涂" ⇒ 只选 `+` 也涂上右边半截括号。
+    final bool frag = isDelimiterFragmentText(t);
     var best = -1;
     var bestD = double.infinity;
     for (var k = 0; k < envs.length; k++) {
       if (!envHasRect[k]) continue;
       final Rect e = envRect[k];
-      final double d = rightDelim
-          ? (r.right - e.right).abs()
-          : (r.left - e.left).abs();
+      final double d;
+      if (frag) {
+        // 盒子中心落在环境范围里 ⇒ 距离 0；否则到最近一条竖边的距离
+        final double cx = r.center.dx;
+        d = cx < e.left
+            ? e.left - cx
+            : (cx > e.right ? cx - e.right : 0);
+      } else {
+        d = rightDelim ? (r.right - e.right).abs() : (r.left - e.left).abs();
+      }
       if (d < bestD) {
         bestD = d;
         best = k;

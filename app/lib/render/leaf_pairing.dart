@@ -124,6 +124,10 @@ String? expectedGlyphFor(String tex, VisibleAtom a) {
   if (a.kind == 'esc') {
     final String c = a.start + 1 < tex.length ? tex[a.start + 1] : '';
     if (c.isEmpty || ' ,;:!'.contains(c)) return null; // `\,` `\;` `\!` 这类**没有墨迹**
+    // ★★★ 2026-11-03 深夜（台账小债）：`\|` 画的是 **`∥`(U+2225)**，不是 `|` 的替换字形 `∣`(U+2223)。
+    //   原来走 `kMathGlyphSubst['|']` ⇒ 期望 `∣`、实际 `∥` ⇒ `\|a\|` 的两根竖线
+    //   **一个都没配上原子**（只能靠"两遍走"把外框盒跳过，凑出"完整"）。
+    if (c == '|') return '∥';
     return kMathGlyphSubst[c] ?? c;
   }
   if (a.kind.startsWith(r'\')) return null; // 符号命令：画什么由引擎决定

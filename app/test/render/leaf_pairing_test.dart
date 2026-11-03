@@ -78,6 +78,26 @@ void main() {
   // 一、金表：每个盒对应源码里的哪一段（这两种坏法的现场）
   // -------------------------------------------------------------------------
 
+  testWidgets('★ `\\|` 的竖线画的是 ∥(U+2225)，必须配上原子（台账小债）',
+      (WidgetTester tester) async {
+    // 改前：`expectedGlyphFor` 走 `kMathGlyphSubst['|']` ⇒ 期望 `∣`(U+2223)，
+    // 而引擎画的是 `∥`(U+2225) ⇒ 两根竖线**一个都没配上原子**（只能靠"两遍走"跳过外框盒凑完整）。
+    const String tex = r'\|a\|';
+    final _Probe r = await _pump(tester, tex);
+    expect(r.plan.complete, isTrue, reason: '${r.plan.reason}');
+    final List<String> bars = <String>[
+      for (final LeafBox b in r.scan.eligible)
+        if ((b.text ?? '').trim() == '\u2225') (b.text ?? '').trim(),
+    ];
+    expect(bars.length, 2, reason: '`\\|` 画两根 `∥`');
+    for (var i = 0; i < r.scan.eligible.length; i++) {
+      if ((r.scan.eligible[i].text ?? '').trim() != '\u2225') continue;
+      final bool owned =
+          r.plan.groups.any((PairGroup g) => g.containsBox(i));
+      expect(owned, isTrue, reason: '第 $i 个盒（`∥`）是"无主盒" ⇒ 它没配上原子');
+    }
+  });
+
   testWidgets('★ 多字母算子名：`\\sin` = 3 个字形盒，但**一个**原子、一个组',
       (WidgetTester tester) async {
     final _Probe r = await _pump(tester, r'\sin x');
