@@ -22,7 +22,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mathlang/core/doc_buffer.dart';
 import 'package:mathlang/editor/edit_view.dart';
 import 'package:mathlang/lang/env_resize.dart';
-import 'package:mathlang/render/env_cells.dart';
+import 'package:mathlang/lang/env_table.dart';
 import 'package:mathlang/render/leaf_boxes.dart';
 import 'package:mathlang/render/math_caret.dart';
 
@@ -141,24 +141,28 @@ void main() {
       await tester.tapAt(Offset(tl.dx - 12, midY));
       await tester.pumpAndSettle();
       expect(buf.caret, 3, reason: '左侧留白 ⇒ 公式**之前**（内容起点 3），实际 ${buf.caret}');
-      // ★★★ 2026-10-24（批 19 · F1-b）：右侧留白现在**按行带判** —— 点在哪一行的高度，
-      //   就落**那一行的末尾**（该行最后一格的内容末尾；末行也是行末，**不是**块末尾）。
-      //   y 用**字形位置**（比"块高 ÷ 行数"稳：块里还有括号与行距）。
+      // ★★★ 2026-11-03 深夜**口径变更**（用户："我点右边，我的意图是要点到外面"）：
+      //   右侧留白 = **环境之后**（最近的对象边界 = §9.12.3 第 1 条"盒外走行规则"），
+      //   不再是 2026-10-24 批 19（F1-b）给 `cases` 定的"**该行行末**"——
+      //   实测旧口径下"环境之后"整片不可达（只有 y 掉出行带时才偶然漏出）。
+      //   见讨论文档 §10.4。y 仍取字形高度（证明 y 不参与）。
       final List<LeafBox> boxes = _rig().boxes;
       final LeafBox b1 = boxes.firstWhere((LeafBox b) => b.text == 'B');
       final LeafBox d2 = boxes.firstWhere((LeafBox b) => b.text == 'D');
+      final int base = buf.buf.indexOf(kTex);
+      final int after = base + envTablesIn(kTex).last.endEnd;
       buf.setCaret(0);
       await tester.tapAt(Offset(
           tl.dx + root.size.width + 12, tl.dy + b1.rect.center.dy));
       await tester.pumpAndSettle();
-      expect(buf.caret, buf.buf.indexOf('B') + 1,
-          reason: '右侧留白（第一行高度）⇒ 第一行末尾，实际 ${buf.caret}');
+      expect(buf.caret, after,
+          reason: '右侧留白（第一行高度）⇒ **环境之后**（$after），实际 ${buf.caret}');
       buf.setCaret(0);
       await tester.tapAt(Offset(
           tl.dx + root.size.width + 12, tl.dy + d2.rect.center.dy));
       await tester.pumpAndSettle();
-      expect(buf.caret, buf.buf.indexOf('D') + 1,
-          reason: '右侧留白（末行高度）⇒ 末行末尾（`D` 之后，仍在块内），实际 ${buf.caret}');
+      expect(buf.caret, after,
+          reason: '右侧留白（末行高度）⇒ 同一个"环境之后"（y 不参与），实际 ${buf.caret}');
     });
   });
   group('② 右键：整块都算（含格子之间的空白）', () {
@@ -367,22 +371,15 @@ void main() {
       buf.setCaret(0);
       await tester.tapAt(Offset(tl.dx + root.size.width + 12, tl.dy + 12));
       await tester.pumpAndSettle();
-      // ★★★ 2026-10-24（批 19 · F1-b）：右侧留白改成**按行带判** ⇒ 点第一行的高度
-      //   落**第一行末尾**（`b` 之后），不再是块末尾。本子测的真意是"**不冒格框**"，
-      //   第一行有内容（`a`/`b`）⇒ 那一格不画框，断言照旧成立。
+      // ★★★ 2026-11-03 深夜**口径变更**（讨论文档 §10.4）：右侧留白 = **环境之后**。
+      //   旧口径（批 19 · F1-b）是"该行行末"，那时落点在有字的格里 ⇒ 才有下面那条
+      //   "落点那一格有框"的补钉。现在落在**环境外面** ⇒ 本子测的原意（点块外面不该冒框）恢复。
       final int base = buf.buf.indexOf(det5);
-      // ★ 末列（第 5 列 = col 4）才是这一行的右端：`det5` 每行有 5 格，后面三格是空的
-      final int row1End =
-          base + envCellOffset(det5, const EnvCellHit(0, 4, atEnd: true))!;
-      expect(buf.caret, row1End,
-          reason: '右侧留白（第一行高度）⇒ 第一行末尾（F1-b），实际 ${buf.caret}');
-      // ★★★ 口径变更（批 19 · F1-b + F1-c）：落点现在是"**那一行的最后一格**"，
-      //   而 `det5` 的末三格是空的 ⇒ 那一格**本来就该有框**（空位恒画框）。
-      //   本条原来的意思是"点块**外面**不许冒框"；现在要点到"外面"，得让 y 落在
-      //   **所有行带之外**（块上方/下方），那时 `_mathTapTexOffset` 会走页面级兜底。
-      //   这里改成钉"**落点那一格有框**"（`det5` 里空格很多，本来就会有好几个框 ——
-      //   这正是 F1-c 要的"空位恒画框"；框的高度一致性由上面那条子测钉住）。
-      expect(envPads(tester), isNotEmpty, reason: '落进空格 ⇒ 那一格必须有框');
+      final int after = base + envTablesIn(det5).last.endEnd;
+      expect(buf.caret, after,
+          reason: '右侧留白 ⇒ **环境之后**（$after），实际 ${buf.caret}');
+      expect(envPads(tester), isEmpty,
+          reason: '落在环境之外 ⇒ 不许出现任何格框');
     });
   });
   group('④ 行内矩阵：右键也要能改尺寸', () {

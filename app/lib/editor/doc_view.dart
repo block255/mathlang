@@ -1118,18 +1118,30 @@ class DocViewState extends State<DocView> {
       //   （= 该行最后一格的内容末尾，**不是**块末尾 —— 末行的行末在 `\end{…}` 之前）；行带之外才落块末尾。
       if (localPos.dx > root.size.width + 2) {
         if (hasEnv(tex)) {
-          // ★ 2026-11-03：多环境时由 `envRowEndAt` 自己选**离点最近**的环境
-          //   （原来把两个环境的网格混着用 ⇒ 点第二个环境右边会落回第一个那一行）。
-          //   ★ 网格量的是**渲染 tex**，换成源偏移必须回到源 `tex` 上做。
-          final EnvCellHit? rowHit = envRowEndAt(
-              root: root,
-              tex: renderTex,
-              displayStyle: displayStyle,
-              localPos: localPos,
-              fontSize: fontSize ?? 20);
-          if (rowHit != null) {
-            final int? rowEnd = envCellOffset(tex, rowHit);
-            if (rowEnd != null) return rowEnd;
+          // ★★★ 2026-11-03 深夜（用户："我点右边，我的意图是要点到外面"）：
+          //   落在公式盒**右侧**的空白 ⇒ **环境之后**（最近的对象边界），
+          //   与"盒外 ⇒ 行规则 = 最近对象边界"（§9.12.3 第 1 条）是同一条判据。
+          //   改前这里走 `envRowEndAt` ⇒ 给"**该行行末**"（= 最后一格内容末尾、`\end` 之前），
+          //   那是 2026-10-24 给 `cases` 定的旧口径（F1-b）。实测：右侧任意 x 都给行末，
+          //   "环境之后"整片不可达，只有 y 掉出行带时才偶然漏出 `tex.length`
+          //   ⇒ 用户体感"一会能点一会不能"。
+          //   ★ 用**环境序号**把渲染空间的边界换回源偏移（注入只挪偏移、不增删环境）。
+          final ({int envIx, bool before})? edge = envNearestEdge(
+            root: root,
+            tex: renderTex,
+            displayStyle: displayStyle,
+            localPos: localPos,
+            fontSize: fontSize,
+          );
+          if (edge != null) {
+            final List<EnvTable> tables = envTablesIn(tex)
+              ..sort((EnvTable a, EnvTable b) =>
+                  a.beginStart.compareTo(b.beginStart));
+            if (edge.envIx >= 0 && edge.envIx < tables.length) {
+              return edge.before
+                  ? tables[edge.envIx].beginStart
+                  : tables[edge.envIx].endEnd;
+            }
           }
         }
         return tex.length;

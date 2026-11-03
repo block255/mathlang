@@ -164,7 +164,7 @@ EnvGrid? buildEnvGrid({
     Rect? r;
     for (final PairGroup g in pairing.groups) {
       if (g.srcEnd <= s.start || g.srcStart >= s.end) continue;
-      final Rect? h = _groupInkRect(g, boxes);
+      final Rect? h = _groupInkRect(g, boxes, tex);
       if (h == null) continue;
       r = r == null ? h : r.expandToInclude(h);
     }
@@ -534,13 +534,25 @@ _EnvFillPlan? _envFillPlan({
 ///   （实测两列布局里 c0 的带被撑到 17.8..105.9，与 c1 重叠 ⇒ 点哪都判到第 0 列）。
 ///   墨迹才是"这一格里的内容"，垫子是排版细节 ⇒ 只量字形盒。
 ///
-/// 整组没有字形盒（格子垫 / 尾垫这类纯垫子）⇒ 退回整组外框（零高，正好当基线锚点）。
-Rect? _groupInkRect(PairGroup g, List<LeafBox> boxes) {
+/// 组的墨迹矩形（只算**这个原子真正画出来**的盒）。
+///
+/// ★★★ 2026-11-03 深夜（用户："矩阵和行列式之间点不到"）：**字形与期望不符的盒不算**
+///   （`expectedGlyphFor`）。实测那一块里 env2 的 `a` 那一组吃了 9 个盒 ——
+///   含左边矩阵的右括号碎片 `⎤⎦`（x 128..141）⇒ 这个格子的矩形被撑成 128..158
+///   ⇒ 两个环境的"完整盒"重叠 13.3px ⇒ 那条缝一个像素都没有（点不到"之间"）。
+///   收窄后同一格 = 148..158，缝从 −13.3 变 +7（17 个真实形状 / 144 个格子逐个验过：
+///   只有这一格会变，0 个格子被并成空）。
+///   · 期望 `null`（`\frac` `\sin` 这类命令、垫子）⇒ **整组照并**（命令画的盒无法逐字对账）；
+///   · 期望非空但一个都没对上（如 `\|` 期望 `∣` 实际画 `∥`）⇒ **退回整组外框**（宁可粗，不许空）。
+Rect? _groupInkRect(PairGroup g, List<LeafBox> boxes, String tex) {
+  final String? expect = expectedGlyphFor(tex, g.atom);
   Rect? r;
   for (var i = g.boxFrom; i < g.boxTo && i < boxes.length; i++) {
     final LeafBox b = boxes[i];
     if (b.kind != LeafBoxKind.glyph) continue;
-    if ((b.text ?? '').trim().isEmpty) continue;
+    final String txt = (b.text ?? '').trim();
+    if (txt.isEmpty) continue;
+    if (expect != null && txt != expect) continue;
     r = r == null ? b.rect : r.expandToInclude(b.rect);
   }
   if (r != null) return r;
@@ -743,7 +755,12 @@ Rect? envFullBox(
   if (hull == null) return null;
   var l = hull.left, r = hull.right, t = hull.top, b = hull.bottom;
   bool yOverlap(Rect x) => x.bottom > hull.top - 1 && x.top < hull.bottom + 1;
-  var foundL = false, foundR = false;
+  // ★★★ 2026-11-03 深夜：**取离格区最近的那一个**，不是"遇到第一个就停"。
+  //   加进 `∣` 之后，相邻两个行列式的竖线彼此都够得着（间隔 0）⇒ 按"第一个就停"会
+  //   把**邻居的竖线**吃进来（实测 env3 的左缘变成 188.6 = env2 的右竖线 ⇒ 两盒重叠 6.7px）。
+  //   左：取 `right` 最大（离格区左缘最近）；右：取 `left` 最小（离格区右缘最近）。
+  var bestLRight = double.negativeInfinity;
+  var bestRLeft = double.infinity;
   for (final LeafBox x in boxes) {
     if (x.kind == LeafBoxKind.pad) continue;
     final String s = (x.text ?? '').trim();
@@ -752,18 +769,18 @@ Rect? envFullBox(
     final bool isLeft = _kLeftDelims.contains(s);
     final bool isRight = _kRightDelims.contains(s);
     if (isLeft &&
-        !foundL &&
         x.rect.right <= hull.left + 1.5 &&
-        hull.left - x.rect.left <= maxReach) {
+        hull.left - x.rect.left <= maxReach &&
+        x.rect.right > bestLRight) {
+      bestLRight = x.rect.right;
       l = x.rect.left;
-      foundL = true;
     }
     if (isRight &&
-        !foundR &&
         x.rect.left >= hull.right - 1.5 &&
-        x.rect.right - hull.right <= maxReach) {
+        x.rect.right - hull.right <= maxReach &&
+        x.rect.left < bestRLeft) {
+      bestRLeft = x.rect.left;
       r = x.rect.right;
-      foundR = true;
     }
   }
   // 纵向：把落在 [l,r] 内、且上下贴着格区的盒并进来（高括号比格区高）
@@ -781,16 +798,21 @@ Rect? envFullBox(
   return Rect.fromLTRB(l, t, r, b);
 }
 
-/// 左定界符（含引擎拆出的碎片）：`[ ( { ⎡ ⎢ ⎣ ⎛ ⎜ ⎝ ⎧ ⎨ ⎩ ⟨` 与双向的 `|` `‖`
-const String _kLeftDelims = '[({⎡⎢⎣⎛⎜⎝⎧⎨⎩⟨|‖';
+/// 左定界符（含引擎拆出的碎片）：`[ ( { ⎡ ⎢ ⎣ ⎛ ⎜ ⎝ ⎧ ⎨ ⎩ ⟨` 与双向的 `|` `‖` **`∣` `∥`**
+///
+/// ★★ 2026-11-03 深夜：**必须含 `∣`(U+2223) 与 `∥`(U+2225)** —— 引擎画 `\begin{vmatrix}`
+///   的竖线用的是 `∣`、画 `\|` 用的是 `∥`（实测），而这里原来只有 ASCII `|` 与 `‖`(U+2016)
+///   ⇒ 行列式的"完整盒"不含自己的竖线 ⇒ 它那一侧的边缘整体内缩 6.7px、缝被算成负数。
+///   `leaf_pairing.kFrameDelimiters` 里早就有 `∣` ⇒ 两张名单本来就不一致。
+const String _kLeftDelims = '[({⎡⎢⎣⎛⎜⎝⎧⎨⎩⟨|‖∣∥';
 
-/// 右定界符（含碎片）：`] ) } ⎤ ⎥ ⎦ ⎞ ⎟ ⎠ ⎫ ⎬ ⎭ ⟩` 与双向的 `|` `‖`
-const String _kRightDelims = '])}⎤⎥⎦⎞⎟⎠⎫⎬⎭⟩|‖';
+/// 右定界符（含碎片）：`] ) } ⎤ ⎥ ⎦ ⎞ ⎟ ⎠ ⎫ ⎬ ⎭ ⟩` 与双向的 `|` `‖` **`∣` `∥`**
+const String _kRightDelims = '])}⎤⎥⎦⎞⎟⎠⎫⎬⎭⟩|‖∣∥';
 
-/// 这个字形是不是**左**定界符（[({ 与碎片 ⎡⎢⎣⎛⎜⎝⎧⎨⎩⟨、双向 |‖）。
+/// 这个字形是不是**左**定界符（[({ 与碎片 ⎡⎢⎣⎛⎜⎝⎧⎨⎩⟨、双向 |‖∣∥）。
 bool isLeftDelimiterText(String t) => t.isNotEmpty && _kLeftDelims.contains(t);
 
-/// 这个字形是不是**右**定界符（])} 与碎片 ⎤⎥⎦⎞⎟⎠⎫⎬⎭⟩、双向 |‖）。
+/// 这个字形是不是**右**定界符（])} 与碎片 ⎤⎥⎦⎞⎟⎠⎫⎬⎭⟩、双向 |‖∣∥）。
 bool isRightDelimiterText(String t) => t.isNotEmpty && _kRightDelims.contains(t);
 
 /// 选出**离 [localPos] 最近**（含包含关系）的环境网格。
