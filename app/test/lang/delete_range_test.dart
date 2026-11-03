@@ -52,10 +52,15 @@ void main() {
 
   group('④ 环境：删格内容留空环境；围栏不动', () {
     const String doc = '\$\$\n\\begin{cases}x=1\\\\y=2\\end{cases}\n\$\$';
-    test('删两行内容 ⇒ 空环境（行间内容非空白，不回收整块）', () {
+    test('删一格 ⇒ 环境留着、`\\\\` 留着（结构不是空）', () {
+      final int s = doc.indexOf('x=1');
+      expect(_after(doc, s, s + 3), '\$\$\n\\begin{cases}\\\\y=2\\end{cases}\n\$\$');
+    });
+    test('删**全部格** ⇒ 按整表删（连壳），围栏按 §七 回收', () {
+      // ★ 2026-11-03（表批）口径：覆盖所有格 ⇒ 整表；这也是"删掉一张表"的唯一入口。
       final int s = doc.indexOf('x=1');
       final int e = doc.indexOf('y=2') + 3;
-      expect(_after(doc, s, e), '\$\$\n\\begin{cases}\\end{cases}\n\$\$');
+      expect(_after(doc, s, e), '');
     });
   });
 

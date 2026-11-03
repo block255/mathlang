@@ -15,6 +15,7 @@
 // ★ 实测背景（2026-10-21 用户报）：复制行内公式里的一个分式，得到的是
 //   `\frac{x^3}{\lvert\sin x\rvert^3}$` —— **缺开头 `$`、多结尾 `$`**（裸 substring 的必然结果）。
 
+import 'env_table.dart';
 import 'math_spans.dart';
 import 'tex_structure.dart';
 
@@ -92,11 +93,21 @@ ClipboardSlice clipboardSlice(String doc, int selStart, int selEnd) {
     final int ms = s > cs ? s : cs;
     final int me = e < ce ? e : ce;
     if (ms < me) {
-      final ({int start, int end}) fix = _completeWithin(doc, ms, me, sp);
-      sb.write(r'$');
-      sb.write(doc.substring(fix.start, fix.end));
-      sb.write(r'$');
-      anyMath = true;
+      // ★★ 2026-11-03（表批）：选区**跨格**地落在多行环境里 ⇒ 载荷是整格矩形
+      //   （局部表补中性 `bmatrix`，整表保留原类型）。单格不在此列（照旧复制内容）。
+      final String? table = _tablePayload(sp, ms, me, cs);
+      if (table != null) {
+        sb.write(r'$');
+        sb.write(table);
+        sb.write(r'$');
+        anyMath = true;
+      } else {
+        final ({int start, int end}) fix = _completeWithin(doc, ms, me, sp);
+        sb.write(r'$');
+        sb.write(doc.substring(fix.start, fix.end));
+        sb.write(r'$');
+        anyMath = true;
+      }
     }
 
     // 跳过收尾定界符（选区跨过它时）
@@ -115,6 +126,22 @@ ClipboardSlice clipboardSlice(String doc, int selStart, int selEnd) {
 
 bool _isLetterCode(int c) =>
     (c >= 0x41 && c <= 0x5A) || (c >= 0x61 && c <= 0x7A);
+
+/// 选区**跨格**地落在多行环境体内 ⇒ 返回整格矩形的载荷（带壳、不含 `$`）；否则 null。
+///
+/// · 局部表 ⇒ 中性 `bmatrix`；整表 ⇒ 保留原类型（§3.2）；
+/// · `cases` / `aligned` ⇒ **整行**（行单位），壳沿用原类型；
+/// · 只压在一格里 ⇒ null（照旧复制那一格的内容，§3.5「不扩」）。
+String? _tablePayload(MathSpan sp, int s, int e, int contentStart) {
+  final int ls = s - contentStart;
+  final int le = e - contentStart;
+  final EnvTable? t = envTableForRange(sp.tex, ls, le);
+  if (t == null) return null;
+  final CellRect? rect = cellsCovering(t, ls, le);
+  if (rect == null) return null;
+  if (rect.r0 == rect.r1 && rect.c0 == rect.c1) return null;
+  return cellsPayload(t, sp.tex, rect);
+}
 
 /// 切在 `\f|rac` 这种**控制词中间**时，把起点挪回 `\`
 int _snapCommandStart(String doc, int i) {

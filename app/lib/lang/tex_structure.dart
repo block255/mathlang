@@ -89,6 +89,14 @@ bool isCompleteFragment(String tex) {
   while (i < tex.length) {
     final String c = tex[i];
     if (c == r'\') {
+      // ★ 2026-11-03（表批）：`\\` 的主人 = **所在环境**。
+      //   裸着的行分隔符（没有 `\begin` 可依附）⇒ 片段不完整。
+      if (envs.isEmpty &&
+          braces.isEmpty &&
+          i + 1 < tex.length &&
+          tex[i + 1] == r'\') {
+        return false;
+      }
       final int j = _skipControl(tex, i);
       final String word = _controlWord(tex, i);
       if (word == 'begin' || word == 'end') {
@@ -112,6 +120,9 @@ bool isCompleteFragment(String tex) {
     } else if (c == '}') {
       if (braces.isEmpty) return false; // 没有开括号的闭括号
       braces.removeLast();
+    } else if (c == '&' && envs.isEmpty && braces.isEmpty) {
+      // ★ 2026-11-03（表批）：`&` 的主人 = 所在环境；裸着的对齐符 ⇒ 不完整。
+      return false;
     }
     i++;
   }
@@ -249,7 +260,74 @@ int? orphanOwnerBefore(String doc, int s, int e) {
     }
     i++;
   }
+
+  // ⑤ 片段顶层有 `&` / `\\`（单元格分隔符），而它的环境 `\begin{X}` 在选区左边
+  //    ⇒ 主人 = 那个 `\begin{X}`（环境成对，整表才自成一体）。
+  //    ★ 「顶层」= 花括号与环境之外；`\text{a&b}` 里的 `&`、嵌套环境里的 `\\` 不算。
+  if (_hasBareSeparator(doc, a, b)) {
+    final int begin = _enclosingBeginBefore(doc, a);
+    if (begin >= 0) take(begin);
+  }
   return best;
+}
+
+/// 片段 `[a, b)` 里有没有**裸着**的 `&` / `\\`（花括号与环境之外）。
+bool _hasBareSeparator(String doc, int a, int b) {
+  final List<String> envs = <String>[];
+  final List<int> braces = <int>[];
+  var i = a;
+  while (i < b) {
+    final String c = doc[i];
+    if (c == r'\') {
+      if (envs.isEmpty &&
+          braces.isEmpty &&
+          i + 1 < b &&
+          doc[i + 1] == r'\') {
+        return true;
+      }
+      final String word = _controlWord(doc, i);
+      if (word == 'begin' || word == 'end') {
+        final int k = _skipSpaces(doc, _skipControl(doc, i));
+        final String? name = _readBraceName(doc, k);
+        if (name != null) {
+          if (word == 'begin') {
+            envs.add(name);
+          } else if (envs.isNotEmpty && envs.last == name) {
+            envs.removeLast();
+          }
+          i = _afterBraceName(doc, k);
+          continue;
+        }
+      }
+      i = _skipControl(doc, i);
+      continue;
+    }
+    if (c == '{') {
+      braces.add(i);
+    } else if (c == '}' && braces.isNotEmpty) {
+      braces.removeLast();
+    } else if (c == '&' && envs.isEmpty && braces.isEmpty) {
+      return true;
+    }
+    i++;
+  }
+  return false;
+}
+
+/// `before` 之前**还没闭合**的那个 `\begin{X}` 的 `\` 下标；没有 ⇒ -1。
+int _enclosingBeginBefore(String doc, int before) {
+  final List<({int at, String name})> stack = <({int at, String name})>[];
+  final RegExp rx = RegExp(r'\\(begin|end)\s*\{([^{}]*)\}');
+  for (final Match m in rx.allMatches(doc)) {
+    if (m.start >= before) break;
+    final String name = m.group(2)!.trim();
+    if (m.group(1) == 'begin') {
+      stack.add((at: m.start, name: name));
+    } else if (stack.isNotEmpty && stack.last.name == name) {
+      stack.removeLast();
+    }
+  }
+  return stack.isEmpty ? -1 : stack.last.at;
 }
 
 // ---------------------------------------------------------------------------

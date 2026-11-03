@@ -9,6 +9,7 @@
 // 跨段删除时 `$` 夹在中间、不能删，所以不是“删一段”，而是“把这段里的可见字符抹掉、
 // 其余原样留下”——最终压成一次 `replace`（**一步撤销**）。
 
+import 'env_table.dart';
 import 'math_spans.dart';
 import 'tex_structure.dart';
 
@@ -68,9 +69,31 @@ DeletePlan planDelete(String doc, int from, int to) {
     }
 
     // 数学段：只取**内容**交集；对象补齐在内容内做
-    final int ms = s > cs ? s : cs;
-    final int me = e < ce ? e : ce;
+    int ms = s > cs ? s : cs;
+    int me = e < ce ? e : ce;
     if (ms < me) {
+      // ★★ 2026-11-03（表批）：选区落在多行环境体内 ⇒
+      //   · 覆盖**全部格** ⇒ 按整表删（连壳；交给通用路径，围栏按 §七 回收）；
+      //   · 只覆盖**一部分** ⇒ 清格内容、`&` / `\\` 保留（一次替换 ⇒ 一步撤销）。
+      //   单格不在此列（照旧删选中的那几个字符）。
+      final EnvTable? tbl = envTableForRange(sp.tex, ms - cs, me - cs);
+      if (tbl != null) {
+        final CellRect? rect = cellsCovering(tbl, ms - cs, me - cs);
+        if (rect != null) {
+          if (coversAllCells(tbl, rect)) {
+            ms = cs + tbl.beginStart;
+            me = cs + tbl.endEnd;
+          } else if (rect.r0 != rect.r1 || rect.c0 != rect.c1) {
+            final CellClear c = cellClearPlan(tbl, sp.tex, rect)!;
+            return DeletePlan(
+              from: cs + c.from,
+              to: cs + c.to,
+              replacement: c.replacement,
+              clipboardText: '\$${c.payload}\$',
+            );
+          }
+        }
+      }
       final ({int start, int end}) r = _planInSpan(doc, sp, ms, me);
       if (r.end > r.start) {
         final String cut = doc.substring(r.start, r.end);
