@@ -89,4 +89,33 @@ void main() {
       }
     }
   });
+
+  testWidgets(r'行内矩阵（`$…$`）的每一格也要有框', (WidgetTester tester) async {
+    const String tex = r'\begin{pmatrix}&&\\&&\end{pmatrix}';
+    tester.view.physicalSize = const Size(1200, 1400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final DocBuffer buf = DocBuffer('前 \$$tex\$ 后')..setCaret(0);
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(body: SingleChildScrollView(child: EditView(buffer: buf))),
+    ));
+    tester.state<EditViewState>(find.byType(EditView)).focusInput();
+    await tester.pumpAndSettle();
+    for (var r = 0; r < 2; r++) {
+      for (var c = 0; c < 2; c++) {
+        buf.setCaret(0);
+        await tester.pumpAndSettle();
+        final RenderBox root = _root();
+        final Rect? box = envCellBoxAt(
+            root: root, tex: tex, displayStyle: false, row: r, col: c,
+            fontSize: 16, envIx: 0);
+        expect(box, isNotNull, reason: '($r,$c) 量不到格框');
+        await tester.tapAt(root.localToGlobal(box!.center));
+        await tester.pumpAndSettle();
+        expect(_frames(tester), isNotEmpty,
+            reason: '行内矩阵点 ($r,$c) 之后应当有格框');
+      }
+    }
+  });
 }

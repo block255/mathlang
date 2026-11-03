@@ -9,6 +9,7 @@
 
 import 'package:flutter/material.dart';
 
+import '../lang/env_table.dart';
 import 'caret_ownership.dart';
 import 'caret_sites.dart';
 import 'empty_math_mark.dart';
@@ -421,6 +422,9 @@ class _InlineMathTextState extends State<InlineMathText> {
     int caretDepth = 0;
     // ★★ 批 16（2026-10-24 用户拍板"变矮"）：脚本槽（`^` / `_` 的内容）⇒ 竖条单独缩
     bool caretScript = false;
+    // ★★ 2026-11-03 晚：光标在**哪一格**（行内矩阵也要画格框；见 `math_caret.caretCell`）。
+    //   必须由**偏移**定，不能拿像素猜 —— `a&b` 的左格末尾与右格开头是同一像素。
+    ({int r, int c, int envIx})? caretCell;
     if (caretHere || slotHere) {
       final int? rel = caretHere ? pl?.localRel : slotPl?.localRel;
       if (rel != null) {
@@ -429,6 +433,7 @@ class _InlineMathTextState extends State<InlineMathText> {
         final ({int depth, bool script}) lv = caretVisualLevel(site);
         caretDepth = lv.depth;
         caretScript = lv.script;
+        if (s.tex.contains(r'\begin{')) caretCell = cellAtOffset(s.tex, rel);
       }
     }
 
@@ -443,6 +448,7 @@ class _InlineMathTextState extends State<InlineMathText> {
               edge: edge,
               sel: sel,
               caretDepth: caretDepth,
+              caretCell: caretCell,
               caretScript: caretScript)
           : GestureDetector(
               // ★ 右键：行内公式也要能"改尺寸"（只有多行环境会被接住）。
@@ -465,6 +471,7 @@ class _InlineMathTextState extends State<InlineMathText> {
                           edge: edge,
                           sel: sel,
                           caretDepth: caretDepth,
+                          caretCell: caretCell,
                           caretScript: caretScript),
                 ),
               ),
@@ -483,6 +490,7 @@ class _InlineMathTextState extends State<InlineMathText> {
           CaretEdge edge = CaretEdge.none,
           int caretDepth = 0,
           bool caretScript = false,
+          ({int r, int c, int envIx})? caretCell,
           ({int from, int to})? sel}) =>
       MathWithCaret(
         tex: tex,
@@ -491,6 +499,8 @@ class _InlineMathTextState extends State<InlineMathText> {
         showCaret: caretHere,
         caretEdge: edge,
         caretDepth: caretDepth, // ★ U3：0 = 主行 ⇒ 竖条按文本层标准画高
+        // ★★ 2026-11-03 晚：光标在哪一格（行内矩阵的格框；按偏移算，不拿像素猜）
+        caretCell: caretCell,
         // ★ 批 16：脚本槽（上标/下标内容）⇒ 竖条明显更矮（用户拍板）
         caretScript: caretScript,
         // ★ F16：导出抓图时不画任何编辑辅助
