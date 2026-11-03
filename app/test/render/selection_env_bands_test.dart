@@ -15,13 +15,13 @@ const String kTex =
     r'\begin{bmatrix}a&b\\c&d\end{bmatrix}+\begin{bmatrix}e&f\\g&h\end{bmatrix}';
 
 Future<({RenderObject root, List<LeafBox> ink, List<Rect> bands})> _render(
-    WidgetTester tester, int from, int to) async {
+    WidgetTester tester, int from, int to,{String tex = kTex}) async {
   final GlobalKey key = GlobalKey();
   await tester.pumpWidget(MaterialApp(
     home: Center(
       child: Padding(
         padding: const EdgeInsets.all(8),
-        child: Math.tex(kTex,
+        child: Math.tex(tex,
             key: key,
             mathStyle: MathStyle.display,
             textStyle: const TextStyle(fontSize: 20)),
@@ -36,7 +36,7 @@ Future<({RenderObject root, List<LeafBox> ink, List<Rect> bands})> _render(
           b.kind != LeafBoxKind.pad && (b.text ?? '').trim().isNotEmpty)
       .toList();
   final List<Rect> bands = selectionBands(
-      root: root, tex: kTex, from: from, to: to, displayStyle: true);
+      root: root, tex: tex, from: from, to: to, displayStyle: true);
   return (root: root, ink: ink, bands: bands);
 }
 

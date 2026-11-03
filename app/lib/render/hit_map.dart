@@ -18,6 +18,7 @@
 import 'package:flutter/rendering.dart';
 
 import '../lang/env_table.dart';
+import 'env_cells.dart';
 import 'injection_map.dart';
 import 'leaf_boxes.dart';
 import 'leaf_pairing.dart';
@@ -454,15 +455,29 @@ List<Rect> selectionBands({
       return best;
     }
 
-    // ① 每个环境的矩形（由**有主的**盒并出来；空格子的垫子没有主，不参与）
-    for (var i = 0; i < boxes.length; i++) {
-      final PairGroup? g = owner[i];
-      if (g == null) continue;
-      final int k = envOf(g.srcStart);
-      if (k < 0) continue;
-      envRect[k] =
-          envHasRect[k] ? envRect[k].expandToInclude(boxes[i].rect) : boxes[i].rect;
-      envHasRect[k] = true;
+    // ① 每个环境的矩形：优先用 **`envFullBox`（格区 ∪ 定界符）** ——
+    //    "有主盒并集"在**稀疏矩阵**上会小一大截（实测 4×6 的有主盒只到最后一个有字的格，
+    //    离右括号 125px）⇒ 装饰认不出来。量不出网格时退回有主盒并集。
+    for (var k = 0; k < envs.length; k++) {
+      final EnvGrid? g = buildEnvGrid(
+          root: root, tex: tex, displayStyle: displayStyle, envIx: k);
+      final Rect? full = g == null ? null : envFullBox(g, boxes);
+      if (full != null) {
+        envRect[k] = full;
+        envHasRect[k] = true;
+      }
+    }
+    if (envHasRect.contains(false)) {
+      for (var i = 0; i < boxes.length; i++) {
+        final PairGroup? g = owner[i];
+        if (g == null) continue;
+        final int k = envOf(g.srcStart);
+        if (k < 0 || envHasRect[k]) continue;
+        envRect[k] = envHasRect[k]
+            ? envRect[k].expandToInclude(boxes[i].rect)
+            : boxes[i].rect;
+        envHasRect[k] = true;
+      }
     }
     // ② "可见字符全在选区内" —— 用原子范围判（渲染空间 → 源空间再比）
     final List<int> lo = List<int>.filled(envs.length, 1 << 30);
@@ -489,12 +504,15 @@ List<Rect> selectionBands({
 
   /// 这个**没有主**的盒是不是某个环境的定界符；是 ⇒ 返回环境序号，否则 -1。
   ///
-  /// 判据：盒子的字是定界符（`]` `)` `}` 归左边环境；`[` `(` `{` 归右边环境），
-  /// 并且离那个环境的格子矩形不超过 30px。
+  /// ★★ 2026-11-03 晚：判据换成 **几何 + 碎片字符** ——
+  ///   引擎会把高括号拆成碎片字形（`⎡ ⎢ ⎣` / `⎤ ⎥ ⎦`），只认 `[](){}` 认不出来
+  ///   （用户实测："选一个 `+` 却把两边矩阵的**半边括号**涂上了"）。
+  ///   方向按字符分（左定界符 ⇒ 归它**右边**那个环境；右定界符 ⇒ 归**左边**那个），
+  ///   距离用**盒子边缘**（`envFullBox` 已含定界符 ⇒ 距离≈0）。
   int envForDecoration(Rect r, String t) {
     if (envs.isEmpty || t.isEmpty) return -1;
-    final bool rightDelim = ')]}|‖'.contains(t);
-    final bool leftDelim = '([{|‖'.contains(t);
+    final bool rightDelim = isRightDelimiterText(t);
+    final bool leftDelim = isLeftDelimiterText(t);
     if (!rightDelim && !leftDelim) return -1;
     var best = -1;
     var bestD = double.infinity;
@@ -502,14 +520,14 @@ List<Rect> selectionBands({
       if (!envHasRect[k]) continue;
       final Rect e = envRect[k];
       final double d = rightDelim
-          ? (r.center.dx - e.right).abs()
-          : (r.center.dx - e.left).abs();
+          ? (r.right - e.right).abs()
+          : (r.left - e.left).abs();
       if (d < bestD) {
         bestD = d;
         best = k;
       }
     }
-    return bestD <= 30 ? best : -1;
+    return bestD <= 6 ? best : -1;
   }
 
   final List<bool> picked = List<bool>.filled(boxes.length, false);
@@ -518,8 +536,12 @@ List<Rect> selectionBands({
     // 垫子 / 空字盒没有墨迹 ⇒ 不铺（它们不是"字符"）
     if (b.kind == LeafBoxKind.pad) continue;
     if ((b.text ?? '').isEmpty) continue;
-    if (owner[i] == null) {
-      final int k = envForDecoration(b.rect, (b.text ?? '').trim());
+    // ★★★ 2026-11-03 晚：**定界符（含碎片）一律按"所属环境"判，不管配对有没有给它一个组** ——
+    //   实测：`+` 的配对组把旁边的括号碎片也吃了进去 ⇒ 只选 `+` 时碎片跟着被涂
+    //   （用户："选一个 `+` 却涂了半边括号"）。定界符没有字符，它的归属只能是**环境**。
+    final String dt = (b.text ?? '').trim();
+    if (isLeftDelimiterText(dt) || isRightDelimiterText(dt)) {
+      final int k = envForDecoration(b.rect, dt);
       if (k >= 0) {
         if (!envSelected[k]) continue;
         picked[i] = true;

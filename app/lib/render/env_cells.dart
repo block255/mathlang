@@ -787,6 +787,12 @@ const String _kLeftDelims = '[({⎡⎢⎣⎛⎜⎝⎧⎨⎩⟨|‖';
 /// 右定界符（含碎片）：`] ) } ⎤ ⎥ ⎦ ⎞ ⎟ ⎠ ⎫ ⎬ ⎭ ⟩` 与双向的 `|` `‖`
 const String _kRightDelims = '])}⎤⎥⎦⎞⎟⎠⎫⎬⎭⟩|‖';
 
+/// 这个字形是不是**左**定界符（[({ 与碎片 ⎡⎢⎣⎛⎜⎝⎧⎨⎩⟨、双向 |‖）。
+bool isLeftDelimiterText(String t) => t.isNotEmpty && _kLeftDelims.contains(t);
+
+/// 这个字形是不是**右**定界符（])} 与碎片 ⎤⎥⎦⎞⎟⎠⎫⎬⎭⟩、双向 |‖）。
+bool isRightDelimiterText(String t) => t.isNotEmpty && _kRightDelims.contains(t);
+
 /// 选出**离 [localPos] 最近**（含包含关系）的环境网格。
 EnvGrid? envGridNearest({
   required RenderObject root,
