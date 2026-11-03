@@ -38,8 +38,13 @@ SmartEdit reclaimEmptiedMath(String doc, SmartEdit e) {
     (to - r.contentStart).clamp(0, len),
     '',
   );
-  // ★ 只剩空白 ⇒ 这一段没有内容了 ⇒ 它不该继续存在（"干脆"）
-  if (rest.trim().isNotEmpty) return e;
+  // ★★ 2026-11-03（围栏不参与选区 · 讨论定稿 §七）：
+  //   **行间**块只剩空白 ⇒ 算空、连围栏回收（一块空的行间区域没有保留意义）；
+  //   **行内**只剩空白 ⇒ **不算空**、保留 —— 空白是**没被选中**的内容
+  //   （`\ ` 有真实宽度；裸空格零宽但仍是源里的字符）。用户看不见 `$`，
+  //   不能把他没选中的空白连同围栏一起"顺手"删掉。
+  final bool emptied = r.isDisplay ? rest.trim().isEmpty : rest.isEmpty;
+  if (!emptied) return e;
 
   var a = r.openStart;
   var b = r.closeEnd;

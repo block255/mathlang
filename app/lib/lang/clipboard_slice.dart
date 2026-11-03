@@ -51,10 +51,11 @@ class ClipboardSlice {
 
 /// 把选区 `[selStart, selEnd)` 变成自洽片段。区间可以反着给（`selStart > selEnd` 也行）。
 ///
-/// [forClipboard]：`true` = 复制（走**结构完整性**判据：缺主人就向左扩）；
-/// `false` = 删除的**临时**旧路径（删除批会换成"查剩余"判据）。
-ClipboardSlice clipboardSlice(String doc, int selStart, int selEnd,
-    {bool forClipboard = true}) {
+/// ★★ 2026-11-03（围栏不参与选区 · 定稿 §七）：**选区只看可见流**。
+///   `$` 是零宽记账——不扩选区、也不进载荷。载荷按源里的 span 切成
+///   “数学 / 文字”交替的 run：数学 run 包 `$`（对象补齐在 run 内做），文字 run 原样；
+///   源里的 `$` 一律跳过（不重复包）。
+ClipboardSlice clipboardSlice(String doc, int selStart, int selEnd) {
   final int lo = selStart <= selEnd ? selStart : selEnd;
   final int hi = selStart <= selEnd ? selEnd : selStart;
   var s = lo.clamp(0, doc.length);
@@ -71,63 +72,45 @@ ClipboardSlice clipboardSlice(String doc, int selStart, int selEnd,
   }
 
   final List<MathSpan> spans = scanMathSpans(doc);
-  final MathSpan? a = _spanStrictlyInside(spans, s);
-  final MathSpan? b = _spanStrictlyInside(spans, e);
-
-  // ① 两端都在**同一个**数学段内部 ⇒ 片段自己包一对定界符
-  //    ★ 片段不是"一段排版"⇒ 一律按**行内** `$…$`（《剪贴板与跨语境粘贴》§五 决定 1）
-  if (a != null && identical(a, b)) {
-    // 选区把定界符自己切进来了（拖选起点/终点落在 `$` 上）⇒ 只能扩到整段，
-    // 否则会包出 `$$$` 这种无意义的东西。
-    if (doc.substring(s, e).contains(r'$')) {
-      return ClipboardSlice(start: a.start, end: a.end, text: doc.substring(a.start, a.end));
-    }
-    final ({int start, int end}) fix =
-        _completeWithin(doc, s, e, a, forClipboard: forClipboard);
-    s = fix.start;
-    e = fix.end;
-    final String frag = doc.substring(s, e);
-    return ClipboardSlice(
-      start: s,
-      end: e,
-      text: '\$$frag\$',
-      wrapped: true,
-    );
-  }
-
-  // ① 只有一端在段内 ⇒ 那一端扩到段边界（这样 `$` 才成对）
-  final MathSpan? sa = _spanStrictlyInside(spans, s);
-  if (sa != null) s = sa.start;
-  final MathSpan? sb = _spanStrictlyInside(spans, e);
-  if (sb != null) e = sb.end;
-
-  // ② 扩完再兜一次括号配平（真实文档里 `{}` 也可能本来就不平衡，那就原样交出去）
-  if (_braceDepth(doc.substring(s, e)) != 0) {
-    final MathSpan? cover = _spanContaining(spans, s) ?? _spanContaining(spans, e);
-    if (cover != null) {
-      final ({int start, int end}) fix = _balanceWithin(doc, s, e, cover);
-      s = fix.start;
-      e = fix.end;
-    }
-  }
-
-  return ClipboardSlice(start: s, end: e, text: doc.substring(s, e));
-}
-
-/// `pos` 严格落在某个段的**内部**（不含两端边界）
-MathSpan? _spanStrictlyInside(List<MathSpan> spans, int pos) {
+  final StringBuffer sb = StringBuffer();
+  var cursor = s;
+  var anyMath = false;
   for (final MathSpan sp in spans) {
-    if (pos > sp.start && pos < sp.end) return sp;
-  }
-  return null;
-}
+    if (sp.end <= s || sp.start >= e) continue;
+    final int pad = sp.display ? 2 : 1;
+    final int cs = sp.start + pad;
+    final int ce = sp.end - pad;
 
-/// `pos` 落在某个段的**闭区间**里（含两个定界符）
-MathSpan? _spanContaining(List<MathSpan> spans, int pos) {
-  for (final MathSpan sp in spans) {
-    if (pos >= sp.start && pos <= sp.end) return sp;
+    // 段前的文字：止于开定界符（`$` 不进载荷）
+    final int textEnd = e < sp.start ? e : sp.start;
+    if (textEnd > cursor) {
+      sb.write(doc.substring(cursor, textEnd));
+      cursor = textEnd;
+    }
+
+    // 数学 run：只取**内容**的交集；对象补齐在 run 内做（不碰 `$`）
+    final int ms = s > cs ? s : cs;
+    final int me = e < ce ? e : ce;
+    if (ms < me) {
+      final ({int start, int end}) fix = _completeWithin(doc, ms, me, sp);
+      sb.write(r'$');
+      sb.write(doc.substring(fix.start, fix.end));
+      sb.write(r'$');
+      anyMath = true;
+    }
+
+    // 跳过收尾定界符（选区跨过它时）
+    final int next = e < sp.end ? e : sp.end;
+    if (next > cursor) cursor = next;
+    if (cursor >= e) break;
   }
-  return null;
+  if (cursor < e) sb.write(doc.substring(cursor, e));
+  return ClipboardSlice(
+    start: s,
+    end: e,
+    text: sb.toString(),
+    wrapped: anyMath,
+  );
 }
 
 bool _isLetterCode(int c) =>
@@ -159,19 +142,8 @@ int _snapCommandEnd(String doc, int i) {
   return j;
 }
 
-/// `{}` 的净深度（跳过 `\{` / `\}` 这种转义）
-int _braceDepth(String s) {
-  var d = 0;
-  for (var i = 0; i < s.length; i++) {
-    final String ch = s[i];
-    if (i > 0 && s[i - 1] == r'\') continue;
-    if (ch == '{') d++;
-    if (ch == '}') d--;
-  }
-  return d;
-}
 
-/// 在 [sp] 这个数学段内部把 `[s, e)` 修成**自洽**的片段。
+/// 在 [sp] 这个数学段的**内容**里把 `[s, e)` 修成**自洽**的片段。
 ///
 /// ★★ 2026-11-02（选择边界批 · 定稿 §3.1）：**向左补主人** ＋ **右侧用栈补开壳**。
 ///   旧实现只朝右补（`_completeArgs` / `_completeEnvs`），左边缺的主子没人管：
@@ -179,40 +151,34 @@ int _braceDepth(String s) {
 ///   · `x]{…}` —— `]` 的 `[` 在选区左 ⇒ 丢 `\sqrt[`；
 ///   · `…\end{cases}` —— `\begin` 在选区左 ⇒ 孤立 `\end`。
 ///   现在先把"没有主人的壳"的主子拉进来，再用**栈**补右侧（计数平不算数）。
-({int start, int end}) _completeWithin(
-    String doc, int s, int e, MathSpan sp, {required bool forClipboard}) {
-  if (!forClipboard) {
-    // 删除的**临时**旧路径：保持 2026-11-02 之前的行为，等删除批整体换掉。
-    final ({int start, int end}) head = _completeArgs(doc, s, e, sp.end);
-    final ({int start, int end}) tail =
-        _completeTrailingCommand(doc, head.start, head.end, sp.end);
-    final ({int start, int end}) env =
-        _completeEnvs(doc, tail.start, tail.end, sp.end);
-    return _balanceWithin(doc, env.start, env.end, sp);
-  }
+///
+/// ★ 2026-11-03（§七）：上限是**内容**（`ce`），不是 `$`——围栏不参与。
+({int start, int end}) _completeWithin(String doc, int s, int e, MathSpan sp) {
+  final int pad = sp.display ? 2 : 1;
+  final int cs = sp.start + pad;
+  final int ce = sp.end - pad;
   for (var k = 0; k < 8; k++) {
     final int? owner = orphanOwnerBefore(doc, s, e);
-    if (owner == null || owner >= s) break;
+    if (owner == null || owner >= s || owner < cs) break;
     s = owner;
   }
-  final ({int start, int end}) head = _completeArgs(doc, s, e, sp.end);
+  final ({int start, int end}) head = _completeArgs(doc, s, e, ce);
   final ({int start, int end}) tail =
-      _completeTrailingCommand(doc, head.start, head.end, sp.end);
+      _completeTrailingCommand(doc, head.start, head.end, ce);
   // ★★★ 2026-11-01（反馈 16 · R6）：**环境（`\begin{cases}…\end{cases}`）也要自洽**。
   //   实测动因：用户从 `\begin{cases}` 选到 `y=3tsint` 松手（尾巴没带上 `\end{cases}`）
   //   ⇒ 旧代码原样吐出 `$\begin{cases}x=3tcost\\⏎y=3tsint$`（不配平）⇒ 粘到行内就是
   //   `[公式不完整]`。旧的自洽化只认 `\frac{a}` 这种**命令参数**，不认环境。
   final ({int start, int end}) env =
-      _completeEnvs(doc, tail.start, tail.end, sp.end);
+      _completeEnvs(doc, tail.start, tail.end, ce);
   // ★ 右侧：未闭合的开壳（`{` / `\begin`）补到闭合为止（栈判据）。
   var end = env.end;
-  while (end < sp.end && hasUnclosedOpener(doc.substring(env.start, end))) {
+  while (end < ce && hasUnclosedOpener(doc.substring(env.start, end))) {
     end++;
   }
-  // 补不齐（原文本来就坏）⇒ 退到整段**内容**（不含定界符，避免再包一层 `$`）。
+  // 补不齐（原文本来就坏）⇒ 退到整段**内容**（不含定界符）。
   if (!isCompleteFragment(doc.substring(env.start, end))) {
-    final int pad = sp.display ? 2 : 1;
-    return (start: sp.start + pad, end: sp.end - pad);
+    return (start: cs, end: ce);
   }
   return (start: env.start, end: end);
 }
@@ -363,27 +329,4 @@ int _matchPair(String doc, int open, String left, String right) {
     }
   }
   return -1;
-}
-
-/// 在 [sp] 这个数学段内部把 `[s, e)` 扩到**括号平衡**；
-/// 怎么扩都balance不了（原文本来就坏）⇒ 退到整段。
-({int start, int end}) _balanceWithin(
-    String doc, int s, int e, MathSpan sp) {
-  var d = _braceDepth(doc.substring(s, e));
-  var a = s;
-  var b = e;
-  while (d > 0 && b < sp.end) {
-    final String ch = doc[b];
-    b++;
-    if (ch == '{') d++;
-    if (ch == '}') d--;
-  }
-  while (d < 0 && a > sp.start) {
-    a--;
-    final String ch = doc[a];
-    if (ch == '{') d++;
-    if (ch == '}') d--;
-  }
-  if (d == 0) return (start: a, end: b);
-  return (start: sp.start, end: sp.end);
 }

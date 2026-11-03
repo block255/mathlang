@@ -20,24 +20,21 @@ const String _userDoc =
 
 int _dollars(String s) => s.split(r'$').length - 1;
 
-/// 片段里没有任何"开启者在选区外"的壳。
-void _expectNoOrphan(String doc, ClipboardSlice sl, String label) {
-  final int? owner = orphanOwnerBefore(doc, sl.start, sl.end);
-  expect(owner, isNull,
-      reason: '$label：选区 [${sl.start},${sl.end}) 仍有缺主人的壳 '
-          '（主人 @$owner）⇒ 片段「${sl.text}」');
-}
-
-/// 切片正好是某个数学段的**全部内容** ⇒ 源本身就这样，复制不可能更好。
+/// 载荷自洽：每个数学 run 结构完整。
 ///
-/// 用户文档里有一处 `$^{x}$`（游离的上标，base 在围栏外）——那种源内容本来就
-/// 不是"结构完整"的；复制只能原样带走整段，不能凭空补一个 base。
-bool _isWholeSpanContent(String doc, int s, int e) {
-  for (final MathSpan sp in scanMathSpans(doc)) {
-    final int pad = sp.display ? 2 : 1;
-    if (s == sp.start + pad && e == sp.end - pad) return true;
+/// ★ 2026-11-03（围栏不参与选区 · §七）：查的是**载荷**，不是源区间——
+///   选区可以切在数学段中间，完成度由载荷的 `$…$` run 保证。
+///   源本来就坏的段（用户文档里的游离 `$^{x}$`）原样带走，豁免。
+void _expectPayload(String doc, ClipboardSlice sl, String label) {
+  final Set<String> bad = <String>{
+    for (final MathSpan sp in scanMathSpans(doc))
+      if (!isCompleteFragment(sp.tex)) sp.tex,
+  };
+  for (final MathSpan run in scanMathSpans(sl.text)) {
+    final bool ok = isCompleteFragment(run.tex) || bad.contains(run.tex);
+    expect(ok, isTrue,
+        reason: '$label：载荷 run「${run.tex}」不完整 ⇒ 「${sl.text}」');
   }
-  return false;
 }
 
 void main() {
@@ -49,8 +46,7 @@ void main() {
       expect(sl.text, contains(r'\sqrt['), reason: sl.text);
       expect(sl.text, isNot(contains(r']$')), reason: sl.text);
       expect(sl.text, r'$\sqrt[x]{a_{1}}+\sqrt[x]{a_{2}}$');
-      _expectNoOrphan(_userDoc, sl, '①');
-      expect(isCompleteFragment(_userDoc.substring(sl.start, sl.end)), isTrue);
+      _expectPayload(_userDoc, sl, '①');
     });
 
     test(r'② 起点在分子参数 { 上、终点到分母 ⇒ 不许丢 \frac', () {
@@ -60,8 +56,7 @@ void main() {
       expect(sl.text, contains(r'\frac'), reason: sl.text);
       expect(sl.text,
           r'$\frac{\sqrt[x]{a_{1}}+\sqrt[x]{a_{2}}}{2}$');
-      _expectNoOrphan(_userDoc, sl, '②');
-      expect(isCompleteFragment(_userDoc.substring(sl.start, sl.end)), isTrue);
+      _expectPayload(_userDoc, sl, '②');
     });
 
     test(r'③ 从环境内部起选 ⇒ 不许留孤立的 \end{cases}', () {
@@ -71,8 +66,7 @@ void main() {
       final ClipboardSlice sl = clipboardSlice(doc, s, e);
       expect(sl.text, contains(r'\begin{cases}'), reason: sl.text);
       expect(sl.text, contains(r'\end{cases}'), reason: sl.text);
-      _expectNoOrphan(doc, sl, '③');
-      expect(isCompleteFragment(doc.substring(sl.start, sl.end)), isTrue);
+      _expectPayload(doc, sl, '③');
     });
   });
 
@@ -120,16 +114,9 @@ void main() {
             final ClipboardSlice sl = clipboardSlice(doc, i, j);
             final String label = '选区 ($i,$j)';
             expect(sl.start, lessThanOrEqualTo(sl.end), reason: label);
-            _expectNoOrphan(doc, sl, label);
-            if (!_isWholeSpanContent(doc, sl.start, sl.end)) {
-              expect(isCompleteFragment(doc.substring(sl.start, sl.end)), isTrue,
-                  reason: '$label：片段「${sl.text}」结构不完整');
-            }
+            _expectPayload(doc, sl, label);
             expect(_dollars(sl.text).isEven, isTrue,
                 reason: '$label：奇数个 `\$`：${sl.text}');
-            if (!sl.wrapped) {
-              expect(sl.text, doc.substring(sl.start, sl.end), reason: label);
-            }
           }
         }
       }

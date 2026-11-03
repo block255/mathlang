@@ -9,6 +9,8 @@
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mathlang/lang/clipboard_slice.dart';
+import 'package:mathlang/lang/math_spans.dart';
+import 'package:mathlang/lang/tex_structure.dart';
 
 /// 文本里 `$` 的个数
 int _dollars(String s) => s.split(r'$').length - 1;
@@ -26,21 +28,22 @@ void main() {
       expect(_dollars(sl.text).isEven, isTrue);
     });
 
-    test(r'起点在公式内、终点在文字里 ⇒ 起点扩到段边界（$ 成对）', () {
+    test(r'起点在公式内、终点在文字里 ⇒ 只包数学 run，不扩到段首', () {
+      // 2026-11-03（围栏不参与选区 · §七）：选区只看可见流；`$` 不进载荷、也不扩。
+      // 选 `b^2` → ` 成立` ⇒ 数学 run 只有 `b^2=c^2`（不回到 `a^2` 那段段首）。
       final int s = doc.indexOf('b^2');
       final int e = doc.indexOf(' 成立');
       final ClipboardSlice sl = clipboardSlice(doc, s, e);
-      expect(sl.text, r'$a^2+b^2=c^2$',
-          reason: r'改前是 `b^2=c^2$`（缺开头 $）');
+      expect(sl.text, r'$b^2=c^2$', reason: 'payload=${sl.text}');
       expect(_dollars(sl.text), 2);
     });
 
-    test(r'整条公式被选中 ⇒ 原样（不再多补一层）', () {
+    test(r'整条公式被选中 ⇒ 重新编码，不重复包', () {
       final int s = doc.indexOf(r'$');
       final int e = doc.lastIndexOf(r'$') + 1;
       final ClipboardSlice sl = clipboardSlice(doc, s, e);
-      expect(sl.wrapped, isFalse);
       expect(sl.text, r'$a^2+b^2=c^2$');
+      expect(_dollars(sl.text), 2);
     });
 
     test('纯文字选区 ⇒ 原样', () {
@@ -124,7 +127,7 @@ void main() {
     });
   });
 
-  group(r'★ 全域：任何选区复制出来的文本，$ 个数必须是偶数', () {
+  group(r'★ 全域：任何选区的载荷，`$` 成对、数学 run 结构完整', () {
     test('4 份语料 × 每一个 (i, j)', () {
       const List<String> docs = <String>[
         r'设 $a^2+b^2=c^2$ 成立，其中 $a,b,c$ 为正',
@@ -133,15 +136,23 @@ void main() {
         r'纯文字，一个公式都没有',
       ];
       for (final String doc in docs) {
+        // 源本来就坏的段（如游离的 `^{x}`）：复制不可能把它补好 —— 原样带走即可
+        final Set<String> bad = <String>{
+          for (final MathSpan sp in scanMathSpans(doc))
+            if (!isCompleteFragment(sp.tex)) sp.tex,
+        };
         for (var i = 0; i <= doc.length; i++) {
           for (var j = i; j <= doc.length; j++) {
             final ClipboardSlice sl = clipboardSlice(doc, i, j);
             expect(sl.start, lessThanOrEqualTo(sl.end));
             expect(_dollars(sl.text).isEven, isTrue,
                 reason: '选区 ($i,$j) 给出奇数个 `\$`：${sl.text}');
-            if (!sl.wrapped) {
-              // 没有补定界符时，剪贴板文本必须就是源区间那一段
-              expect(sl.text, doc.substring(sl.start, sl.end));
+            for (final MathSpan run in scanMathSpans(sl.text)) {
+              final bool ok =
+                  isCompleteFragment(run.tex) || bad.contains(run.tex);
+              expect(ok, isTrue,
+                  reason: '选区 ($i,$j)：载荷里的数学 run「${run.tex}」不完整：'
+                      '${sl.text}');
             }
           }
         }

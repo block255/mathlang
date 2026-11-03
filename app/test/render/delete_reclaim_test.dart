@@ -47,6 +47,13 @@ void main() {
       final int caret = doc.indexOf('b') + 1;
       expect(_delete(doc, caret, forward: false), r'$\frac{a}{}$');
     });
+
+    test(r'★ 行内只剩裸空格 ⇒ **不**回收（空白是没被选中的内容）', () {
+      // 2026-11-03（围栏不参与选区 · §七）：行内空白不算空；行间才算。
+      const String doc = r'$ a $';
+      final int a = doc.indexOf('a');
+      expect(_delete(doc, a, forward: true), r'$  $');
+    });
   });
 
   group('② 整个数学段：删空 ⇒ 连定界符一起删（一步、不留框）', () {
