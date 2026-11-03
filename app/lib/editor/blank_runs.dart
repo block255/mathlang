@@ -9,7 +9,14 @@
 
 /// 从 [from] 起（**必须是行首**）的连续**空行**，返回每个空行的**行首偏移**。
 ///
-/// 空行 = 该行内容 `trim()` 后为空（一个只有空格的行也算空行）。
+/// 空行 = 该行**一个字符都没有**（长度 0）。
+/// ★★★ 2026-11-04（用户拍板「甲」）：**只有空格的行不算空行**。
+///   以前这里用 `trim()`，于是"打了几个空格的行"仍算空行 ⇒ 它走空行槽（不排版），
+///   而空行槽只在"光标 == 行首"时画竖条 ⇒ **在空行里打空格，竖条当场消失**
+///   （用户实测："打空格光标没了，但空格确实在推进"），
+///   "用空格手动对齐 / 画示意图"这个用法直接做不了。
+///   ⇒ 判据改成"这一行有没有字符"：有（哪怕是空格）就是**普通段落**，
+///   空格有宽度、光标跟着它走。
 List<int> blankRunFrom(String buf, int from) {
   final List<int> out = <int>[];
   var o = from.clamp(0, buf.length);
@@ -19,7 +26,7 @@ List<int> blankRunFrom(String buf, int from) {
   while (o < buf.length) {
     final int nl = buf.indexOf('\n', o);
     final int end = nl < 0 ? buf.length : nl;
-    if (buf.substring(o, end).trim().isNotEmpty) break;
+    if (end > o) break; // 这一行**有字符**（含只有空格）⇒ 空行串到此为止
     out.add(o);
     if (nl < 0) break;
     o = nl + 1;

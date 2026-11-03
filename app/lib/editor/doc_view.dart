@@ -746,6 +746,22 @@ class DocViewState extends State<DocView> {
     });
   }
 
+  /// 空行槽帧末上报自己的盒子（`_BlankSlot.onBox`）。
+  ///
+  /// ★★★ 2026-11-04（P7）：**报上来的正是光标所在那个槽 ⇒ 当场重算一次光标矩形**。
+  ///   为什么必须闭环：`_computeCaretRect` 自己也挂在帧末，而盒子上报也是帧末 ——
+  ///   谁先跑只看注册顺序。落在"盒子还没进表"那一拍时，它会退到
+  ///   "最后一个单元的行尾"（错值），而**之后没有任何东西重算** ⇒ 错值一直留着。
+  ///   实测（同一份缓冲、同一偏移）：新加载报 `null`；抖动后连算两次给
+  ///   `140.3` 和 `95.6` —— 顺序依赖就是这么来的。
+  ///   ★ 只影响**喂给 IME 的矩形**（用户看到的竖条是各 widget 自己画的，不受此影响）。
+  void _onBlankBox(String id, RenderBox box) {
+    _blankBoxes[id] = box;
+    if (widget.onCaretRect == null) return;
+    if (id != 'blank@$_caret') return;
+    widget.onCaretRect!.call(_computeCaretRect());
+  }
+
   Rect? _computeCaretRect() {
     if (!mounted) return null;
     // ★★ 2026-10-18：`_blankBoxes` 是**只写不清**的缓存 —— 空行 widget 被回收后表里还留着
@@ -2398,7 +2414,7 @@ class DocViewState extends State<DocView> {
             caretWidth: 1.5,
             caretColor: const Color(kCaretColorValue),
             onTap: (int at, Offset global) => widget.onTapOffset?.call(at, global, TapSource.text),
-            onBox: (String id, RenderBox box) => _blankBoxes[id] = box,
+            onBox: _onBlankBox,
           ));
         } else {
           children.add(SizedBox(height: gap));
@@ -2474,7 +2490,7 @@ class DocViewState extends State<DocView> {
               caretWidth: 1.5,
               caretColor: const Color(kCaretColorValue),
               onTap: (int at, Offset _) => widget.buffer.setCaret(at),
-              onBox: (String bid, RenderBox box) => _blankBoxes[bid] = box,
+              onBox: _onBlankBox,
             ));
           } else {
             children.add(SizedBox(height: s.item.height));
@@ -2598,7 +2614,7 @@ class DocViewState extends State<DocView> {
                         seamTap < widget.buffer.buf.length
                     ? seamTap
                     : null)),
-        onBox: (String id, RenderBox box) => _blankBoxes[id] = box,
+        onBox: _onBlankBox,
       ));
     } else if (isLastPage && _units.isEmpty) {
       // ★★ 2026-10-18 晚（用户报「**新建文档点不出光标**」）·
@@ -2622,7 +2638,7 @@ class DocViewState extends State<DocView> {
         caretColor: const Color(kCaretColorValue),
         topAligned: true,
         onTap: (int at, Offset global) => widget.onTapOffset?.call(at, global, TapSource.text),
-        onBox: (String id, RenderBox box) => _blankBoxes[id] = box,
+        onBox: _onBlankBox,
       ));
     } else if (!isLastPage && prevUnit != null && _pageHasUnit(layout, p + 1)) {
       // ★★ 批 38 新增：**接缝带**（非末页的剩余白）。
@@ -2672,7 +2688,7 @@ class DocViewState extends State<DocView> {
         // ★ 只落光标：**不改文档**（改了会重排/翻页，而"点页面白"不该有这种后果）
         onTap: (int at, Offset global) =>
             widget.onTapOffset?.call(at, global, TapSource.text),
-        onBox: (String id, RenderBox box) => _blankBoxes[id] = box,
+        onBox: _onBlankBox,
       ));
     }
 

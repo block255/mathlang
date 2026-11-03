@@ -68,16 +68,21 @@ void main() {
     expect(noBaseReason(out), isNull);
   });
 
-  // ★★★ 2026-10-24（批 15 · 用户②）：**脚本内容末尾不许再嵌一层空脚本**
-  //   用户实测：`\left|{x^{2}}\right|` 里在 `2` 之后按 Shift+6 ⇒ `x^{2^{}}` ⇒ 公式不完整。
-  test(r'★★ 已有指数的内容末尾插 `^{}` ⇒ 挪到对象之后（`x^{2}^{}`），不许嵌套空脚本', () {
+  // ★★★ 2026-11-04（反馈 A3）：**这条翻案了**。
+  //   旧口径（批 15）：`2` 之后按 Shift+6 ⇒ 必须挪到对象之后（`x^{2}^{}`），
+  //     理由是 `x^{2^{}}` 会"公式不完整"。
+  //   现行口径：`x^{2^{}}` **是合法的**（内层 `^` 的基座是 `2`，且带花括号）；
+  //     用户 2026-11-03 明确要求"要能打指数的指数"，而被搬走之后
+  //     `x^{2}^{}` 反而**违反 TeX**（同一个基座两个上标）。
+  //   ⇒ 现在断言：**原地嵌套**，且套完每一层都还有基座（`noBaseReason` 为 null）。
+  test(r'★★ 已有指数的内容末尾插 `^{}` ⇒ **原地**套一层（`x^{2^{}}`，合法）', () {
     const String t2 = r'\left|{x^{2}}\right|';
     // `2` 之后那一格 = `}` 之前
     final int afterTwo = t2.indexOf(r'x^{2}') + r'x^{'.length + 1;
     final String out = inserted(t2, afterTwo, r'^{}');
-    expect(out, contains(r'x^{2}^{}'),
-        reason: r'应当在对象层加指数（`x^{2}^{}`），不许得到 `x^{2^{}}`：$out');
-    expect(out, isNot(contains(r'^{2^{')),
-        reason: '脚本内容里不许再嵌一个空脚本：$out');
+    expect(out, contains(r'x^{2^{}}'),
+        reason: r'就地嵌一层（改前：被搬到 `}` 之后成 `x^{2}^{}`）：$out');
+    expect(noBaseReason(out), isNull,
+        reason: '套进去之后每一层 `^` 都必须有自己的基座：$out');
   });
 }

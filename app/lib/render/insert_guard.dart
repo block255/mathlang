@@ -45,6 +45,7 @@
 import '../core/block.dart';
 import 'caret_sites.dart';
 import 'math_nav.dart';
+import 'script_nest.dart' show scriptSlotHasBase;
 import 'smart_delete.dart' show StructureUnit, structureUnits;
 
 /// ★★ 规则 ④ 的产物：**载荷边界要补的换行**（见 [planInsert] 的说明）。
@@ -591,11 +592,17 @@ InsertPlan? _neutralInsert(String source, int o, String text) {
       if (last.command != '^' && last.command != '_') continue;
       if (rel != s.end) continue; // 正好停在脚本内容末尾那一格
       if (s.end >= r.tex.length || r.tex[s.end] != '}') continue; // 只认花括号形式
+      // ★★★ 2026-11-04（反馈 A3）：**槽里有基座 ⇒ 原地套一层，不搬走**。
+      //   `x^{y|}` 按 `^` 应该得到 `x^{y^{}}`（合法的指数的指数），
+      //   而不是被搬到 `}` 之后变成 `x^{y}^{}`（TeX 不允许同一个基座两个上标）。
+      //   旧判据只看"停在脚本内容末尾"，于是把合法嵌套一起搬掉了 ——
+      //   与 `script_nest` 的那条判据同源，现在共用 `scriptSlotHasBase`。
+      if (scriptSlotHasBase(r.tex, rel)) continue;
       return InsertPlan(
         r.contentStart + s.end + 1,
         moved: true,
-        why: '插入点落在**指数/下标的末尾** ⇒ 挪到对象之后'
-            '（在脚本里再嵌一层空脚本会解析失败）',
+        why: '插入点落在**空脚本槽的末尾** ⇒ 挪到对象之后'
+            '（在空脚本里再嵌一层会解析失败）',
       );
     }
   }

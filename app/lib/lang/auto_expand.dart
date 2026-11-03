@@ -175,25 +175,13 @@ AutoExpand? planPrimeInsert({required String doc, required int caret}) =>
 // `/` → 分式
 // ---------------------------------------------------------------------------
 
-/// 光标是否正好停在某个 **`^` / `_` 槽的内容末尾**（花括号形式）—— 批 15c。
-///
-/// 为什么需要它：那里**没有合法的"再加一层指数"做法**
-/// （往里套 = 空脚本 `2^{}`；挂到对象层 = `x^{2}^{}`，而 **TeX 不允许同一个基座两个 `^`**）。
-/// ⇒ 编辑层据此**吞掉**这个 `^`/`_` 字符，绝不把文档弄成「公式不完整」。
-bool atScriptContentEnd(String doc, int caret) {
-  final MathRegion? r = mathRegionAt(doc, caret.clamp(0, doc.length));
-  if (r == null) return false;
-  final int rel = (caret - r.contentStart).clamp(0, r.tex.length);
-  for (final SlotSpan s in buildCaretSites(r.tex).slots) {
-    if (s.path.isEmpty) continue;
-    final SlotStep step = s.path.last;
-    if (step.command != '^' && step.command != '_') continue;
-    if (s.end != rel) continue;
-    if (s.end >= r.tex.length || r.tex[s.end] != '}') continue;
-    return true;
-  }
-  return false;
-}
+// ★★★ 2026-11-04（反馈 A3）：**删掉 `atScriptContentEnd`**。
+//   它原本是"光标停在脚本槽内容末尾 ⇒ 吞掉 `^`/`_`"的第二处判据，
+//   但**全仓没有任何调用点**（`grep atScriptContentEnd` 只有它自己的定义）——
+//   打字那条路真正挡人的是 `render/script_nest.scriptInsertWouldNest`（见 `edit_view`）。
+//   留着它只会让下一个人以为"还有一处要改"；判据现在**只有一条**：
+//   **空槽才挡、有基座放行**（`script_nest.dart` 顶部口径）。
+
 
 /// 分子 = **光标前那个可见原子**（公式里）/ **光标前那一个字符**（正文里）。
 ///

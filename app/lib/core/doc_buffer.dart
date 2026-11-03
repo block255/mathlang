@@ -120,6 +120,12 @@ class DocBuffer {
 
   void setCaret(int offset, {bool extend = false}) {
     _caret = offset.clamp(0, _buf.length);
+    // ★★★ 2026-11-04（P3b **撤案**，留痕）：这里**不能**断言"光标不在段落分隔符上"。
+    //   试过一版 `assert(!isParagraphSeparator(_buf, _caret))`，全量测试当场红 15+ 条 ——
+    //   而红的是 `caret_ownership_global_test` / `paragraph_separator_test` 这类**故意**
+    //   把光标摆到分隔符上、用来验证"那一格一根竖条都不许画"的守卫。
+    //   ⇒ "setCaret 出口唯一"这个前提不成立：**归属/渲染层必须能探针式地设置任意偏移**。
+    //   硬断言在错误的层；光标合法性归**编辑入口**（点击 / 方向键 / Enter），不归缓冲区。
     if (!extend) _anchor = _caret;
     _notify();
   }

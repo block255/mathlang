@@ -42,20 +42,28 @@ Future<void> _type(WidgetTester t, String s) async {
 }
 
 void main() {
-  testWidgets('① 下标内容之后打 `_` ⇒ 不再套一层', (WidgetTester t) async {
+  // ★★★ 2026-11-04（反馈 A3）：**口径改了** —— 判据从"同种脚本一律拒"收窄成
+  //   "**空槽才挡、有基座放行**"。所以 ①② 由"不再套一层"翻成"**可以**套一层"：
+  //   用户原话是"打不出指数的指数 / 下标的下标"，而 `x^{2^{}}` / `f_{-_{}}` 都合法
+  //   （每一层都有自己的基座）。空槽（③）仍然要挡 —— 那才会插出没有基座的脚本。
+  testWidgets('① 下标内容之后打 `_` ⇒ **可以**再套一层（`f_{-_{}}`）',
+      (WidgetTester t) async {
     final (_, DocBuffer buf) = await _mount(t, r'$f_{-}$');
     buf.setCaret(buf.buf.indexOf('-') + 1); // `-` 之后 = 下标内容末尾
     await t.pump();
     await _type(t, '_');
-    expect(buf.buf, r'$f_{-}$', reason: '改前会多套一层');
+    expect(buf.buf.trimRight(), r'$f_{-_{}}$',
+        reason: '槽里有基座 `-` ⇒ 合法的下标的下标（改前：被吞，文档不变）');
   });
 
-  testWidgets('② 指数内容之后打 `^` ⇒ 不再套一层', (WidgetTester t) async {
+  testWidgets('② 指数内容之后打 `^` ⇒ **可以**再套一层（`x^{2^{}}`）',
+      (WidgetTester t) async {
     final (_, DocBuffer buf) = await _mount(t, r'$x^{2}$');
     buf.setCaret(buf.buf.indexOf('2') + 1);
     await t.pump();
     await _type(t, '^');
-    expect(buf.buf, r'$x^{2}$', reason: '改前会多套一层');
+    expect(buf.buf.trimRight(), r'$x^{2^{}}$',
+        reason: '槽里有基座 `2`（改前：被吞，文档不变）');
   });
 
   testWidgets('③ 空下标槽里打 `_` ⇒ 也不再套', (WidgetTester t) async {

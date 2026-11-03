@@ -759,12 +759,21 @@ class EditViewState extends State<EditView> {
         _scriptNestRefused(tex.startsWith('^'))) {
       return;
     }
+    // ★★★ 2026-11-04（反馈 A2 · **落点统一**）：文末空行行首插入也要先补一个换行，
+    //   与打字**同一条判据**（`_needsLineHeadPad`）。以前这里绕过了它 ⇒
+    //   同一格上"打字对齐（dy −0.2）、插符号错位一整行（dy −38.6）"（用户实测：
+    //   "打 `a` 与插 `α` 落到不同行"）。补的 `\n` 与这次插入合成**一次写入**（一步撤销）。
+    final bool padHead = _needsLineHeadPad(tex);
+    final String srcDoc = padHead
+        ? _buf.buf.replaceRange(_buf.caret, _buf.caret, '\n')
+        : _buf.buf;
+    final int srcCaret = padHead ? _buf.caret + 1 : _buf.caret;
     _breakUndoGroup(); // 模板/符号插入独占一步
     final SymbolInsertResult r = applySymbolInsert(
-      doc: _buf.buf,
-      caret: _buf.caret,
-      selStart: _buf.selectionStart,
-      selEnd: _buf.selectionEnd,
+      doc: srcDoc,
+      caret: srcCaret,
+      selStart: padHead ? srcCaret : _buf.selectionStart,
+      selEnd: padHead ? srcCaret : _buf.selectionEnd,
       tex: tex,
       template: template,
       display: display,
