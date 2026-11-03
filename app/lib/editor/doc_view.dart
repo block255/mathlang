@@ -846,23 +846,53 @@ class DocViewState extends State<DocView> {
   void _onPagePointerDown(PointerDownEvent e) {
     final void Function(int, Offset, TapSource)? cb = widget.onTapOffset;
     if (cb == null) return;
+    // ★★★ 2026-11-03 晚（用户："行间矩阵右边只有很窄一条能点"）：
+    //   左右两侧的空白都要有人认领 —— 左：既有的 4px 带；**右：该行末尾**。
+    //   旧的实现只做左边、而且把行间块整个跳过 ⇒ 块右侧那一片空白落到页面兜底，
+    //   于是"再往右就又落回矩阵里"。
+    _Unit? leftUnit;
+    RenderBox? leftBox;
+    var leftD = double.infinity;
+    _Unit? rightUnit;
+    RenderBox? rightBox;
+    var rightD = double.infinity;
     for (final _Unit u in _units) {
-      if (u.type == BlockType.math) continue; // 行间块是整块认领的，不走这条
       final RenderBox? box = _unitBoxes[u.id];
       if (box == null || !box.attached || !box.hasSize) continue;
       final Offset tl = box.localToGlobal(Offset.zero);
-      if (e.position.dy < tl.dy || e.position.dy > tl.dy + box.size.height) {
-        continue;
-      }
+      final double rr = tl.dx + box.size.width;
+      final double bb = tl.dy + box.size.height;
+      if (e.position.dy < tl.dy || e.position.dy > bb) continue;
       // 落在单元**里面** ⇒ 单元自己的命中盒已经处理了，这里必须让开（否则会算两次）
-      if (e.position.dx >= tl.dx && e.position.dx <= tl.dx + box.size.width) {
-        return;
+      if (e.position.dx >= tl.dx && e.position.dx <= rr) return;
+      if (e.position.dx < tl.dx) {
+        final double d = tl.dx - e.position.dx;
+        if (d <= kInlineLeftBandPx && d < leftD) {
+          leftD = d;
+          leftUnit = u;
+          leftBox = box;
+        }
+      } else {
+        final double d = e.position.dx - rr;
+        if (d < rightD) {
+          rightD = d;
+          rightUnit = u;
+          rightBox = box;
+        }
       }
-      if (e.position.dx < tl.dx - kInlineLeftBandPx) continue;
-      final int? off =
-          _offsetAt(u, box, Offset(tl.dx + 0.5, e.position.dy));
+    }
+    if (leftUnit != null && leftBox != null) {
+      final Offset tl = leftBox.localToGlobal(Offset.zero);
+      final int? off = _offsetAt(leftUnit, leftBox, Offset(tl.dx + 0.5, e.position.dy));
       if (off != null) cb(off, e.position, TapSource.band);
       return;
+    }
+    if (rightUnit != null && rightBox != null) {
+      // 取"贴着右缘外 3px"那一点去问单元自己 ⇒ 行间块按行带取该行行末，文字取行末
+      final Offset tl = rightBox.localToGlobal(Offset.zero);
+      final int? off = _offsetAt(rightUnit, rightBox,
+          Offset(tl.dx + rightBox.size.width + 3, e.position.dy));
+      if (off != null) cb(off, e.position, TapSource.band);
     }
   }
 

@@ -150,10 +150,12 @@ void main() {
       final String doc = _doc(kTwo);
       final DocBuffer buf = await _pump(tester, doc);
       final RenderBox root = _rig().root;
-      final Rect b1 = envInkBox(buildEnvGrid(
-          root: root, tex: kTwo, displayStyle: true, fontSize: 20, envIx: 0)!)!;
-      final Rect b2 = envInkBox(buildEnvGrid(
-          root: root, tex: kTwo, displayStyle: true, fontSize: 20, envIx: 1)!)!;
+      // ★ 盒子 = 格区 ∪ 定界符（envFullBox）—— "两个矩阵之间"指的是**括号之间**那道缝
+      final List<LeafBox> boxes = scanLeafBoxes(root).eligible;
+      final Rect b1 = envFullBox(buildEnvGrid(
+          root: root, tex: kTwo, displayStyle: true, fontSize: 20, envIx: 0)!, boxes)!;
+      final Rect b2 = envFullBox(buildEnvGrid(
+          root: root, tex: kTwo, displayStyle: true, fontSize: 20, envIx: 1)!, boxes)!;
       final Offset mid = Offset((b1.right + b2.left) / 2, b1.center.dy);
 
       buf.setCaret(0);

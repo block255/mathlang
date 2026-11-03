@@ -560,6 +560,13 @@ double _medianOf(List<double> xs) {
 ///
 /// ★★ 2026-11-03（双环境）：一个块里可能有**多个环境**（矩阵接行列式）。它们的
 /// `(row, col)` 会撞，所以先按**几何**认出点的是哪个环境，再用那个环境的网格判格子。
+///
+/// ★★★ 2026-11-03 晚（用户："矩阵里面格子外面" ≠ "矩阵外面"）：
+///   **点只认"一个盒子"** —— 盒子 = `envFullBox`（格区 ∪ 定界符，放宽 4px）：
+///   · 落在**恰好一个**环境的盒子里 ⇒ 格子规则；
+///   · 落在**两个环境的盒子里**（两个贴着的矩阵之间那一条）⇒ 算"之间"，返回 null 走**行规则**；
+///   · 落在**所有盒子之外** ⇒ 也是行规则。
+///   这样既保住"矩阵里面的空隙按格子判"，又让"两个矩阵之间"永远属于流。
 EnvCellHit? envCellHitAt({
   required RenderObject root,
   required Offset localPos,
@@ -567,22 +574,28 @@ EnvCellHit? envCellHitAt({
   required bool displayStyle,
   double? fontSize,
 }) {
-  final EnvGrid? g = envGridNearest(
-    root: root,
-    tex: tex,
-    displayStyle: displayStyle,
-    fontSize: fontSize,
-    localPos: localPos,
-  );
-  if (g == null) return null;
-  // ★★★ 2026-11-03 晚（用户："点两个矩阵中间点不到"、"x 过了加号会把右边那个矩阵粘进来"）：
-  //   **点在环境盒子外面 ⇒ 不算格子命中**。旧实现没有这道边界检查 ⇒ `envCellHitIn` 对任何点
-  //   都返回"最近的一格" ⇒ 两个环境之间的空白、块外面的空白全被吸进格子
-  //   （实测：点两环境之间 ⇒ `EnvCellHit(1,1,尾)`；拖选终点过 `+` ⇒ 终点被吸进第二个环境）。
-  //   留 4px 宽容：贴着括号/格子边缘的像素仍算格子。
-  final Rect? ink = envInkBox(g);
-  if (ink != null && !ink.inflate(4).contains(localPos)) return null;
-  return envCellHitIn(g, localPos);
+  final List<int> ids = envIdsIn(tex);
+  if (ids.isEmpty) {
+    final EnvGrid? g = buildEnvGrid(
+        root: root, tex: tex, displayStyle: displayStyle, fontSize: fontSize);
+    return g == null ? null : envCellHitIn(g, localPos);
+  }
+  final List<LeafBox> boxes = scanLeafBoxes(root).eligible;
+  final List<EnvGrid> hits = <EnvGrid>[];
+  for (final int id in ids) {
+    final EnvGrid? g = buildEnvGrid(
+        root: root,
+        tex: tex,
+        displayStyle: displayStyle,
+        fontSize: fontSize,
+        envIx: id);
+    if (g == null) continue;
+    final Rect? full = envFullBox(g, boxes);
+    if (full == null || !full.inflate(4).contains(localPos)) continue;
+    hits.add(g);
+  }
+  if (hits.length != 1) return null; // 0 = 盒子外；≥2 = 两个矩阵之间 ⇒ 走行规则
+  return envCellHitIn(hits.first, localPos);
 }
 
 /// 点右侧空白：命中"点所在行带那一行的**最后一格**"；量不到 ⇒ null。
@@ -660,6 +673,7 @@ int? envIxOf(String tex, int offset) {
 }) {
   final List<int> ids = envIdsIn(tex);
   if (ids.isEmpty) return null;
+  final List<LeafBox> boxes = scanLeafBoxes(root).eligible;
   int? bestIx;
   var bestD = double.infinity;
   var bestBefore = true;
@@ -671,7 +685,7 @@ int? envIxOf(String tex, int offset) {
         fontSize: fontSize,
         envIx: id);
     if (g == null) continue;
-    final Rect? box = envInkBox(g);
+    final Rect? box = envFullBox(g, boxes);
     if (box == null) continue;
     final double d = localPos.dx < box.left
         ? box.left - localPos.dx
@@ -708,6 +722,71 @@ Rect? envInkBox(EnvGrid g) {
   return Rect.fromLTRB(l, t, r, b);
 }
 
+/// 环境的**完整盒子** = 格区 ∪ 它的定界符（含引擎拆出来的**碎片括号** `⎡ ⎢ ⎣`）。
+///
+/// ★★★ 2026-11-03 晚（用户："矩阵里面格子外面" ≠ "矩阵外面"）：
+///   `envInkBox` 只有**格区**（行带/列带），括号在格区外面 ⇒ "括号内侧、第一格之前"那几像素
+///   会被当成"盒子外面"，落到流规则里。这里把定界符并进来。
+///
+/// 判据（**按左右侧**，不是"连续吞"——两个贴着的矩阵之间间隙为 0，连续规则会互相吞）：
+///   · 左定界符（`[ ( { ⎡ ⎢ ⎣ ⎛ ⎜ ⎝ ⎧ ⎨ ⎩ ⟨` 与 `|‖`）：贴着格区**左缘**（`right ≤ left+1.5`）、
+///     且距离 ≤ [maxReach]；
+///   · 右定界符（`] ) } ⎤ ⎥ ⎦ ⎞ ⎟ ⎠ ⎫ ⎬ ⎭ ⟩` 与 `|‖`）：贴着格区**右缘**（`left ≥ right-1.5`）、
+///     且距离 ≤ [maxReach]；
+///   · y 必须与格区相交（括号比格区高，纵向后再并进来）。
+Rect? envFullBox(
+  EnvGrid g,
+  List<LeafBox> boxes, {
+  double maxReach = 24,
+}) {
+  final Rect? hull = envInkBox(g);
+  if (hull == null) return null;
+  var l = hull.left, r = hull.right, t = hull.top, b = hull.bottom;
+  bool yOverlap(Rect x) => x.bottom > hull.top - 1 && x.top < hull.bottom + 1;
+  var foundL = false, foundR = false;
+  for (final LeafBox x in boxes) {
+    if (x.kind == LeafBoxKind.pad) continue;
+    final String s = (x.text ?? '').trim();
+    if (s.isEmpty) continue;
+    if (!yOverlap(x.rect)) continue;
+    final bool isLeft = _kLeftDelims.contains(s);
+    final bool isRight = _kRightDelims.contains(s);
+    if (isLeft &&
+        !foundL &&
+        x.rect.right <= hull.left + 1.5 &&
+        hull.left - x.rect.left <= maxReach) {
+      l = x.rect.left;
+      foundL = true;
+    }
+    if (isRight &&
+        !foundR &&
+        x.rect.left >= hull.right - 1.5 &&
+        x.rect.right - hull.right <= maxReach) {
+      r = x.rect.right;
+      foundR = true;
+    }
+  }
+  // 纵向：把落在 [l,r] 内、且上下贴着格区的盒并进来（高括号比格区高）
+  for (final LeafBox x in boxes) {
+    if (x.kind == LeafBoxKind.pad) continue;
+    if (x.rect.right < l - 0.5 || x.rect.left > r + 0.5) continue;
+    final double dTop = hull.top - x.rect.bottom;
+    final double dBot = x.rect.top - hull.bottom;
+    final bool nearTop = dTop >= -0.5 && dTop <= maxReach;
+    final bool nearBottom = dBot >= -0.5 && dBot <= maxReach;
+    if (!nearTop && !nearBottom) continue;
+    if (x.rect.top < t) t = x.rect.top;
+    if (x.rect.bottom > b) b = x.rect.bottom;
+  }
+  return Rect.fromLTRB(l, t, r, b);
+}
+
+/// 左定界符（含引擎拆出的碎片）：`[ ( { ⎡ ⎢ ⎣ ⎛ ⎜ ⎝ ⎧ ⎨ ⎩ ⟨` 与双向的 `|` `‖`
+const String _kLeftDelims = '[({⎡⎢⎣⎛⎜⎝⎧⎨⎩⟨|‖';
+
+/// 右定界符（含碎片）：`] ) } ⎤ ⎥ ⎦ ⎞ ⎟ ⎠ ⎫ ⎬ ⎭ ⟩` 与双向的 `|` `‖`
+const String _kRightDelims = '])}⎤⎥⎦⎞⎟⎠⎫⎬⎭⟩|‖';
+
 /// 选出**离 [localPos] 最近**（含包含关系）的环境网格。
 EnvGrid? envGridNearest({
   required RenderObject root,
@@ -732,6 +811,8 @@ EnvGrid? envGridNearest({
   EnvGrid? best;
   var bestD = double.infinity;
   EnvGrid? firstAny;
+  // 多环境才需要"完整盒子"（含定界符）来比远近
+  final List<LeafBox> boxes = scanLeafBoxes(root).eligible;
   for (final int id in ids) {
     final EnvGrid? g = buildEnvGrid(
         root: root,
@@ -741,7 +822,7 @@ EnvGrid? envGridNearest({
         envIx: id);
     if (g == null) continue;
     firstAny ??= g;
-    final Rect? box = envInkBox(g);
+    final Rect? box = envFullBox(g, boxes);
     if (box == null) continue;
     final double d = localPos.dx < box.left
         ? box.left - localPos.dx
