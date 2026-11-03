@@ -574,7 +574,15 @@ EnvCellHit? envCellHitAt({
     fontSize: fontSize,
     localPos: localPos,
   );
-  return g == null ? null : envCellHitIn(g, localPos);
+  if (g == null) return null;
+  // ★★★ 2026-11-03 晚（用户："点两个矩阵中间点不到"、"x 过了加号会把右边那个矩阵粘进来"）：
+  //   **点在环境盒子外面 ⇒ 不算格子命中**。旧实现没有这道边界检查 ⇒ `envCellHitIn` 对任何点
+  //   都返回"最近的一格" ⇒ 两个环境之间的空白、块外面的空白全被吸进格子
+  //   （实测：点两环境之间 ⇒ `EnvCellHit(1,1,尾)`；拖选终点过 `+` ⇒ 终点被吸进第二个环境）。
+  //   留 4px 宽容：贴着括号/格子边缘的像素仍算格子。
+  final Rect? ink = envInkBox(g);
+  if (ink != null && !ink.inflate(4).contains(localPos)) return null;
+  return envCellHitIn(g, localPos);
 }
 
 /// 点右侧空白：命中"点所在行带那一行的**最后一格**"；量不到 ⇒ null。
@@ -636,13 +644,26 @@ int? envIxOf(String tex, int offset) {
   return best;
 }
 
-/// 环境网格的**外接盒**（只由格子矩形并出来，供"点的是哪个环境"用）。
+/// 环境网格的**外接盒**（用**行带 / 列带**并出来）。
+///
+/// ★★ 2026-11-03 晚：不能只看格子矩形 —— 空格子的矩形是**零高**的填充垫（基线那一条），
+///   整表全空时并集就是一根细线 ⇒ "点在环境里吗"永远为假（点全空矩阵会被判到外面去）。
 Rect? envInkBox(EnvGrid g) {
-  Rect? r;
-  for (final Rect x in g.cellRect.values) {
-    r = r == null ? x : r.expandToInclude(x);
+  final Iterable<Rect> cols = g.colBand.values;
+  final Iterable<Rect> rows = g.rowBand.values;
+  if (cols.isEmpty || rows.isEmpty) return null;
+  var l = double.infinity, r = -double.infinity;
+  var t = double.infinity, b = -double.infinity;
+  for (final Rect c in cols) {
+    if (c.left < l) l = c.left;
+    if (c.right > r) r = c.right;
   }
-  return r;
+  for (final Rect q in rows) {
+    if (q.top < t) t = q.top;
+    if (q.bottom > b) b = q.bottom;
+  }
+  if (!l.isFinite || !t.isFinite) return null;
+  return Rect.fromLTRB(l, t, r, b);
 }
 
 /// 选出**离 [localPos] 最近**（含包含关系）的环境网格。

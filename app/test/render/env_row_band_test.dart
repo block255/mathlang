@@ -1,4 +1,4 @@
-﻿// ★★ L19 守卫：环境的**行带几何**（2026-10-19）
+// ★★ L19 守卫：环境的**行带几何**（2026-10-19）
 //
 // 用户四张图报的现象（原文）：
 //  ①「部分填写的行的空位的占位框和空行的空位的占位框**高度好像不太一样**」
@@ -226,9 +226,18 @@ void main() {
           reason: '框底 ${box.bottom} 越出矩阵根盒 ${r.root.size.height}');
       expect(box.top, greaterThanOrEqualTo(-0.5),
           reason: '框顶 ${box.top} 跑到矩阵上面去了');
-      // ② 竖条与框**同 y 同高**（P10 的契约，这里从**画出来的东西**验）
-      expect(p.bar.top, closeTo(box.top, 0.01), reason: '竖条与框必须同顶');
-      expect(p.bar.height, closeTo(box.height, 0.01), reason: '竖条与框必须同高');
+      // ② ★★ 2026-11-03 晚**契约更新**（用户："光标在二三行之间不上不下"）：
+      //   竖条不再"贴满整条行带"，而是**在同一把尺子里内缩**（与有字的格子同款
+      //   `caretBarRect`：行盒上下各内缩 `kCaretInset`）—— 仍与框同处一行，
+      //   但不顶到上下行界（旧契约"同顶同高"正是"不上不下"的来源）。
+      expect(p.bar.top, greaterThanOrEqualTo(box.top - 0.01),
+          reason: '竖条不许越出框顶');
+      expect(p.bar.bottom, lessThanOrEqualTo(box.bottom + 0.01),
+          reason: '竖条不许越出框底');
+      expect(p.bar.height, lessThan(box.height - 0.5),
+          reason: '竖条不许画满整条行带（${p.bar.height} vs ${box.height}）');
+      expect(p.bar.height, greaterThan(box.height * 0.6),
+          reason: '竖条也不许缩得太短（${p.bar.height} vs ${box.height}）');
     });
 
     testWidgets('★ 点第 4 行（有 `2` 的那一行）⇒ 落在第 4 行，不是第 3 / 第 5 行',

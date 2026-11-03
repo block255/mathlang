@@ -142,5 +142,29 @@ void main() {
           inInclusiveRange(base + cell.start, base + cell.end),
           reason: '空格子也要落在第二个环境（改前会落到第一个环境的 `b`，实际 ${buf.caret}）');
     });
+
+    testWidgets('★ 点两个环境**中间**的空白 ⇒ 不许被吸进任何一格',
+        (WidgetTester tester) async {
+      // 用户 2026-11-03："两个挨着的矩阵/行列式鼠标点不到中间"。
+      // 改前：`envCellHitIn` 对任何点都返回最近格 ⇒ 吸进前一个环境最后一格（实测 caret=39）。
+      final String doc = _doc(kTwo);
+      final DocBuffer buf = await _pump(tester, doc);
+      final RenderBox root = _rig().root;
+      final Rect b1 = envInkBox(buildEnvGrid(
+          root: root, tex: kTwo, displayStyle: true, fontSize: 20, envIx: 0)!)!;
+      final Rect b2 = envInkBox(buildEnvGrid(
+          root: root, tex: kTwo, displayStyle: true, fontSize: 20, envIx: 1)!)!;
+      final Offset mid = Offset((b1.right + b2.left) / 2, b1.center.dy);
+
+      buf.setCaret(0);
+      await tester.pumpAndSettle();
+      await tester.tapAt(root.localToGlobal(mid));
+      await tester.pumpAndSettle();
+
+      // 落在两个环境之间 = `\end{pmatrix}` 之后、`\begin{vmatrix}` 之前（通常就是那个 `+` 那一格）
+      final int plus = doc.indexOf('+', doc.indexOf(kTwo));
+      expect(buf.caret, inInclusiveRange(plus - 2, plus + 2),
+          reason: '点中间应落在两个环境之间，实际 ${buf.caret}（改前被吸进前一格末）');
+    });
   });
 }

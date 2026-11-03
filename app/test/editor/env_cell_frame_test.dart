@@ -118,4 +118,29 @@ void main() {
       }
     }
   });
+
+  testWidgets('空格子的竖条不许画满整条行带（要留缝、居中）',
+      (WidgetTester tester) async {
+    const String tex = r'\begin{pmatrix}&&\\&&\end{pmatrix}';
+    await _pump(tester, tex);
+    final RenderBox root = _root();
+    final Rect? box = envCellBoxAt(
+        root: root, tex: tex, displayStyle: true, row: 0, col: 1,
+        fontSize: 20, envIx: 0);
+    expect(box, isNotNull);
+    await tester.tapAt(root.localToGlobal(box!.center));
+    await tester.pumpAndSettle();
+    Rect? bar;
+    for (final RenderObject ro in tester.allRenderObjects) {
+      if (ro is RenderCustomPaint && ro.foregroundPainter is MathCaretPainter) {
+        final MathCaretPainter p = ro.foregroundPainter! as MathCaretPainter;
+        if (p.caretVisible && p.rect.width < 4) bar = p.rect;
+      }
+    }
+    expect(bar, isNotNull, reason: '没有竖条');
+    expect(bar!.height, lessThan(box.height - 1),
+        reason: '竖条高度不能等于整条行带（${bar.height} vs ${box.height}）');
+    expect(bar.top, greaterThanOrEqualTo(box.top - 0.5));
+    expect(bar.bottom, lessThanOrEqualTo(box.bottom + 0.5));
+  });
 }

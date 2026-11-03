@@ -428,7 +428,16 @@ class _MathWithCaretState extends State<MathWithCaret> {
     //   竖条的 y 原来由"光标所在层级"推（`findLocalRowBox`），在空格子里它会落到**相邻行**；
     //   既然格框已经算准，竖条就直接**贴进格框**（同 top、同高）⇒ 光标与框永远重合。
     if (envBox != null && at != null) {
-      bar = Rect.fromLTWH(at.dx, envBox.top, widget.caretWidth, envBox.height);
+      // ★★ 2026-11-03 晚（用户："光标在二三行之间不上不下"）：**别把整条行带当竖条高度**。
+      //   空行没有字形，格框 = 整条行带（19.2px），照抄就上下贴到相邻行的行界
+      //   ⇒ 看起来"跨在两行之间"。改用与其它格子**同一把尺子**（`caretBarRect`：
+      //   行盒内缩 `kCaretInset`）⇒ 高度一致、四周留缝。
+      bar = caretBarRect(
+        at: at,
+        localRowBox: envBox,
+        width: widget.caretWidth,
+        fontSize: widget.fontSize,
+      );
     }
     if (!_samePads(pads, _pads) ||
         _bar != bar ||
