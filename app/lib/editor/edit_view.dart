@@ -1762,6 +1762,12 @@ class EditViewState extends State<EditView> {
         final String text = plan.isEmpty ? raw : applySmartWrap(raw, plan);
         _commitText(text, autoWrapped: plan.runs.length);
         return;
+      case PasteApply.tableLines:
+        // ★★ 2026-11-03（表批 B）：局部表片段粘到**正文** ⇒ 按行落成行内公式
+        //   （载荷已经是 `$…$` 每行一条，不再跑智能包裹）
+        _commitText(d.payload);
+        if (d.note != null) _note(d.note);
+        return;
       case PasteApply.mathTex:
         // 已经是 tex（或用户就是想插文字）⇒ 直接走插入守门人，不包裹
         _commitText(d.payload);

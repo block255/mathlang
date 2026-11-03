@@ -26,10 +26,15 @@ import 'visible_atoms.dart';
 
 /// 一次格子落点的结果：第几行、第几列、落在该格哪一侧。
 class EnvCellHit {
-  const EnvCellHit(this.row, this.col, {required this.atEnd, this.onInk = false});
+  const EnvCellHit(this.row, this.col,
+      {required this.atEnd, this.onInk = false, this.envIx});
 
   final int row;
   final int col;
+
+  /// ★★ 2026-11-03：这一格属于**哪个环境**（那个 `\begin{X}` 的 `\` 源偏移）。
+  /// 一个块里两个环境时，光靠 (row, col) 分不开（探针：两套 `0,0` 撞在一起）。
+  final int? envIx;
 
   /// ★ 点是否落在**这一格有墨迹的内容上**（而不是格子里的空白）。
   /// 用途：点在字与字之间时，调用方要能用**细粒度**命中（落到两个符号之间），
@@ -52,7 +57,7 @@ class EnvCellHit {
 /// 网格（格子矩形 + 行带 + 列带）—— **命中**与**画框**共用同一份几何。
 class EnvGrid {
   EnvGrid(this.cellRect, this.rowBand, this.colBand, this.maxRow, this.maxCol,
-      {this.synthetic = const <int>{}});
+      {this.synthetic = const <int>{}, this.envIx});
 
   /// key = row * 1000 + col
   final Map<int, Rect> cellRect;
@@ -64,6 +69,10 @@ class EnvGrid {
   /// ★ 2026-10-24（D3 续）：这些格子是**补出来的**（原环境里那一格没有墨迹）
   /// ⇒ 框照画，但**不算"点在墨迹上"**（`EnvCellHit.onInk` 的口径不许被它污染）。
   final Set<int> synthetic;
+
+  /// ★★ 2026-11-03：这份网格是**哪个环境**的（\begin{X} 的源偏移）。
+  /// 一个块里两个环境时，两套 (row, col) 会撞，必须按它分开建网格。
+  final int? envIx;
 
   Rect? cell(int r, int c) => cellRect[r * 1000 + c];
 }
@@ -81,6 +90,7 @@ EnvGrid? buildEnvGrid({
   required String tex,
   required bool displayStyle,
   double? fontSize,
+  int? envIx,
 }) {
   final CaretSiteTable t = buildCaretSites(tex);
   // ★★★ 2026-10-19（L20；用户："矩阵/行列式里放进**带子位点的结构**（根号等）⇒
@@ -99,8 +109,14 @@ EnvGrid? buildEnvGrid({
   //   ⇒ 只认**真正的格子槽**：`path` 的**最后一步**同时有 row 和 col。
   //     （嵌套子槽永远不是格子；它的内容已经落在外层格子的区间里。）
   //   ⇒ 判据收进 `SlotSpan.isEnvCell`（只看 path 的**最后一步**，见 caret_sites 里的说明）。
-  final List<SlotSpan> cells =
+  final List<SlotSpan> allCells =
       t.slots.where((SlotSpan s) => s.isEnvCell).toList();
+  if (allCells.isEmpty) return null;
+  // ★★ 2026-11-03：**按环境切** —— 一个块里两个环境时两套 (row, col) 会撞
+  //   （`SlotStep.envIx` 就是为此加的）⇒ 每次只量一个环境。
+  final List<SlotSpan> cells = envIx == null
+      ? allCells
+      : allCells.where((SlotSpan s) => s.path.last.envIx == envIx).toList();
   if (cells.isEmpty) return null;
   final List<LeafBox> boxes = scanLeafBoxes(root).eligible;
   if (boxes.isEmpty) return null;
@@ -184,7 +200,8 @@ EnvGrid? buildEnvGrid({
         synth.add(k);
       }
     }
-    return EnvGrid(cr, bands, cols2, maxRow, maxCol, synthetic: synth);
+    return EnvGrid(cr, bands, cols2, maxRow, maxCol,
+        synthetic: synth, envIx: envIx);
   }
 
   // ② 列带 + 补缺列（先算：行带的左右界也用它）
@@ -334,7 +351,7 @@ EnvGrid? buildEnvGrid({
     }
   }
   return EnvGrid(cellRect, rowBand, colBand, maxRow, maxCol,
-      synthetic: synthetic);
+      synthetic: synthetic, envIx: envIx);
 }
 
 /// 一次"格子垫归位"的计划（见 [_envFillPlan]）。
@@ -540,6 +557,9 @@ double _medianOf(List<double> xs) {
 }
 
 /// 命中某个格子；`null` = 这次点击不该按"格子"处理。
+///
+/// ★★ 2026-11-03（双环境）：一个块里可能有**多个环境**（矩阵接行列式）。它们的
+/// `(row, col)` 会撞，所以先按**几何**认出点的是哪个环境，再用那个环境的网格判格子。
 EnvCellHit? envCellHitAt({
   required RenderObject root,
   required Offset localPos,
@@ -547,9 +567,128 @@ EnvCellHit? envCellHitAt({
   required bool displayStyle,
   double? fontSize,
 }) {
-  final EnvGrid? g = buildEnvGrid(
-      root: root, tex: tex, displayStyle: displayStyle, fontSize: fontSize);
+  final EnvGrid? g = envGridNearest(
+    root: root,
+    tex: tex,
+    displayStyle: displayStyle,
+    fontSize: fontSize,
+    localPos: localPos,
+  );
   return g == null ? null : envCellHitIn(g, localPos);
+}
+
+/// 点右侧空白：命中"点所在行带那一行的**最后一格**"；量不到 ⇒ null。
+///
+/// ★ 2026-11-03：多环境时选**离点最近**的那个环境（原来是把两个环境的网格混着用，
+///   于是点第二个环境右边会落回第一个环境那一行）。
+/// ★ 返回的是**格子命中**（`envIx` 是序号、跨源/渲染稳定），换源空间偏移由调用方做：
+///   这里传进来的 [tex] 往往是**渲染 tex**（带注入垫子），直接量出偏移会错位。
+EnvCellHit? envRowEndAt({
+  required RenderObject root,
+  required String tex,
+  required bool displayStyle,
+  required Offset localPos,
+  double? fontSize,
+}) {
+  final EnvGrid? g = envGridNearest(
+    root: root,
+    tex: tex,
+    displayStyle: displayStyle,
+    fontSize: fontSize,
+    localPos: localPos,
+  );
+  if (g == null) return null;
+  for (var r = 0; r <= g.maxRow; r++) {
+    final Rect? band = g.rowBand[r];
+    if (band == null) continue;
+    if (localPos.dy < band.top || localPos.dy > band.bottom) continue;
+    return EnvCellHit(r, g.maxCol, atEnd: true, envIx: g.envIx);
+  }
+  return null;
+}
+
+/// tex 里出现过哪些环境（`\begin{X}` 的源偏移，按位置排序）。
+List<int> envIdsIn(String tex) {
+  final Set<int> ids = <int>{};
+  for (final SlotSpan s in buildCaretSites(tex).slots) {
+    if (!s.isEnvCell) continue;
+    final int? id = s.path.last.envIx;
+    if (id != null) ids.add(id);
+  }
+  return ids.toList()..sort();
+}
+
+/// 偏移 [offset] 落在哪个环境里（用格子槽判，取最内层那个）；不在 ⇒ null。
+int? envIxOf(String tex, int offset) {
+  int? best;
+  var bestLen = -1;
+  for (final SlotSpan s in buildCaretSites(tex).slots) {
+    if (!s.isEnvCell) continue;
+    final int? id = s.path.last.envIx;
+    if (id == null) continue;
+    if (offset < s.start || offset > s.end) continue;
+    final int len = s.end - s.start;
+    if (best == null || bestLen < 0 || len < bestLen) {
+      best = id;
+      bestLen = len;
+    }
+  }
+  return best;
+}
+
+/// 环境网格的**外接盒**（只由格子矩形并出来，供"点的是哪个环境"用）。
+Rect? envInkBox(EnvGrid g) {
+  Rect? r;
+  for (final Rect x in g.cellRect.values) {
+    r = r == null ? x : r.expandToInclude(x);
+  }
+  return r;
+}
+
+/// 选出**离 [localPos] 最近**（含包含关系）的环境网格。
+EnvGrid? envGridNearest({
+  required RenderObject root,
+  required String tex,
+  required bool displayStyle,
+  required Offset localPos,
+  double? fontSize,
+}) {
+  final List<int> ids = envIdsIn(tex);
+  if (ids.isEmpty) {
+    return buildEnvGrid(
+        root: root, tex: tex, displayStyle: displayStyle, fontSize: fontSize);
+  }
+  if (ids.length == 1) {
+    return buildEnvGrid(
+        root: root,
+        tex: tex,
+        displayStyle: displayStyle,
+        fontSize: fontSize,
+        envIx: ids.first);
+  }
+  EnvGrid? best;
+  var bestD = double.infinity;
+  EnvGrid? firstAny;
+  for (final int id in ids) {
+    final EnvGrid? g = buildEnvGrid(
+        root: root,
+        tex: tex,
+        displayStyle: displayStyle,
+        fontSize: fontSize,
+        envIx: id);
+    if (g == null) continue;
+    firstAny ??= g;
+    final Rect? box = envInkBox(g);
+    if (box == null) continue;
+    final double d = localPos.dx < box.left
+        ? box.left - localPos.dx
+        : (localPos.dx > box.right ? localPos.dx - box.right : 0);
+    if (d < bestD) {
+      bestD = d;
+      best = g;
+    }
+  }
+  return best ?? firstAny;
 }
 
 /// 已经在网格上的命中（省一次重建：画框与命中走**同一份**几何）。
@@ -595,7 +734,7 @@ EnvCellHit? envCellHitIn(EnvGrid g, Offset localPos) {
   final bool onInk = cell != null &&
       !g.synthetic.contains(row * 1000 + col) &&
       cell.inflate(2).contains(localPos);
-  return EnvCellHit(row, col, atEnd: atEnd, onInk: onInk);
+  return EnvCellHit(row, col, atEnd: atEnd, onInk: onInk, envIx: g.envIx);
 }
 
 /// 第 (row, col) 格的矩形（给"画占位框"用）；没有 ⇒ null。
@@ -606,9 +745,14 @@ Rect? envCellRectAt({
   required int row,
   required int col,
   double? fontSize,
+  int? envIx,
 }) {
   final EnvGrid? g = buildEnvGrid(
-      root: root, tex: tex, displayStyle: displayStyle, fontSize: fontSize);
+      root: root,
+      tex: tex,
+      displayStyle: displayStyle,
+      fontSize: fontSize,
+      envIx: envIx);
   return g?.cell(row, col);
 }
 /// 把格子坐标换成**源空间**偏移（用于点击落点）。
@@ -628,6 +772,8 @@ int? envCellOffset(String sourceTex, EnvCellHit hit) {
     if (s.path.isEmpty) continue;
     final SlotStep st = s.path.last;
     if (st.row != hit.row || st.col != hit.col) continue;
+    // ★★ 2026-11-03：**必须同一个环境**——两个环境的 (row, col) 会撞。
+    if (hit.envIx != null && st.envIx != hit.envIx) continue;
     if (best == null || (s.end - s.start) > (best.end - best.start)) best = s;
   }
   if (best == null) return null;
@@ -696,9 +842,14 @@ Rect? envCellBoxAt({
   required int row,
   required int col,
   double? fontSize,
+  int? envIx,
 }) {
   final EnvGrid? g = buildEnvGrid(
-      root: root, tex: tex, displayStyle: displayStyle, fontSize: fontSize);
+      root: root,
+      tex: tex,
+      displayStyle: displayStyle,
+      fontSize: fontSize,
+      envIx: envIx);
   return g == null ? null : envCellBoxIn(g, row, col);
 }
 

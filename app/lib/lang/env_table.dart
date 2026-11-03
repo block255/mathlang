@@ -45,8 +45,13 @@ const Set<String> kRowEnvs = <String>{
 /// 一行里的一个格：`[start, end)` 是**内容**区间（不含 `&` / `\\`，含两侧空白）。
 typedef EnvCell = ({int start, int end});
 
-/// 一个矩形选区覆盖的格范围（含两端）。
-typedef CellRect = ({int r0, int c0, int r1, int c1});
+/// 选区覆盖的格：**从首格沿流到末格**（含两端，**不是外接矩形**）。
+///
+/// `(r0, c0)` = 第一个被碰到的格；`(r1, c1)` = 最后一个。
+/// 覆盖范围 = 行 `r0` 的 `c0..行尾` ＋ 中间整行 ＋ 行 `r1` 的 `0..c1`。
+/// ★ 2026-11-03（用户更正）：拖选是**线性**的，屏幕上高亮的就是这条带 ——
+///   3×3 里从 `b` 拖到 `e`，外接矩形会把没高亮的 `a`、`f` 也带走。
+typedef CellSpan = ({int r0, int c0, int r1, int c1});
 
 /// 一次"删格"的结果：把 `[from, to)` 换成 [replacement]（格内容清空、分隔符保留）。
 class CellClear {
@@ -162,63 +167,68 @@ EnvTable? envTableForRange(String tex, int s, int e) {
   return best;
 }
 
-/// 覆盖 `[s, e)` 的**整格矩形**（端点落在分隔符/空白上也算相邻格）。
+/// 覆盖 `[s, e)` 的格：**从首格沿流到末格**（不是外接矩形）。
+///
+/// ★★ 2026-11-03（用户更正）：**拖选是线性的**——屏幕上高亮的就是这条带。
+///   3×3 里从 `b` 拖到 `e`，碰到的格是 `b c` + `d e`；外接矩形会把没高亮的
+///   `a`、`f` 也带走（违反「粘贴结果 = 高亮那段」）。
+/// ⇒ `(r0,c0)` 取**第一个**碰到的格、`(r1,c1)` 取**最后一个**，覆盖范围 = 那条带。
 ///
 /// 零长格（`a & ` 里 `&` 后面那个空格）用**闭区间**判触碰，否则"选到行尾"会漏掉空格。
-CellRect? cellsCovering(EnvTable t, int s, int e) {
-  int? r0, r1, c0, c1;
+CellSpan? cellsSpanning(EnvTable t, int s, int e) {
+  ({int r, int c})? first;
+  ({int r, int c})? last;
   for (var r = 0; r < t.rows.length; r++) {
     for (var c = 0; c < t.rows[r].length; c++) {
       final EnvCell cell = t.rows[r][c];
       if (cell.end < s || cell.start > e) continue;
-      r0 = (r0 == null || r < r0) ? r : r0;
-      r1 = (r1 == null || r > r1) ? r : r1;
-      c0 = (c0 == null || c < c0) ? c : c0;
-      c1 = (c1 == null || c > c1) ? c : c1;
+      first ??= (r: r, c: c);
+      last = (r: r, c: c);
     }
   }
-  if (r0 == null) {
+  if (first == null) {
     // 选区只压在分隔符上（`&` 本身）⇒ 归**最近的那一格**
     final ({int r, int c})? near = _nearestCell(t, s);
     if (near == null) return null;
     return (r0: near.r, c0: near.c, r1: near.r, c1: near.c);
   }
-  return (r0: r0, c0: c0!, r1: r1!, c1: c1!);
+  return (r0: first.r, c0: first.c, r1: last!.r, c1: last.c);
 }
 
-/// 矩形是不是**把整张表都盖住了**（⇒ 按整表处理：保留原类型 / 连壳删）。
-bool coversAllCells(EnvTable t, CellRect rect) {
-  if (rect.r0 != 0 || rect.r1 != t.rows.length - 1) return false;
-  for (final List<EnvCell> row in t.rows) {
-    for (var c = 0; c < row.length; c++) {
-      if (c < rect.c0 || c > rect.c1) return false;
-    }
-  }
-  return true;
+/// 这条带是不是**把整张表都盖住了**（⇒ 按整表处理：保留原类型 / 连壳删）。
+bool coversAllCells(EnvTable t, CellSpan span) {
+  if (span.r0 != 0 || span.c0 != 0) return false;
+  if (span.r1 != t.rows.length - 1) return false;
+  // 首行从 0 起、末行盖上它的最后一格 ⇒ 中间各行整行都在范围内
+  return span.c1 >= t.rows.last.length - 1;
 }
 
-/// 矩形里**实际存在**的格（行优先；参差行缺的格不算）。
-List<EnvCell> cellsIn(EnvTable t, CellRect rect) {
+/// 这条带里**实际存在**的格（行优先；参差行缺的格不算）。
+List<EnvCell> cellsIn(EnvTable t, CellSpan span) {
   final List<EnvCell> out = <EnvCell>[];
-  for (var r = rect.r0; r <= rect.r1 && r < t.rows.length; r++) {
-    for (var c = rect.c0; c <= rect.c1 && c < t.rows[r].length; c++) {
-      out.add(t.rows[r][c]);
+  for (var r = span.r0; r <= span.r1 && r < t.rows.length; r++) {
+    final List<EnvCell> row = t.rows[r];
+    final int a = r == span.r0 ? span.c0 : 0;
+    final int b = r == span.r1 ? span.c1 : row.length - 1;
+    for (var c = a; c <= b && c < row.length; c++) {
+      out.add(row[c]);
     }
   }
   return out;
 }
 
-/// 矩形作为**剪贴板载荷**的 tex（带壳，不含 `$`）。
+/// 这条带作为**剪贴板载荷**的 tex（带壳，不含 `$`）。
 ///
 /// · 整表 ⇒ 原样（保留原类型，`vmatrix` 还是 `vmatrix`）；
 /// · 局部表 ⇒ 中性 `bmatrix`（行列式不能带源类型：局部块不是方阵）；
+///   每行只带**这一带**的格 ⇒ 可能**参差**（`b&c` 与 `d`），粘贴时再补空；
 /// · 行单位（`cases` / `aligned`）⇒ **整行**，壳沿用原类型。
-String cellsPayload(EnvTable t, String tex, CellRect rect) {
-  if (coversAllCells(t, rect)) return t.textOf(tex);
+String cellsPayload(EnvTable t, String tex, CellSpan span) {
+  if (coversAllCells(t, span)) return t.textOf(tex);
 
   if (t.kind == EnvKind.rows) {
     final List<String> lines = <String>[];
-    for (var r = rect.r0; r <= rect.r1 && r < t.rows.length; r++) {
+    for (var r = span.r0; r <= span.r1 && r < t.rows.length; r++) {
       final List<EnvCell> row = t.rows[r];
       if (row.isEmpty) {
         lines.add('');
@@ -231,25 +241,28 @@ String cellsPayload(EnvTable t, String tex, CellRect rect) {
 
   final StringBuffer sb = StringBuffer();
   sb.write(r'\begin{bmatrix}');
-  for (var r = rect.r0; r <= rect.r1 && r < t.rows.length; r++) {
-    if (r > rect.r0) sb.write(r'\\');
-    for (var c = rect.c0; c <= rect.c1; c++) {
-      if (c > rect.c0) sb.write('&');
-      if (c < t.rows[r].length) {
-        sb.write(tex.substring(t.rows[r][c].start, t.rows[r][c].end).trim());
-      }
+  for (var r = span.r0; r <= span.r1 && r < t.rows.length; r++) {
+    if (r > span.r0) sb.write(r'\\');
+    final List<EnvCell> row = t.rows[r];
+    final int a = r == span.r0 ? span.c0 : 0;
+    final int b = r == span.r1 ? span.c1 : row.length - 1;
+    var firstCol = true;
+    for (var c = a; c <= b && c < row.length; c++) {
+      if (!firstCol) sb.write('&');
+      firstCol = false;
+      sb.write(tex.substring(row[c].start, row[c].end).trim());
     }
   }
   sb.write(r'\end{bmatrix}');
   return sb.toString();
 }
 
-/// 删格：**清空**矩形里每一格的内容，`&` / `\\` 与壳都保留。
+/// 删格：**清空**这条带里每一格的内容，`&` / `\\` 与壳都保留。
 ///
 /// 返回一次替换（`[from, to)` → [CellClear.replacement]）——压成一次 `replace`，
-/// 所以是**一步撤销**。矩形之外的内容原样保留（包括右侧没被选中的格）。
-CellClear? cellClearPlan(EnvTable t, String tex, CellRect rect) {
-  final List<EnvCell> cells = cellsIn(t, rect);
+/// 所以是**一步撤销**。带之外的内容原样保留（包括右侧没被选中的格）。
+CellClear? cellClearPlan(EnvTable t, String tex, CellSpan span) {
+  final List<EnvCell> cells = cellsIn(t, span);
   if (cells.isEmpty) return null;
   final int from = cells.first.start;
   final int to = cells.last.end;
@@ -264,7 +277,7 @@ CellClear? cellClearPlan(EnvTable t, String tex, CellRect rect) {
     from: from,
     to: to,
     replacement: sb.toString(),
-    payload: cellsPayload(t, tex, rect),
+    payload: cellsPayload(t, tex, span),
   );
 }
 

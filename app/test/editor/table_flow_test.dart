@@ -15,12 +15,12 @@ import '../support/symbol_fixture.dart';
 
 const String _doc = '\$\$\n\\begin{pmatrix}a&b\\\\c&d\\end{pmatrix}\n\$\$';
 
-Future<DocBuffer> _pump(WidgetTester tester) async {
+Future<DocBuffer> _pump(WidgetTester tester, {String doc = _doc}) async {
   tester.view.physicalSize = const Size(1400, 1000);
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
-  final DocBuffer buf = DocBuffer(_doc)..setCaret(0);
+  final DocBuffer buf = DocBuffer(doc)..setCaret(0);
   await tester.pumpWidget(MaterialApp(
     home: EditorPage(
       library: testSymbolLibrary(),
@@ -126,5 +126,17 @@ void main() {
     expect(buf.buf.trimRight(), before.trimRight(),
         reason: '撤销必须一步回到原样：'
             '「${buf.buf.replaceAll('\n', '⏎')}」 vs 「${before.replaceAll('\n', '⏎')}」');
+  });
+
+  testWidgets('局部片段粘到正文 ⇒ 按行落成行内公式（不再造矩阵）',
+      (WidgetTester tester) async {
+    final DocBuffer buf = await _pump(tester, doc: '开头\n\n$_doc\n\n后文');
+    buf.setCaret(buf.buf.length); // 文末 = 正文
+    await tester.pumpAndSettle();
+    final EditViewState state = tester.state<EditViewState>(find.byType(EditView));
+    state.pasteText(r'$\begin{bmatrix}a&b\end{bmatrix}$');
+    await tester.pumpAndSettle();
+    expect(buf.buf, contains(r'$a\ b$'), reason: buf.buf);
+    expect(buf.buf, isNot(contains(r'\begin{bmatrix}')), reason: buf.buf);
   });
 }

@@ -65,6 +65,21 @@ void main() {
     });
   });
 
+  group('★ 带：跨行只清高亮那一带', () {
+    test('b→e ⇒ 清 `b c d e`，`a`、`f` 一个字都不许动', () {
+      const String doc =
+          '\$\$\n\\begin{bmatrix}a&b&c\\\\d&e&f\\end{bmatrix}\n\$\$';
+      final int s = cellPos(doc, 'b');
+      final int e = cellPos(doc, 'e') + 1;
+      final DeletePlan p = planDelete(doc, s, e);
+      expect(_apply(doc, p),
+          '\$\$\n\\begin{bmatrix}a&&\\\\&&f\\end{bmatrix}\n\$\$',
+          reason: _apply(doc, p));
+      expect(p.clipboardText, r'$\begin{bmatrix}b&c\\d&e\end{bmatrix}$',
+          reason: p.clipboardText);
+    });
+  });
+
   group('行单位', () {
     test('cases 清前两行 ⇒ 空行留下（`\\\\` 保留）', () {
       final int s = cellPos(_cases, 'a');

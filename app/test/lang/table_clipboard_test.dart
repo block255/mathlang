@@ -80,12 +80,13 @@ void main() {
       expect(sl.text, r'$\begin{bmatrix}b&c\end{bmatrix}$', reason: sl.text);
     });
 
-    test('横跨两行 ⇒ 行带（拖选会经过行首，所以整行宽度都算）', () {
+    test('横跨两行 ⇒ **高亮那一带**（不碰没选中的 `a`、`f`）', () {
+      // ★ 2026-11-03 用户更正：拖选是线性的 ⇒ 高亮 = b,c + d,e；外接矩形会多拿 a、f。
       const String doc = '\$\$\n\\begin{bmatrix}a&b&c\\\\d&e&f\\end{bmatrix}\n\$\$';
       final int s = cellPos(doc, 'b');
       final int e = cellPos(doc, 'e') + 1;
       final ClipboardSlice sl = clipboardSlice(doc, s, e);
-      expect(sl.text, r'$\begin{bmatrix}a&b&c\\d&e&f\end{bmatrix}$',
+      expect(sl.text, r'$\begin{bmatrix}b&c\\d&e\end{bmatrix}$',
           reason: sl.text);
     });
   });

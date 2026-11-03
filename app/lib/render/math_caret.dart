@@ -355,11 +355,12 @@ class _MathWithCaretState extends State<MathWithCaret> {
       final bool display = widget.mathStyle == MathStyle.display;
       // ★★ 2026-10-19（L19）：**一次建网格**，命中与画框走同一份几何
       //   （以前这里各建一次 ⇒ 每帧两遍叶盒扫描 + 两遍配对；也保证两者不会各判一套）。
-      final EnvGrid? grid = buildEnvGrid(
+      final EnvGrid? grid = envGridNearest(
           root: root,
           tex: widget.tex,
           displayStyle: display,
-          fontSize: widget.fontSize);
+          fontSize: widget.fontSize,
+          localPos: at);
       final EnvCellHit? cell = grid == null ? null : envCellHitIn(grid, at);
       if (grid != null && cell != null) {
         final Rect? box = envCellBoxIn(grid, cell.row, cell.col);

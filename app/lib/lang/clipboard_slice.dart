@@ -137,7 +137,7 @@ String? _tablePayload(MathSpan sp, int s, int e, int contentStart) {
   final int le = e - contentStart;
   final EnvTable? t = envTableForRange(sp.tex, ls, le);
   if (t == null) return null;
-  final CellRect? rect = cellsCovering(t, ls, le);
+  final CellSpan? rect = cellsSpanning(t, ls, le);
   if (rect == null) return null;
   if (rect.r0 == rect.r1 && rect.c0 == rect.c1) return null;
   return cellsPayload(t, sp.tex, rect);

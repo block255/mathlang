@@ -78,26 +78,26 @@ void main() {
     });
   });
 
-  group('选区 → 矩形', () {
-    test('横跨两行（中间那格也算，拖选绕不过去）⇒ 2×2 矩形', () {
+  group('选区 → 带（沿流，不是外接矩形）', () {
+    test('a→c（跨两行）⇒ 带 = (0,0)..(1,0)，不是 2×2 外接矩形', () {
       final EnvTable t = envTablesIn(_pm).single;
       final int s = cellPos(_pm, 'a');
       final int e = cellPos(_pm, 'c') + 1;
-      final CellRect r = cellsCovering(t, s, e)!;
-      expect(r, (r0: 0, c0: 0, r1: 1, c1: 1));
+      final CellSpan r = cellsSpanning(t, s, e)!;
+      expect(r, (r0: 0, c0: 0, r1: 1, c1: 0));
     });
 
-    test('压在一格中间：单格矩形', () {
+    test('压在一格中间：单格', () {
       final EnvTable t = envTablesIn(_pm).single;
       final int s = cellPos(_pm, 'd');
-      final CellRect r = cellsCovering(t, s, s + 1)!;
+      final CellSpan r = cellsSpanning(t, s, s + 1)!;
       expect(r, (r0: 1, c0: 1, r1: 1, c1: 1));
     });
 
     test('压到分隔符上：归最近一格', () {
       final EnvTable t = envTablesIn(_pm).single;
       final int amp = _pm.indexOf('&');
-      final CellRect r = cellsCovering(t, amp, amp + 1)!;
+      final CellSpan r = cellsSpanning(t, amp, amp + 1)!;
       expect(r.r0, 0);
     });
 
@@ -162,14 +162,15 @@ void main() {
       );
     });
 
-    test('参差行补空：矩形里缺的格写成空', () {
+    test('高亮那一带可能**参差**（复制不补空；补空留给粘贴）', () {
       const String tex = r'\begin{bmatrix}a&b&c\\d\end{bmatrix}';
       final EnvTable t = envTablesIn(tex).single;
+      // b→d：行 0 带 b,c；行 1 带 d ⇒ 两行格数不同（3×3 里 b→e 是 2+2，不参差）
       expect(
-        cellsPayload(t, tex, (r0: 0, c0: 0, r1: 1, c1: 1)),
-        r'\begin{bmatrix}a&b\\d&\end{bmatrix}',
+        cellsPayload(t, tex, (r0: 0, c0: 1, r1: 1, c1: 0)),
+        r'\begin{bmatrix}b&c\\d\end{bmatrix}',
       );
-      // 盖住所有**存在**的格 ⇒ 就算整表（参差行不补空，原样带走）
+      // 盖住所有**存在**的格 ⇒ 就算整表（原样带走）
       expect(
         cellsPayload(t, tex, (r0: 0, c0: 0, r1: 1, c1: 2)),
         tex,
@@ -194,13 +195,22 @@ void main() {
       expect(c.payload, r'\begin{bmatrix}c\end{bmatrix}');
     });
 
-    test('清中间一列：左边的格与右边的格都不许动', () {
+    test('单行清中间一格：左右两格都不许动', () {
+      const String tex = r'\begin{bmatrix}a&b&c\\d&e&f\end{bmatrix}';
+      final EnvTable t = envTablesIn(tex).single;
+      final CellClear c = cellClearPlan(t, tex, (r0: 0, c0: 1, r1: 0, c1: 1))!;
+      final String after = tex.replaceRange(c.from, c.to, c.replacement);
+      expect(after, r'\begin{bmatrix}a&&c\\d&e&f\end{bmatrix}');
+      expect(c.payload, r'\begin{bmatrix}b\end{bmatrix}');
+    });
+
+    test('跨行清一条带 ⇒ 只清带里的格（行 0 尾巴 + 行 1 开头）', () {
       const String tex = r'\begin{bmatrix}a&b&c\\d&e&f\end{bmatrix}';
       final EnvTable t = envTablesIn(tex).single;
       final CellClear c = cellClearPlan(t, tex, (r0: 0, c0: 1, r1: 1, c1: 1))!;
       final String after = tex.replaceRange(c.from, c.to, c.replacement);
-      expect(after, r'\begin{bmatrix}a&&c\\d&&f\end{bmatrix}');
-      expect(c.payload, r'\begin{bmatrix}b\\e\end{bmatrix}');
+      expect(after, r'\begin{bmatrix}a&&\\&&f\end{bmatrix}');
+      expect(c.payload, r'\begin{bmatrix}b&c\\d&e\end{bmatrix}');
     });
   });
 }

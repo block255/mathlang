@@ -78,7 +78,7 @@ DeletePlan planDelete(String doc, int from, int to) {
       //   单格不在此列（照旧删选中的那几个字符）。
       final EnvTable? tbl = envTableForRange(sp.tex, ms - cs, me - cs);
       if (tbl != null) {
-        final CellRect? rect = cellsCovering(tbl, ms - cs, me - cs);
+        final CellSpan? rect = cellsSpanning(tbl, ms - cs, me - cs);
         if (rect != null) {
           if (coversAllCells(tbl, rect)) {
             ms = cs + tbl.beginStart;

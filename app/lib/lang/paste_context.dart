@@ -22,6 +22,7 @@
 //   ⇒ 现在只有**落单**的 `$`（配不成对）才推出去，而且落点必须是**块所在行的下一行行首**。
 
 import '../render/math_nav.dart';
+import 'env_table.dart';
 import 'math_spans.dart';
 
 /// 粘贴该怎么落地
@@ -40,6 +41,11 @@ enum PasteApply {
 
   /// 载荷是"文字 + 公式"混合，塞不进公式里：**推到公式之后**再按文字插入
   pushOut,
+
+  /// 载荷是**局部表片段**（我们补的中性 `bmatrix`）、落点在**正文**：
+  /// **按行落成行内公式**（`&` → 空格），不再就地造一个矩阵。
+  /// ★ 2026-11-03（用户拍板）：片段往往不是想要的矩阵形状，正文里没有第三个用处。
+  tableLines,
 }
 
 class PasteDecision {
@@ -91,6 +97,17 @@ PasteDecision decidePaste({
   final MathRegion? r = mathRegionAt(doc, probe);
   // 目标不在数学里 ⇒ 原样走老路（智能包裹 + 插入）
   if (r == null) {
+    // ★★ 2026-11-03（表批 B · 用户拍板）：**局部表片段**粘到正文 ⇒ 按行落成行内公式。
+    //   理由：拖选是线性的，片段常常不是用户想要的矩阵形状；在正文里"造一个新矩阵"
+    //   大概率不是他要的东西，而且正文里也没有必要。
+    final List<String>? lines = _tableRowsText(payload);
+    if (lines != null) {
+      return PasteDecision(
+        apply: PasteApply.tableLines,
+        payload: lines.join('\n'),
+        note: '表格片段已按行落成文字（${lines.length} 行）',
+      );
+    }
     return PasteDecision(apply: PasteApply.asIs, payload: payload);
   }
 
@@ -238,4 +255,31 @@ String? _stripOnePiece(String s) {
     return null;
   }
   return null;
+}
+
+/// **局部表片段**（载荷是我们补的中性 `bmatrix`）⇒ 按行拆成行内公式；不是 ⇒ null。
+///
+/// ★ 只认 `bmatrix`：整表复制会**保留原类型**（`pmatrix` / `vmatrix` / …），
+///   所以"中性壳"正好是"局部片段"的标记。
+///   **已知取舍**：源本来就是 `bmatrix` 的整表，复制出来也是 `bmatrix`
+///   ⇒ 粘到正文时会按行落（而不是变成一个矩阵）。
+List<String>? _tableRowsText(String payload) {
+  final String? tex = _stripOnePiece(payload) ?? _stripFences(payload);
+  if (tex == null) return null;
+  final String s = tex.trim();
+  final List<EnvTable> tables = envTablesIn(s);
+  if (tables.isEmpty) return null;
+  final EnvTable t = tables.first;
+  if (t.name != 'bmatrix') return null;
+  if (!s.contains('&') && !s.contains(r'\\')) return null;
+  final List<String> lines = <String>[];
+  for (final List<EnvCell> row in t.rows) {
+    final List<String> cells = <String>[
+      for (final EnvCell c in row) s.substring(c.start, c.end).trim(),
+    ];
+    final String body = cells.where((String x) => x.isNotEmpty).join(r'\ ');
+    if (body.isEmpty) continue;
+    lines.add('\$$body\$');
+  }
+  return lines.isEmpty ? null : lines;
 }

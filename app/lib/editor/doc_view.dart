@@ -1087,20 +1087,18 @@ class DocViewState extends State<DocView> {
       //   （= 该行最后一格的内容末尾，**不是**块末尾 —— 末行的行末在 `\end{…}` 之前）；行带之外才落块末尾。
       if (localPos.dx > root.size.width + 2) {
         if (hasEnv(tex)) {
-          final EnvGrid? grid = buildEnvGrid(
+          // ★ 2026-11-03：多环境时由 `envRowEndAt` 自己选**离点最近**的环境
+          //   （原来把两个环境的网格混着用 ⇒ 点第二个环境右边会落回第一个那一行）。
+          //   ★ 网格量的是**渲染 tex**，换成源偏移必须回到源 `tex` 上做。
+          final EnvCellHit? rowHit = envRowEndAt(
               root: root,
               tex: renderTex,
               displayStyle: displayStyle,
+              localPos: localPos,
               fontSize: fontSize ?? 20);
-          if (grid != null) {
-            for (var r = 0; r <= grid.maxRow; r++) {
-              final Rect? band = grid.rowBand[r];
-              if (band == null) continue;
-              if (localPos.dy < band.top || localPos.dy > band.bottom) continue;
-              final int? rowEnd =
-                  envCellOffset(tex, EnvCellHit(r, grid.maxCol, atEnd: true));
-              if (rowEnd != null) return rowEnd;
-            }
+          if (rowHit != null) {
+            final int? rowEnd = envCellOffset(tex, rowHit);
+            if (rowEnd != null) return rowEnd;
           }
         }
         return tex.length;

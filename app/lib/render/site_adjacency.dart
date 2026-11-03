@@ -55,6 +55,8 @@ List<SlotSpan> siblingSlots(CaretSiteTable t, List<SlotStep> path) {
           s.path.last.command == me.command &&
           s.path.last.row == me.row &&
           s.path.last.col == me.col &&
+          // ★★ 2026-11-03：两个环境的 (row, col) 会撞 ⇒ 必须同一环境。
+          s.path.last.envIx == me.envIx &&
           _samePath(s.path.sublist(0, s.path.length - 1), parent))
         s,
   ];

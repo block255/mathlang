@@ -23,7 +23,7 @@ import 'visible_atoms.dart';
 /// 槽路径上的一步：`\frac` 的第 0 个参数 = `SlotStep('frac', 0)`。
 /// 上标 / 下标 / `\sqrt` 的可选参数用特殊 `argIndex`；多行环境带行列。
 class SlotStep {
-  const SlotStep(this.command, this.argIndex, {this.row, this.col});
+  const SlotStep(this.command, this.argIndex, {this.row, this.col, this.envIx});
 
   final String command;
 
@@ -33,6 +33,13 @@ class SlotStep {
   /// 多行环境才有：第几行 / 第几列（0-based）
   final int? row;
   final int? col;
+
+  /// ★★ 2026-11-03：这个格**属于哪个环境** —— 那个 `\begin{X}` 的 `\` 源偏移。
+  ///
+  /// 没有它，一个公式块里放**两个环境**（矩阵乘行列式、`cases` 套 `matrix`）时，
+  /// 两个环境的 (row, col) 全撞在一起（探针：`0,0` 一次属于 pmatrix 一次属于 vmatrix）
+  /// ⇒ 点第二个环境落回第一个。见 `notes/handover/20261102-选择边界与剪贴板.md`（双环境）。
+  final int? envIx;
 
   String get label => row == null
       ? '$command${argIndex < 0 ? "[opt]" : "#$argIndex"}'
@@ -793,6 +800,11 @@ class _Parser {
   String? _degradeReason;
   final List<_Region> _slots = <_Region>[];
 
+  /// ★★ 2026-11-03：多行环境的**序号**（按 `\begin` 出现顺序 0,1,2…）。
+  /// 一个块里两个环境时，(row, col) 会撞，靠它分开；而且序号在源 tex 与渲染 tex
+  /// 之间**稳定**（注入垫子只挪偏移，不增删环境）。
+  int _envSeq = 0;
+
   /// 所有"粘合处"的偏移（见 [CaretSite.glue]）
   final Set<int> _glueOffsets = <int>{};
 
@@ -1229,6 +1241,9 @@ class _Parser {
     _i++; // 吃掉 begin
     final String envName = _readGroupName();
     final String label = envName.isEmpty ? 'env' : envName;
+    // ★★ 2026-11-03：环境的**序号**（不是源偏移）——源 tex 与渲染 tex 的偏移不一样
+    //   （注入垫子会移动后面的字符），序号才稳定，`envCellOffset` 拿它跨两者对得上。
+    final int envIx = _envSeq++;
     final List<_Region> cells = <_Region>[];
     var row = 0;
     var col = 0;
@@ -1245,7 +1260,7 @@ class _Parser {
       final _Region r = _Region(
         cellStart,
         cellEnd,
-        <SlotStep>[SlotStep(label, 0, row: row, col: col)],
+        <SlotStep>[SlotStep(label, 0, row: row, col: col, envIx: envIx)],
         items,
         isSlot: true,
       );
