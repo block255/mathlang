@@ -1246,18 +1246,21 @@ class EditViewState extends State<EditView> {
         return KeyEventResult.handled;
       }
       if (k == LogicalKeyboardKey.keyX) {
-        // ★★ 2026-11-02（选择边界批 · 定稿 §3.4）：**剪切 = 删什么就复制什么**。
-        //   先按"删除"的判据算出真正要删的区间，再把**这段区间**的文本放进剪贴板。
-        //   否则会出现"复制 `a`、删除 `a^2`"——用户静默丢掉 `^2`。
-        var range = planDeleteRange(_buf.buf, _buf.selectionStart, _buf.selectionEnd);
+        // ★★ 2026-11-03（围栏不参与选区 · §7.3）：**剪切 = 删什么就复制什么**。
+        //   先按"删除"的判据规划一次替换（`$` 留下、可见字符删掉），
+        //   再把**实际删掉的那段可见内容**（数学 run 包 `$`）放进剪贴板。
+        var s = _buf.selectionStart;
+        var e = _buf.selectionEnd;
         final ({int start, int end})? packed =
-            expandPackedBaseInDoc(_buf.buf, range.start, range.end);
-        if (packed != null) range = packed;
-        final String text =
-            clipboardTextForRange(_buf.buf, range.start, range.end);
-        if (text.isNotEmpty) {
-          Clipboard.setData(ClipboardData(text: text));
-          _deleteRange(range.start, range.end, planned: true);
+            expandPackedBaseInDoc(_buf.buf, s, e);
+        if (packed != null) {
+          s = packed.start;
+          e = packed.end;
+        }
+        final DeletePlan p = planDelete(_buf.buf, s, e);
+        if (p.clipboardText.isNotEmpty) {
+          Clipboard.setData(ClipboardData(text: p.clipboardText));
+          _deleteRange(s, e, plan: p);
         }
         return KeyEventResult.handled;
       }
@@ -1427,37 +1430,36 @@ class EditViewState extends State<EditView> {
   /// 显式打断分组（插入模板 / 粘贴 / 整段删之后调用）
   void _breakUndoGroup() => _lastEdit = null;
 
-  /// 删一个区间（内部走「删空数学段 ⇒ 连定界符」那条判据）—— 选区删除 / 剪切共用。
+  /// 删一个区间 —— 选区删除 / 剪切共用。
   ///
-  /// [planned]：区间已经由 `planDeleteRange` 算好（**剪切**用，保证"删什么就复制什么"）。
-  void _deleteRange(int from, int to, {bool planned = false}) {
+  /// [plan]：已经由 `planDelete` 算好（**剪切**用，保证"删什么就复制什么"）。
+  void _deleteRange(int from, int to, {DeletePlan? plan}) {
     _breakUndoGroup(); // 选区删除/剪切独占一步
-    // ★★★ 2026-10-24（用户实测"拖选删掉已有分段 ⇒ 显示公式不完整"）：
-    //   选区跨进数学段却只删了一半 ⇒ `\begin{cases}` 留一半、`\end{cases}` 被删掉
-    //   ⇒ 引擎解析失败 ⇒ 页面上红字 `[公式不完整]`。
-    // ★★ 2026-11-02（选择边界批 · 定稿 §3.3）：删除的判据是**查剩余**——
-    //   删完结构成立就照删；不成立才扩到最小单位（`planDeleteRange`）；
-    //   **不套用**复制的右向补全（`\frac{a}` 不再被补成整段）。
-    var ds = from;
-    var de = to;
-    if (!planned) {
-      final ({int start, int end}) r = planDeleteRange(_buf.buf, ds, de);
-      ds = r.start;
-      de = r.end;
-    }
+    // ★★ 2026-11-03（围栏不参与选区 · §7.3）：
+    //   · **查剩余**：删完结构成立就照删；不成立才扩到最小单位；
+    //   · **`$` 是零宽记账**：只删可见字符，`$` 留下（内容空了才回收）；
+    //   · 跨段时不是"删一段"，而是"抹掉可见字符、其余保留" ⇒ 一次 replace（一步撤销）。
+    final DeletePlan d = plan ?? _planDeleteAt(from, to);
+    if (d.isEmpty) return;
+    final int caret = d.from.clamp(0, _buf.length);
+    _mutate(() => _buf.replace(d.from, d.to, d.replacement));
+    if (_buf.caret != caret) _buf.setCaret(caret);
+  }
+
+  /// 没现成 plan 时算一次（含"被包装基座扩成整个对象"）。
+  DeletePlan _planDeleteAt(int from, int to) {
+    var s = from;
+    var e = to;
     // ★★★ 2026-11-01（反馈 14b）：选区正好是"被包装基座的唯一内容"（如组合数的 `C`）
     //   ⇒ 扩到**整个对象**（含 `^`/`_` 挂件）。否则删完会剩 `\mathrm{}_{n}^{m}`
     //   —— 屏幕上就是一个空主体虚线框。口径：§3.2「删除粒度 ≡ 双击粒度」。
     final ({int start, int end})? packed =
-        expandPackedBaseInDoc(_buf.buf, ds, de);
+        expandPackedBaseInDoc(_buf.buf, s, e);
     if (packed != null) {
-      ds = packed.start;
-      de = packed.end;
+      s = packed.start;
+      e = packed.end;
     }
-    final SmartEdit ed =
-        reclaimEmptiedMath(_buf.buf, SmartEdit.remove(ds, de, ds));
-    _mutate(() => _buf.replace(ed.from!, ed.to!, ''));
-    if (_buf.caret != ed.caret) _buf.setCaret(ed.caret);
+    return planDelete(_buf.buf, s, e);
   }
 
   int _lineStart(int offset) {

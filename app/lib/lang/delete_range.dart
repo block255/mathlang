@@ -1,91 +1,224 @@
-// 数语引擎 · **删除区间**（纯 Dart，2026-11-02「选择边界与剪贴板」批）
+// 数语引擎 · **删除区间**（纯 Dart，2026-11-03「围栏不参与选区」）
 //
-// 判据（讨论定稿，`notes/handover/20261102-选择边界与剪贴板.md` §3.3）：
-//   **查剩余**——删完结构成立就照删；不成立才扩到最小单位。
-//   与复制相反：复制查**片段**，删除查**剩下的**；删除**不套用**复制的右向补全。
+// 口径（讨论定稿，`notes/handover/20261102-选择边界与剪贴板.md` §3.3 / §7.3）：
+//   **查剩余**：删完结构成立就照删；不成立才扩到最小单位（对象 / 层）。
+//   **`$` 是零宽记账**：删可见字符，`$` 留下；内容空了再回收
+//   （行间块只剩空白算空；行内只剩空白**不算**空）。
 //
-// 做法：
-//   1. **围栏归一**（删一半会留下半个 `$`）：端点落在段内 ⇒ 扩到段边界（与复制同一判据）；
-//   2. 若接缝两侧的段**删之前就不完整**（源本来坏，如游离的 `$^{x}$`）⇒ 不替它修；
-//   3. 逐次修接缝上"悬挂"的东西：右侧的 `^`/`_`、`]`、孤 `\end`；左侧未闭合的 `{`、
-//      缺参数的命令。每次只扩到"刚够成立"，最多 10 轮。
+// 产出不是一个区间，而是「一次替换」：`(from, to, replacement)`。
+// 跨段删除时 `$` 夹在中间、不能删，所以不是“删一段”，而是“把这段里的可见字符抹掉、
+// 其余原样留下”——最终压成一次 `replace`（**一步撤销**）。
 
 import 'math_spans.dart';
 import 'tex_structure.dart';
 
-/// 删除 `[from, to)` 时**实际要删的区间**（已按"剩余成立"修过）。
-({int start, int end}) planDeleteRange(String doc, int from, int to) {
+/// 一次删除的落盘方式：把 `[from, to)` 换成 [replacement]。
+class DeletePlan {
+  const DeletePlan({
+    required this.from,
+    required this.to,
+    required this.replacement,
+    required this.clipboardText,
+  });
+
+  final int from;
+  final int to;
+  final String replacement;
+
+  /// 真正被删掉的**可见**内容（按 §七 编码：数学 run 包 `$`，文字原样）。
+  /// 剪切用它当剪贴板文本——“删什么就复制什么”。
+  final String clipboardText;
+
+  bool get isEmpty => replacement.isEmpty && clipboardText.isEmpty;
+}
+
+/// 规划一次删除：`[from, to)` 是**可见选区**（可以反着给）。
+DeletePlan planDelete(String doc, int from, int to) {
   final int lo = from <= to ? from : to;
   final int hi = from <= to ? to : from;
   var s = lo.clamp(0, doc.length);
   var e = hi.clamp(s, doc.length);
-  if (e <= s) return (start: s, end: e);
-
-  final List<MathSpan> spans = scanMathSpans(doc);
-  final MathSpan? sa = _inside(spans, s);
-  final MathSpan? sb = _inside(spans, e);
-  if (!(sa != null && identical(sa, sb))) {
-    if (sa != null) s = sa.start;
-    if (sb != null) e = sb.end;
+  if (e <= s) {
+    return DeletePlan(from: s, to: e, replacement: '', clipboardText: '');
+  }
+  // 切在控制词中间 ⇒ 先扩到词边界（与复制同一判据；否则会把 `\begin` 切成半截）
+  s = _snapCommandStart(doc, s);
+  e = _snapCommandEnd(doc, e);
+  if (e <= s) {
+    return DeletePlan(from: s, to: e, replacement: '', clipboardText: '');
   }
 
-  // 源本来就坏 ⇒ 不替它修（否则每删一下都会把整段吃掉）
-  if (!_wasComplete(doc, spans, s, e)) return (start: s, end: e);
+  final List<MathSpan> spans = scanMathSpans(doc);
+  final List<({int start, int end})> ranges = <({int start, int end})>[];
+  final StringBuffer clip = StringBuffer();
+  var cursor = s;
 
+  for (final MathSpan sp in spans) {
+    if (sp.end <= s || sp.start >= e) continue;
+    final int pad = sp.display ? 2 : 1;
+    final int cs = sp.start + pad;
+    final int ce = sp.end - pad;
+
+    // 段前的文字（可见字符，直接删）
+    final int textEnd = e < sp.start ? e : sp.start;
+    if (textEnd > cursor) {
+      ranges.add((start: cursor, end: textEnd));
+      clip.write(doc.substring(cursor, textEnd));
+      cursor = textEnd;
+    }
+
+    // 数学段：只取**内容**交集；对象补齐在内容内做
+    final int ms = s > cs ? s : cs;
+    final int me = e < ce ? e : ce;
+    if (ms < me) {
+      final ({int start, int end}) r = _planInSpan(doc, sp, ms, me);
+      if (r.end > r.start) {
+        final String cut = doc.substring(r.start, r.end);
+        ranges.add((start: r.start, end: r.end));
+        clip.write(r'$');
+        clip.write(cut);
+        clip.write(r'$');
+      }
+      // 内容删空（行间 trim / 行内 isEmpty）⇒ 连围栏一起回收
+      final String rest = sp.tex.replaceRange(
+        (r.start - cs).clamp(0, sp.tex.length),
+        (r.end - cs).clamp(0, sp.tex.length),
+        '',
+      );
+      final bool emptied = sp.display ? rest.trim().isEmpty : rest.isEmpty;
+      if (emptied) {
+        var b = sp.end;
+        if (sp.display && b < doc.length && doc[b] == '\n') b += 1;
+        ranges.add((start: sp.start, end: b));
+      }
+      final int adv = r.end > me ? r.end : me;
+      if (adv > cursor) cursor = adv;
+    }
+
+    final int next = e < sp.end ? e : sp.end;
+    if (next > cursor) cursor = next;
+    if (cursor >= e) break;
+  }
+  if (cursor < e) {
+    ranges.add((start: cursor, end: e));
+    clip.write(doc.substring(cursor, e));
+  }
+
+  if (ranges.isEmpty) {
+    return DeletePlan(from: s, to: s, replacement: '', clipboardText: '');
+  }
+
+  // 合并区间（对象的左右补齐可能让相邻区间重叠）
+  ranges.sort((A, B) => A.start.compareTo(B.start));
+  final List<({int start, int end})> merged = <({int start, int end})>[];
+  for (final ({int start, int end}) r in ranges) {
+    if (merged.isNotEmpty && r.start <= merged.last.end) {
+      merged[merged.length - 1] = (
+        start: merged.last.start,
+        end: r.end > merged.last.end ? r.end : merged.last.end,
+      );
+    } else {
+      merged.add(r);
+    }
+  }
+
+  final int regionStart = merged.first.start;
+  final int regionEnd = merged.last.end;
+  final StringBuffer kept = StringBuffer();
+  var p = regionStart;
+  for (final ({int start, int end}) r in merged) {
+    if (r.start > p) kept.write(doc.substring(p, r.start));
+    if (r.end > p) p = r.end;
+  }
+  if (p < regionEnd) kept.write(doc.substring(p, regionEnd));
+
+  final String after = doc.replaceRange(regionStart, regionEnd, kept.toString());
+  // 最小差分 ⇒ 一次 replace（一步撤销）
+  final int prefix = _commonPrefix(doc, after);
+  final int suffix = _commonSuffix(doc, after, prefix);
+  return DeletePlan(
+    from: prefix,
+    to: doc.length - suffix,
+    replacement: after.substring(prefix, after.length - suffix),
+    clipboardText: clip.toString(),
+  );
+}
+
+/// 在一个数学段的**内容**里规划删除（对象补齐 / 结构修复都不得越出内容）。
+({int start, int end}) _planInSpan(String doc, MathSpan sp, int s, int e) {
+  if (!isCompleteFragment(sp.tex)) return (start: s, end: e); // 源本来就坏：不修
+  final int pad = sp.display ? 2 : 1;
+  final int cs = sp.start + pad;
+  final int ce = sp.end - pad;
   for (var k = 0; k < 10; k++) {
-    if (_remainderComplete(doc, s, e)) break;
-    final ({int start, int end})? r = _repairOnce(doc, s, e);
-    if (r == null) break;
+    if (_spanRemainderComplete(doc, sp, s, e)) break;
+    ({int start, int end})? r = _repairOnce(doc, s, e);
+    if (r == null) {
+      // 选区切掉了某个 `\begin{X}`（或切进它的名字）⇒ 环境不能留半截 ⇒ 扩到 `\end{X}`
+      final int? endTok = _envEndForCutBegin(doc, sp, s, e);
+      if (endTok == null) break;
+      r = (start: s, end: endTok);
+    }
+    if (r.start < cs || r.end > ce) break; // 不许出内容（围栏不参与）
     s = r.start;
     e = r.end;
   }
   return (start: s, end: e);
 }
 
-/// 一段区间对应的剪贴板文本（**不扩**）：两端在同一段内 ⇒ 补一对 `$…$`。
-///
-/// 剪切用：删什么就复制什么（讨论定稿 §3.4），所以这里只做"包不包 `$`"，
-/// 不再跑 [clipboardSlice] 的补全。
-String clipboardTextForRange(String doc, int start, int end) {
-  final int s = start.clamp(0, doc.length);
-  final int e = end.clamp(s, doc.length);
-  if (e <= s) return '';
-  final List<MathSpan> spans = scanMathSpans(doc);
-  final MathSpan? a = _inside(spans, s);
-  final MathSpan? b = _inside(spans, e);
-  if (a != null && identical(a, b)) {
-    return '\$${doc.substring(s, e)}\$';
-  }
-  return doc.substring(s, e);
+/// 段内容删掉 `[s, e)` 后还完整吗？
+bool _spanRemainderComplete(String doc, MathSpan sp, int s, int e) {
+  final int pad = sp.display ? 2 : 1;
+  final int cs = sp.start + pad;
+  final String rest = sp.tex.replaceRange(
+    (s - cs).clamp(0, sp.tex.length),
+    (e - cs).clamp(0, sp.tex.length),
+    '',
+  );
+  // 孤立的可选参数收尾（`\sqrt[` 被删掉）
+  if (rest.trimLeft().startsWith(']')) return false;
+  // 剩下内容的**开头**是一个缺参数的命令（`\frac{b}`）⇒ 也不成立
+  if (_missingLeadingArgs(rest)) return false;
+  return isCompleteFragment(rest);
 }
 
-// ---------------------------------------------------------------------------
-// 判据
-// ---------------------------------------------------------------------------
-
-/// 删除前：接缝两侧的段是完整的吗？（源本来坏 ⇒ 返回 false）
-bool _wasComplete(String doc, List<MathSpan> spans, int s, int e) {
-  final MathSpan? a = _contentSpanAt(spans, s);
-  final MathSpan? b = _contentSpanAt(spans, e > 0 ? e - 1 : 0);
-  if (a != null && !isCompleteFragment(a.tex)) return false;
-  if (b != null && !identical(a, b) && !isCompleteFragment(b.tex)) return false;
-  return true;
+/// `tex` 去掉前导空白后以"要参数的命令"开头、但紧跟的参数组不够 ⇒ true。
+bool _missingLeadingArgs(String tex) {
+  final String t = tex.trimLeft();
+  final Match? m = RegExp(r'^\\([A-Za-z]+)').firstMatch(t);
+  if (m == null) return false;
+  final int need = requiredArgs(m.group(1)!);
+  if (need == 0) return false;
+  var i = m.end;
+  var have = 0;
+  while (i < t.length) {
+    if (t[i] == ' ') {
+      i++;
+      continue;
+    }
+    if (t[i] == '[') {
+      final int j = t.indexOf(']', i);
+      if (j < 0) break;
+      i = j + 1;
+      continue;
+    }
+    if (t[i] == '{') {
+      final int j = _matchBraceF(t, i);
+      if (j < 0) break;
+      have++;
+      i = j + 1;
+      continue;
+    }
+    break;
+  }
+  return have < need;
 }
 
-/// 删除后：接缝所在的那一段还完整吗？
-bool _remainderComplete(String doc, int s, int e) {
-  // 接缝左边正好是"要参数的命令名" ⇒ 参数被这次删除切掉了（`\frac{a}` 只剩一参）
-  if (s > 0) {
-    final int cmd = _cmdEndingAt(doc, s);
-    if (cmd >= 0 && requiredArgs(_controlWordAt(doc, cmd)) > 0) return false;
-  }
-  final String after = doc.replaceRange(s, e, '');
-  final List<MathSpan> spans = scanMathSpans(after);
-  final MathSpan? sp = _contentSpanAt(spans, s.clamp(0, after.length));
-  if (sp == null) return true;
-  // 残留的"可选参数收尾"（`\sqrt[` 被删掉了）
-  if (sp.tex.trimLeft().startsWith(']')) return false;
-  return isCompleteFragment(sp.tex);
+/// `brace` 处 `{` 的主人（紧挨在前的要参数命令）；没有 ⇒ null。
+int? _ownerOfBrace(String doc, int brace) {
+  final int cmd = _cmdEndingAt(doc, brace);
+  if (cmd < 0) return null;
+  return requiredArgs(_controlWordAt(doc, cmd)) > 0 ? cmd : null;
 }
 
 /// 修一次接缝；扩不动 ⇒ null。
@@ -100,7 +233,6 @@ bool _remainderComplete(String doc, int s, int e) {
       return (start: s, end: e + 1);
     }
     if (c == '}') {
-      // 它的 `{` 在**被删的区间里**（或根本没有）⇒ 这个 `}` 成了孤儿 ⇒ 一起删
       final int open = _matchBraceB(doc, e);
       if (open < 0 || (open >= s && open < e)) {
         return (start: s, end: e + 1);
@@ -111,21 +243,25 @@ bool _remainderComplete(String doc, int s, int e) {
       if (endTok > e) return (start: s, end: endTok);
     }
   }
-  // 左侧悬挂：未闭合的 `{` / 缺参数的命令名
+  // 左侧悬挂：未闭合的 `{` / `^` `_` / 缺参数的命令名
   if (s > 0) {
     var k = s - 1;
     while (k >= 0 && doc[k] == ' ') {
       k--;
     }
     if (k >= 0 && doc[k] == '{') {
+      // `{` 的主人（要参数的命令）在选区左边 ⇒ 连命令一起删（整块走）
+      final int? owner = _ownerOfBrace(doc, k);
+      if (owner != null && owner < s) {
+        return (start: owner, end: e);
+      }
       final int close = _matchBraceF(doc, k);
       if (close >= 0 && close >= s && close < e) {
         return (start: s, end: close + 1);
       }
       if (close < 0) return (start: s, end: doc.length);
     }
-    // 接缝左边是 `^` / `_` ⇒ 它的参数被删掉了 ⇒ 连标记一起删（留 `a`，不留 `a^`）
-    if (s > 0 && (doc[s - 1] == '^' || doc[s - 1] == '_')) {
+    if (doc[s - 1] == '^' || doc[s - 1] == '_') {
       return (start: s - 1, end: e);
     }
     final int cmd = _cmdEndingAt(doc, s);
@@ -139,22 +275,6 @@ bool _remainderComplete(String doc, int s, int e) {
 // ---------------------------------------------------------------------------
 // 小工具
 // ---------------------------------------------------------------------------
-
-MathSpan? _inside(List<MathSpan> spans, int pos) {
-  for (final MathSpan sp in spans) {
-    if (pos > sp.start && pos < sp.end) return sp;
-  }
-  return null;
-}
-
-/// `pos` 是否落在某段的**内容**里（含两端）。
-MathSpan? _contentSpanAt(List<MathSpan> spans, int pos) {
-  for (final MathSpan sp in spans) {
-    final int pad = sp.display ? 2 : 1;
-    if (pos >= sp.start + pad && pos <= sp.end - pad) return sp;
-  }
-  return null;
-}
 
 int _scriptEnd(String doc, int i) {
   var j = i + 1;
@@ -247,4 +367,85 @@ int _endTokenEnd(String s, int i) {
   if (j >= s.length || s[j] != '{') return -1;
   final int c = _matchBraceF(s, j);
   return c < 0 ? -1 : c + 1;
+}
+
+/// 选区切掉了某个 `\begin{X}`（或切进它的名字）⇒ 找到它配对的 `\end{X}` 末尾。
+///
+/// 环境不能留半截：`\begin` 被删 ⇒ 必须连 `\end` 一起删（整块走）。
+int? _envEndForCutBegin(String doc, MathSpan sp, int s, int e) {
+  final int pad = sp.display ? 2 : 1;
+  final int cs = sp.start + pad;
+  final int ce = sp.end - pad;
+  final RegExp rx = RegExp(r'\\(begin|end)\s*\{([A-Za-z*]+)\}');
+  final List<({int at, int end, bool isBegin})> toks =
+      <({int at, int end, bool isBegin})>[];
+  for (final Match m in rx.allMatches(doc.substring(cs, ce))) {
+    toks.add((
+      at: cs + m.start,
+      end: cs + m.end,
+      isBegin: m.group(1) == 'begin',
+    ));
+  }
+  for (var i = 0; i < toks.length; i++) {
+    final ({int at, int end, bool isBegin}) t = toks[i];
+    if (!t.isBegin || t.at < s || t.at >= e) continue;
+    var depth = 0;
+    for (var j = i; j < toks.length; j++) {
+      if (toks[j].isBegin) {
+        depth++;
+      } else {
+        depth--;
+        if (depth == 0) return toks[j].end;
+      }
+    }
+  }
+  return null;
+}
+
+/// 切在 `\f|rac` 这种控制词中间 ⇒ 挪回词首（与复制同一判据）。
+int _snapCommandStart(String doc, int i) {
+  if (i <= 0 || i >= doc.length) return i;
+  final int c = doc.codeUnitAt(i);
+  if (!_isLetterCode(c)) return i;
+  if (!_isLetterCode(doc.codeUnitAt(i - 1))) return i;
+  var j = i;
+  while (j > 0 && _isLetterCode(doc.codeUnitAt(j - 1))) {
+    j--;
+  }
+  if (j > 0 && doc[j - 1] == r'\') j--;
+  return j;
+}
+
+/// 切在 `\fr|ac` 这种控制词中间 ⇒ 挪到词尾之后。
+int _snapCommandEnd(String doc, int i) {
+  if (i <= 0 || i >= doc.length) return i;
+  if (!_isLetterCode(doc.codeUnitAt(i))) return i;
+  if (!_isLetterCode(doc.codeUnitAt(i - 1))) return i;
+  var j = i;
+  while (j < doc.length && _isLetterCode(doc.codeUnitAt(j))) {
+    j++;
+  }
+  return j;
+}
+
+bool _isLetterCode(int c) =>
+    (c >= 0x41 && c <= 0x5A) || (c >= 0x61 && c <= 0x7A);
+
+int _commonPrefix(String a, String b) {
+  final int n = a.length < b.length ? a.length : b.length;
+  var i = 0;
+  while (i < n && a.codeUnitAt(i) == b.codeUnitAt(i)) {
+    i++;
+  }
+  return i;
+}
+
+int _commonSuffix(String a, String b, int prefix) {
+  final int n = (a.length < b.length ? a.length : b.length) - prefix;
+  var i = 0;
+  while (i < n &&
+      a.codeUnitAt(a.length - 1 - i) == b.codeUnitAt(b.length - 1 - i)) {
+    i++;
+  }
+  return i;
 }

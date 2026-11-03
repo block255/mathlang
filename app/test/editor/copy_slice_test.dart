@@ -84,7 +84,7 @@ void main() {
         .setMockMethodCallHandler(SystemChannels.platform, null));
 
     final DocBuffer buf = await _pump(tester);
-    // 选区起点在公式内部、终点在文字里 ⇒ 切片会把起点扩到 `$`
+    // 选区起点在公式内部、终点在文字里：`$` 不参与选区，剪切只拿选中的可见内容
     buf.setSelection(_doc.indexOf('b^2'), _doc.indexOf(' 成立'));
     await tester.pumpAndSettle();
 
@@ -94,9 +94,13 @@ void main() {
     await tester.pumpAndSettle();
 
     final String? text = _lastClipboard(calls);
-    expect(text, r'$a^2+b^2=c^2$', reason: '剪切也要给自洽片段');
+    // 2026-11-03（围栏不参与选区 · §七）：剪切拿的是**实际删掉的可见内容**
+    // （从 `b^2` 到段尾），不再把起点扩到 `$`、把 `a^2+` 也带走。
+    expect(text, r'$b^2=c^2$', reason: '剪切 = 删什么就复制什么，不扩到段首');
+    expect(buf.buf.contains(r'$a^2+$'), isTrue,
+        reason: '没被选中的 `a^2+` 留在段里、围栏保留：${buf.buf}');
     final int dollars = buf.buf.split(r'$').length - 1;
     expect(dollars.isEven, isTrue,
-        reason: '剪完文档里 `\$` 必须成对（改前会留下孤零零的收尾 `\$`）：${buf.buf}');
+        reason: '剪完文档里 `\$` 必须成对：${buf.buf}');
   });
 }
