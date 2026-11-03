@@ -1179,6 +1179,31 @@ class DocViewState extends State<DocView> {
       return renderToSourceOffset(renderTex, hit.offset!);
     }
 
+    // ★★★ 2026-11-03 晚（用户）：「行列式之间就该像普通数学符号之间那样能落光标」。
+    //   点到**环境盒子外面**（两个环境之间、矩阵左右两侧的空白）⇒ 落**最近的环境边界**。
+    //   这与普通符号那条是**同一句判据**：空白 ⇒ 就近落到最近的对象边界（纵向不参与）。
+    //   改前这里会掉进 `glyphlessLanding`：纵向错开（行与行之间）时它返回 null
+    //   ⇒ 页面兜底把光标扔回**块首**（用户："点不到"，实测 y=18..34 全落 0）。
+    if (hasEnv(tex)) {
+      final ({int envIx, bool before})? edge = envNearestEdge(
+        root: root,
+        tex: renderTex,
+        displayStyle: displayStyle,
+        localPos: localPos,
+        fontSize: fontSize,
+      );
+      if (edge != null) {
+        // 渲染空间 → 源坐标：用**环境序号**对应（注入只挪偏移，不增删环境）
+        final List<EnvTable> tables = envTablesIn(tex)
+          ..sort((EnvTable a, EnvTable b) => a.beginStart.compareTo(b.beginStart));
+        if (edge.envIx >= 0 && edge.envIx < tables.length) {
+          return edge.before
+              ? tables[edge.envIx].beginStart
+              : tables[edge.envIx].endEnd;
+        }
+      }
+    }
+
     final StructureGeometry g = buildStructureGeometry(
       tex: tex,
       renderTex: renderTex,

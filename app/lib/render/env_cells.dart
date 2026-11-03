@@ -644,6 +644,48 @@ int? envIxOf(String tex, int offset) {
   return best;
 }
 
+/// 块内空白处：**最近的环境边界**（点"环境外面"时的落点用）。
+///
+/// 返回 `(envIx, before)`：`before = true` ⇒ 落在该环境 `\begin` **之前**；否则 `\end` **之后**。
+///
+/// ★★★ 2026-11-03 晚（用户）：「行列式之间就该像普通数学符号之间那样能落光标」——
+///   这条判据与普通符号那条是**同一句**：**空白 ⇒ 就近落到最近的对象边界**，
+///   **纵向不参与**（只看横向距离）。环境只是"对象"的一种。
+({int envIx, bool before})? envNearestEdge({
+  required RenderObject root,
+  required String tex,
+  required bool displayStyle,
+  required Offset localPos,
+  double? fontSize,
+}) {
+  final List<int> ids = envIdsIn(tex);
+  if (ids.isEmpty) return null;
+  int? bestIx;
+  var bestD = double.infinity;
+  var bestBefore = true;
+  for (final int id in ids) {
+    final EnvGrid? g = buildEnvGrid(
+        root: root,
+        tex: tex,
+        displayStyle: displayStyle,
+        fontSize: fontSize,
+        envIx: id);
+    if (g == null) continue;
+    final Rect? box = envInkBox(g);
+    if (box == null) continue;
+    final double d = localPos.dx < box.left
+        ? box.left - localPos.dx
+        : (localPos.dx > box.right ? localPos.dx - box.right : 0);
+    if (d < bestD) {
+      bestD = d;
+      bestIx = id;
+      bestBefore = localPos.dx < box.center.dx;
+    }
+  }
+  if (bestIx == null) return null;
+  return (envIx: bestIx, before: bestBefore);
+}
+
 /// 环境网格的**外接盒**（用**行带 / 列带**并出来）。
 ///
 /// ★★ 2026-11-03 晚：不能只看格子矩形 —— 空格子的矩形是**零高**的填充垫（基线那一条），

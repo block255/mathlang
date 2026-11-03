@@ -17,6 +17,7 @@
 
 import 'package:flutter/rendering.dart';
 
+import '../lang/env_table.dart';
 import 'injection_map.dart';
 import 'leaf_boxes.dart';
 import 'leaf_pairing.dart';
@@ -384,10 +385,12 @@ List<Rect> selectionBands({
 }) {
   if (to <= from) return const <Rect>[];
   final List<LeafBox> boxes = scanLeafBoxes(root).eligible;
+  final List<VisibleAtom> atomList =
+      atoms ?? renderOrderAtoms(tex, displayStyle: displayStyle);
   final LeafPairing pairing = buildLeafPairing(
     tex: tex,
     boxes: boxes,
-    atoms: atoms ?? renderOrderAtoms(tex, displayStyle: displayStyle),
+    atoms: atomList,
   );
   // ★★ 关键：`PairGroup.srcStart/srcEnd` 是**渲染 tex**（含空槽垫、光标锚点注入）里的偏移，
   //   而调用方给的 `[from, to)` 是**源 tex** 的偏移 ⇒ 必须换回源坐标再比较，
@@ -421,12 +424,109 @@ List<Rect> selectionBands({
     if (g0 != null) nextGroup = g0;
     if (near[i] == null) near[i] = nextGroup;
   }
+
+  // ★★★ 2026-11-03 晚（用户："高亮和选区的判定应该统一"）：
+  //   **装饰（括号这类定界符）没有字符 ⇒ 它属于"它所在的那个环境"**：
+  //   环境里**可见字符全在选区内** ⇒ 装饰算选中，否则不涂。
+  //   改前装饰走"跟最近的有主盒走"（`near`）⇒ 选了 `+` 就把**右边矩阵的左括号**一起涂上
+  //   （用户实测：高亮扩进右边矩阵，而复制/删除只到 `+` —— 两层不统一）。
+  final List<EnvTable> envs = envTablesIn(tex);
+  final List<Rect> envRect = <Rect>[];
+  final List<bool> envHasRect = <bool>[];
+  final List<bool> envSelected = <bool>[];
+  if (envs.isNotEmpty) {
+    for (var k = 0; k < envs.length; k++) {
+      envRect.add(Rect.zero);
+      envHasRect.add(false);
+      envSelected.add(false);
+    }
+    int envOf(int at) {
+      var best = -1;
+      var bestBegin = -1;
+      for (var k = 0; k < envs.length; k++) {
+        final EnvTable e = envs[k];
+        if (at < e.bodyStart || at > e.bodyEnd) continue;
+        if (e.beginStart > bestBegin) {
+          best = k;
+          bestBegin = e.beginStart;
+        }
+      }
+      return best;
+    }
+
+    // ① 每个环境的矩形（由**有主的**盒并出来；空格子的垫子没有主，不参与）
+    for (var i = 0; i < boxes.length; i++) {
+      final PairGroup? g = owner[i];
+      if (g == null) continue;
+      final int k = envOf(g.srcStart);
+      if (k < 0) continue;
+      envRect[k] =
+          envHasRect[k] ? envRect[k].expandToInclude(boxes[i].rect) : boxes[i].rect;
+      envHasRect[k] = true;
+    }
+    // ② "可见字符全在选区内" —— 用原子范围判（渲染空间 → 源空间再比）
+    final List<int> lo = List<int>.filled(envs.length, 1 << 30);
+    final List<int> hi = List<int>.filled(envs.length, -1);
+    for (final VisibleAtom a in atomList) {
+      final int k = envOf(a.start);
+      if (k < 0) continue;
+      if (a.start < lo[k]) lo[k] = a.start;
+      if (a.end > hi[k]) hi[k] = a.end;
+    }
+    for (var k = 0; k < envs.length; k++) {
+      if (hi[k] <= lo[k]) {
+        // 空环境（一个原子都没有）：按"选区碰到它的源码区间"算
+        final int s = renderToSourceOffset(tex, envs[k].bodyStart);
+        final int e = renderToSourceOffset(tex, envs[k].bodyEnd);
+        envSelected[k] = from < e && to > s;
+      } else {
+        final int s = renderToSourceOffset(tex, lo[k]);
+        final int e = renderToSourceOffset(tex, hi[k]);
+        envSelected[k] = from <= s && e <= to;
+      }
+    }
+  }
+
+  /// 这个**没有主**的盒是不是某个环境的定界符；是 ⇒ 返回环境序号，否则 -1。
+  ///
+  /// 判据：盒子的字是定界符（`]` `)` `}` 归左边环境；`[` `(` `{` 归右边环境），
+  /// 并且离那个环境的格子矩形不超过 30px。
+  int envForDecoration(Rect r, String t) {
+    if (envs.isEmpty || t.isEmpty) return -1;
+    final bool rightDelim = ')]}|‖'.contains(t);
+    final bool leftDelim = '([{|‖'.contains(t);
+    if (!rightDelim && !leftDelim) return -1;
+    var best = -1;
+    var bestD = double.infinity;
+    for (var k = 0; k < envs.length; k++) {
+      if (!envHasRect[k]) continue;
+      final Rect e = envRect[k];
+      final double d = rightDelim
+          ? (r.center.dx - e.right).abs()
+          : (r.center.dx - e.left).abs();
+      if (d < bestD) {
+        bestD = d;
+        best = k;
+      }
+    }
+    return bestD <= 30 ? best : -1;
+  }
+
   final List<bool> picked = List<bool>.filled(boxes.length, false);
   for (var i = 0; i < boxes.length; i++) {
     final LeafBox b = boxes[i];
     // 垫子 / 空字盒没有墨迹 ⇒ 不铺（它们不是"字符"）
     if (b.kind == LeafBoxKind.pad) continue;
     if ((b.text ?? '').isEmpty) continue;
+    if (owner[i] == null) {
+      final int k = envForDecoration(b.rect, (b.text ?? '').trim());
+      if (k >= 0) {
+        if (!envSelected[k]) continue;
+        picked[i] = true;
+        out.add(b.rect);
+        continue;
+      }
+    }
     final PairGroup? g = owner[i] ?? near[i];
     if (g == null) continue;
     final int a = renderToSourceOffset(tex, g.srcStart);
@@ -455,6 +555,9 @@ List<Rect> selectionBands({
     final LeafBox b = boxes[i];
     if (b.kind == LeafBoxKind.pad) continue;
     if ((b.text ?? '').isEmpty) continue;
+    // ★★ 2026-11-03 晚：**环境的定界符按所属环境判过了**，不许再被邻居带进来
+    //   （否则又会"选了 `+` 就把右边矩阵的左括号涂上"）。
+    if (envForDecoration(b.rect, (b.text ?? '').trim()) >= 0) continue;
     final bool neighbour = (i > 0 && pickedBefore[i - 1]) ||
         (i + 1 < boxes.length && pickedBefore[i + 1]);
     if (!neighbour) continue;

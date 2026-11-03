@@ -161,9 +161,12 @@ void main() {
       await tester.tapAt(root.localToGlobal(mid));
       await tester.pumpAndSettle();
 
-      // 落在两个环境之间 = `\end{pmatrix}` 之后、`\begin{vmatrix}` 之前（通常就是那个 `+` 那一格）
-      final int plus = doc.indexOf('+', doc.indexOf(kTwo));
-      expect(buf.caret, inInclusiveRange(plus - 2, plus + 2),
+      // 落在两个环境之间 = 前一个 `\end` 之后 ～ 后一个 `\begin` 之前（这两个环境是贴着的）
+      final int base = doc.indexOf(kTwo);
+      final List<EnvTable> ts = envTablesIn(kTwo)
+        ..sort((EnvTable a, EnvTable b) => a.beginStart.compareTo(b.beginStart));
+      expect(buf.caret,
+          inInclusiveRange(base + ts[0].endEnd, base + ts[1].beginStart),
           reason: '点中间应落在两个环境之间，实际 ${buf.caret}（改前被吸进前一格末）');
     });
   });
