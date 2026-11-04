@@ -781,15 +781,41 @@ Rect? findLocalRowBox(RenderObject root, Offset at,
         }
       }
       if (sameRow != null) maybeSameRow = sameRow;
-      // ⏳ 2026-11-04（N3c **未落地，撤回**）：本来这里想加"主行位点在这一层量不到字形
-      //   ⇒ 用这一层自己的行盒"，用来修"行间分式块的 tex 末尾竖条被画到分母那一带"
-      //   （实测 tex 末尾 y=159.0、块后 y=145.2，差 13.8px）。
-      //   但 `caret_layer_test` 的全域扫描（10 类结构 × 67 个位点）当场给出反例：
-      //   `\overline{AB}` 的 tex 首/尾两格 —— 竖条会被拉到"最外层行盒"（y 1.3..15.5），
-      //   而那一层的字形行在 17（上横线），**不相交** ⇒ 违反"竖条必须与本层字形行相交"。
-      //   ⇒ 判据不能一把梭：得先区分"结构节点后面"（`\frac` / `\sqrt` / 环境）与
-      //     "装饰后面"（`\overline` / `\underbrace` 这类，它们的行盒本来就不是主行带）。
-      //   证据与数字留在 `notes/handover/20261104-文末空行与行带.md` / 台账 §1.04.2。
+      // ★★★ 2026-11-04（N3c）：**上下堆叠的结构**在"这一层量不到字形"时，
+      //   主行带 = **这一层自己的行盒**（取中心），而不是下面那条"行盒底对齐"挑出来的内层行。
+      //
+      //   现场（用户截图）：`$$\frac{a-x}{a+x}$$` 里光标停在 tex 末尾（= 分式后面）时，
+      //   竖条被画到**分母**那一带（实测 y159.0），而"块后"那格是 145.2 ⇒ 差 13.8px。
+      //   决策链（临时 ROWDBG 输出）：`at.dy=25.2` ⇒ `containing` = 分母字形行（20.0..45.0）
+      //   ⇒ 因为分式的根行里**一个字形都没有**（`\frac` 不产生 ¶ 盒），
+      //   而分母那一行的盒底**正好等于**根行盒底 ⇒ 它被认成本层。
+      //
+      //   判据（为什么不能一把梭）：`\overline{AB}` / `\sqrt{x+1}` 与分式的渲染树**同构**
+      //   （内层行的底也等于根行盒底），但它们的**内层行就是主行**，必须保持老路。
+      //   区别在几何上很清楚：**分式把主行劈成了上下两条行——一条贴上缘、一条贴下缘**；
+      //   而 `\overline` / `\sqrt` 只有**一条**内层行（分别贴下缘 / 都不贴）。
+      //   ⇒ 只有"≥2 条内层行，且一条贴根行上缘、一条贴根行下缘"时才用根行盒当主行带。
+      if (mainRow && sameRow == null && anchorRowBox.height > 1) {
+        final List<Rect> innerRows = <Rect>[];
+        for (final ({Rect rect, double dx, RenderObject? row}) x in hits) {
+          final Rect? rb = rowRectOf(x.row);
+          if (rb == null) continue;
+          if (innerRows.any((Rect r) => (r.top - rb.top).abs() <= 0.5)) continue;
+          innerRows.add(rb);
+        }
+        bool near(double a, double b) => (a - b).abs() <= 1.5;
+        final bool topHit =
+            innerRows.any((Rect r) => near(r.top, anchorRowBox.top));
+        final bool bottomHit =
+            innerRows.any((Rect r) => near(r.bottom, anchorRowBox.bottom));
+        if (innerRows.length >= 2 && topHit && bottomHit) {
+          return clip(anchorRowBox);
+        }
+      }
+      // ⏳ 2026-11-04（N3c 第一版 **曾撤回**，已被上面"上下堆叠"那条取代）：当时想无条件用
+      //   "这一层自己的行盒"，但 `\overline{AB}` / `\sqrt{x+1}` 与分式的渲染树同构
+      //   （内层行的底也等于根行盒底）⇒ 全域扫描在 `\overline{AB}` 上报反例。
+      //   现在只在"≥2 条内层行、一条贴根行上缘、一条贴下缘"（= 上下堆叠，如分式）时才用。
       for (final ({Rect rect, double dx, RenderObject? row}) h in scanHits) {
         final Rect? rb = rowRectOf(h.row);
         if (rb == null) continue;
