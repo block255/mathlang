@@ -28,7 +28,7 @@
 
 ## 二、先看哪几份（最短路径）
 
-- **新会话/接手**：`README.md` → 本页 → [`后优化清单.md`](后优化清单.md) §一（影响每天都用）→ [`handover/会话状态快照-20261102.md`](handover/会话状态快照-20261102.md)（**最新交接**）→ **下一批（选择边界与剪贴板）看 [`handover/20261102-选择边界与剪贴板.md`](handover/20261102-选择边界与剪贴板.md)** → **先读 [`design/只读基准.txt`](design/只读基准.txt)（最高优先）** → 对应 design 规格（行/段/空行看 [`design/行与段-空行基准.md`](design/行与段-空行基准.md)）。
+- **新会话/接手**：`README.md` → 本页 → [`后优化清单.md`](后优化清单.md) §一（影响每天都用）→ [`handover/会话状态快照-20261104.md`](handover/会话状态快照-20261104.md)（**最新交接**）→ **下一批看它的 §六（P2 剩余部分）** → **先读 [`design/只读基准.txt`](design/只读基准.txt)（最高优先）** → 对应 design 规格（行/段/空行看 [`design/行与段-空行基准.md`](design/行与段-空行基准.md)）。
 - **用户/安装**：根 [`README.md`](../README.md) + [`release/v1.1.0.md`](release/v1.1.0.md)。
 - **修 bug**：先找现行规格和守卫测试；找不到判据就先记进 [`后优化清单.md`](后优化清单.md)。
 - **发布**：`CONTRIBUTING.md` §8 + [`release/v1.1.0.md`](release/v1.1.0.md) + `signing/README.md`。
@@ -45,7 +45,7 @@
 | 符号表数据 | [`../app/assets/symbols.json`](../app/assets/symbols.json) + [`design/符号表-分类与关键词.md`](design/符号表-分类与关键词.md) | JSON 是数据源 |
 | 快捷键 | [`../app/lib/lang/shortcut_registry.dart`](../app/lib/lang/shortcut_registry.dart) + [`../app/test/lang/shortcut_registry_test.dart`](../app/test/lang/shortcut_registry_test.dart) | 文档只讲设计理由 |
 | 发布说明 | [`release/v1.1.0.md`](release/v1.1.0.md) + GitHub Release | **逐字一致** |
-| 最近交接 | [`handover/会话状态快照-20261101-晚.md`](handover/会话状态快照-20261101-晚.md) | 历史事实，不是现行规格 |
+| 最近交接 | [`handover/会话状态快照-20261104.md`](handover/会话状态快照-20261104.md) | 历史事实，不是现行规格 |
 | **行为基准（最高优先）** | [`design/只读基准.txt`](design/只读基准.txt) | **用户编辑、AI 只读**；与任何文档冲突时以它为准 |
 | 历史过程 | [`dev_log/`](dev_log/) + [`handover/`](handover/) | 只读 |
 
