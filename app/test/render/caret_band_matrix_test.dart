@@ -122,27 +122,40 @@ void main() {
             reason: '竖条中心 $c 落在分母那一带（den=${den.top}..${den.bottom}）');
       });
 
-      // ⚠️ 只跑到 18：矩阵第一次跑就抓到一条**新问题** —— 字号 ≥20 时，
-      //   "行间分式 tex 末尾"与"块后"两格的竖条 y 差会涨到 **4.19（20px）/ 5.12（24px）**
-      //   （16px 时是 3.3）。两格用的是两把尺子（堆叠 ⇒ 根行盒中心；块后 ⇒ 边界内缩），
-      //   它们随字号缩放不同步 ⇒ 这是一条**独立缺陷**，已记入台账等专门修；
-      //   在修好之前，这里只钉住已验证的范围（14–18），不做"把阈值调大让它变绿"那种事。
-      if (fs <= 18) {
-        testWidgets('③ 行间分式：tex 末尾与"块后"那格的竖条 y 差 ≤4px',
-            (WidgetTester t) async {
-          const String inner = r'\frac{a-x}{a+x}';
-          final String doc = 'a\n\n' r'$$' '\n' '$inner' '\n' r'$$' '\n';
-          final int texEnd = doc.indexOf(inner) + inner.length;
-          final int closeEnd = doc.indexOf(r'$$', texEnd) + 2;
+      // ★ 2026-11-04（补测后改判）：这一条**不是缺陷**，是我一开始把不变式写错了。
+      //
+      //   实测（四档字号，行间分式）：
+      //     fs   tex末尾(块内)          块后(文本层)         中心差   Δ/字号
+      //     16   148.5..166.1 h17.6     145.2..165.2 h20.0   2.09    0.131em
+      //     18   156.0..175.3 h19.3     152.0..174.5 h22.5   2.35    0.131em
+      //     20   162.0..183.9 h21.8     157.8..182.8 h25.0   2.61    0.131em
+      //     24   175.6..201.7 h26.0     170.5..200.5 h30.0   3.14    0.131em
+      //
+      //   ⇒ 两格的**高度定义本来就不同**：块内 = 该层行盒 × 0.84（实测 h 随行盒），
+      //     块后 = 文本层标准 1.25em（`textLayerCaretRect`）。所以 **top 差**会随字号线性增长
+      //     （≈0.21em），而 **中心差恒为 0.131em** —— 这是设计结果，不是漂移。
+      //   ⇒ 正确的不变式是"中心差 ≤0.15em"（与字号成比例），不是"top 差 ≤4px"。
+      testWidgets('③ 行间分式：tex 末尾与"块后"两格的竖条**中心差 ≤0.15em**',
+          (WidgetTester t) async {
+        const String inner = r'\frac{a-x}{a+x}';
+        final String doc = 'a\n\n' r'$$' '\n' '$inner' '\n' r'$$' '\n';
+        final int texEnd = doc.indexOf(inner) + inner.length;
+        final int closeEnd = doc.indexOf(r'$$', texEnd) + 2;
 
-          await mount(t, doc, texEnd, fontSize: fs);
-          final double y1 = probe(t)!.bar.top;
-          await mount(t, doc, closeEnd, fontSize: fs);
-          final double y2 = probe(t)!.bar.top;
-          expect((y1 - y2).abs(), lessThan(4.0),
-              reason: 'tex 末尾 $y1 vs 块后 $y2');
-        });
-      }
+        await mount(t, doc, texEnd, fontSize: fs);
+        final Rect a = probe(t)!.bar;
+        await mount(t, doc, closeEnd, fontSize: fs);
+        final Rect b = probe(t)!.bar;
+        final double d = (a.center.dy - b.center.dy).abs();
+        expect(d, lessThan(fs * 0.15),
+            reason: '中心差 ${d.toStringAsFixed(2)}px（'
+                '${(d / fs).toStringAsFixed(3)}em）> 0.15em；'
+                'tex末尾 ${a.top.toStringAsFixed(1)}h${a.height.toStringAsFixed(1)} '
+                'vs 块后 ${b.top.toStringAsFixed(1)}h${b.height.toStringAsFixed(1)}');
+        // 顺带把"两格高度不同"这件事也钉住（它是设计，不是意外）
+        expect((a.height - b.height).abs(), greaterThan(1.0),
+            reason: '块内 = 该层行盒×0.84、块后 = 文本层 1.25em，两者不该相同');
+      });
 
       testWidgets('④ `\\overline` / `\\sqrt` 的 tex 末尾：竖条不许被压扁',
           (WidgetTester t) async {
