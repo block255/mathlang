@@ -61,7 +61,20 @@ SmartEdit reclaimEmptiedMath(String doc, SmartEdit e) {
   if (r.isDisplay) {
     if (b < doc.length && doc[b] == '\n') b += 1;
   }
-  return SmartEdit.remove(a, b, a);
+  // ★★★ 2026-11-04（N2）：**删除区一直延伸到文末时，光标退一格**。
+  //   现场（用户 ①）：`a⏎⏎$f^{\prime}$⏎` 里在公式之后按 ⌫ ⇒ 整段回收，光标停在 `openStart`；
+  //   可新缓冲区是 `a⏎⏎⏎`，那个偏移已经是**下一行**（实测竖条 175.8，而公式原来在 133.8，
+  //   用户："光标到了第三行，第二行实打实是个空行"）。
+  //   判据与 `math_nav._normalizeEmptyParagraph` 的"文末例外"同一条：别站在"文末下一行"上。
+  var caret = a;
+  // 判据：删除区**后面只剩换行**（= 文末），且它左边就是行终止符 ⇒ 光标退一格。
+  // 只在"删的是最后一行内容"时成立；中间行（后面还有正文）不受影响。
+  if (a > 0 &&
+      doc[a - 1] == '\n' &&
+      doc.substring(b).trim().isEmpty) {
+    caret = a - 1;
+  }
+  return SmartEdit.remove(a, b, caret);
 }
 
 /// 找到与 `[from, to)` 有关系的那个数学段（先看删除起点，再看终点，再看它们的前一格）

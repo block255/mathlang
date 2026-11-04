@@ -106,8 +106,15 @@ class LineIndex {
 
   String text(int i) => buf.substring(starts[i], ends[i]);
 
-  /// 空行 = 去掉空白后长度为 0（R1 的边界判定）
-  bool isBlank(int i) => text(i).trim().isEmpty;
+  /// 空行 = **这一行一个字符都没有**（R1 的边界判定）。
+  ///
+  /// ★★★ 2026-11-04（用户拍板「甲」· N1）：以前是 `trim().isEmpty`，于是"只打了空格的行"
+  ///   也被当成空行 ⇒ R1 不产生块 ⇒ 它走空行槽（不排版），而空行槽**只在行首画竖条**
+  ///   ⇒ **在空行里打空格，竖条当场消失**（用户第二次实测：`blank_runs` 改了还是消失，
+  ///   因为块模型这条判据没跟着改 —— 同一个事实曾经有两处实现，见
+  ///   `notes/lessons/20261104-调查纪律.md`）。
+  ///   ⇒ 含空格的行 = **普通段落**：空格有宽度、光标跟着它走（"用空格手动对齐"才做得到）。
+  bool isBlank(int i) => text(i).isEmpty;
 
   /// 行尾是否有硬换行标记（两个空格或反斜杠）—— R8
   bool hasHardBreak(int i) {

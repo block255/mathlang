@@ -631,8 +631,7 @@ RenderObject? rowOf(RenderObject o, RenderObject root) {
   return null;
 }
 
-/// [row] 与 [anchorRow] 是不是**同一层**？
-///
+/// [row] 与 [anchorRow] 是不是**同一层**？///
 /// ★★ 定义（2026-10-16，第三次迭代后收敛）：从 [row] 往上走到 [anchorRow] 的途中
 /// **不许穿过结构节点**（`RenderCustomLayout<_FracPos>` / `_SqrtPos` / `_ScriptPos` …）。
 /// · `x` 的行 → 主行：途中没有结构节点 ⇒ 同一层 ✓
@@ -782,6 +781,15 @@ Rect? findLocalRowBox(RenderObject root, Offset at,
         }
       }
       if (sameRow != null) maybeSameRow = sameRow;
+      // ⏳ 2026-11-04（N3c **未落地，撤回**）：本来这里想加"主行位点在这一层量不到字形
+      //   ⇒ 用这一层自己的行盒"，用来修"行间分式块的 tex 末尾竖条被画到分母那一带"
+      //   （实测 tex 末尾 y=159.0、块后 y=145.2，差 13.8px）。
+      //   但 `caret_layer_test` 的全域扫描（10 类结构 × 67 个位点）当场给出反例：
+      //   `\overline{AB}` 的 tex 首/尾两格 —— 竖条会被拉到"最外层行盒"（y 1.3..15.5），
+      //   而那一层的字形行在 17（上横线），**不相交** ⇒ 违反"竖条必须与本层字形行相交"。
+      //   ⇒ 判据不能一把梭：得先区分"结构节点后面"（`\frac` / `\sqrt` / 环境）与
+      //     "装饰后面"（`\overline` / `\underbrace` 这类，它们的行盒本来就不是主行带）。
+      //   证据与数字留在 `notes/handover/20261104-文末空行与行带.md` / 台账 §1.04.2。
       for (final ({Rect rect, double dx, RenderObject? row}) h in scanHits) {
         final Rect? rb = rowRectOf(h.row);
         if (rb == null) continue;

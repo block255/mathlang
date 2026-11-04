@@ -1017,8 +1017,12 @@ SmartEdit _normalizeEmptyParagraph(String source, SmartEdit e) {
   // out 里的第 nl2 格换行 → 换回 source 的绝对偏移（删掉的那一整块都在它前面）
   final int at = nl2 + (e.to! - e.from!);
   if (at < 0 || at + 1 > source.length) return e;
-  // 文末（收完之后后面什么都没有）⇒ 光标退一格，否则会站在"文末下一行"上、看起来掉一行
-  final bool atEnd = nl2 + 1 >= out.length;
+  // 文末（收完之后**尾部只剩换行**）⇒ 光标退一格，否则会站在"文末下一行"上、看起来掉一行。
+  //   ★★★ 2026-11-04（N2）：旧判据是 `nl2 + 1 >= out.length`（要求 nl2 那一格换行后面
+  //   **一个字符都没有**）。可"末行后面已经空出一行以上"时，nl2 之后还有换行 ⇒ 判不出文末
+  //   ⇒ 光标停在被删那一行的**下一行**（用户实测 dy=+38.6，且**只在**这种形状出现：
+  //   `a⏎⏎b⏎⏎c` 删 c 正常、`a⏎⏎b⏎⏎c⏎⏎` 删 c 才掉一行）。⇒ 改判"这一段换行延伸到文末"。
+  final bool atEnd = runTo >= out.length;
   final int caret2 = atEnd ? (e.from! == 0 ? 0 : e.caret - 1) : e.caret;
   return SmartEdit.remove(e.from!, at + 1, caret2 < 0 ? 0 : caret2);
 }

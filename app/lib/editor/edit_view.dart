@@ -362,7 +362,11 @@ class EditViewState extends State<EditView> {
     if (text.contains('\n') || _buf.hasSelection) return false;
     if (_buf.buf.isEmpty) return false;
     final (int ls, int le) = _lineBounds();
-    return ls == le && _inTailBlanks();
+    if (ls != le || !_inTailBlanks()) return false;
+    // ★★★ 2026-11-04（N3b）：**文首那一行不算** —— 前面根本没有"上一段"需要分隔，
+    //   补一个 `\n` 只会凭空造出一行。现场（用户实测）：新建 → 打 `w` → ⌫ → 打 `a`
+    //   ⇒ `a` 落到第二行、第一行成了实空行（光标还"闪了一下"到第二行）。
+    return _buf.buf.substring(0, _buf.caret).trim().isNotEmpty;
   }
 
   String _enterPayload() {
@@ -436,7 +440,15 @@ class EditViewState extends State<EditView> {
         enterRegion.isDisplay &&
         c == le &&
         c >= enterRegion.contentStart;
-    if (enterRegion != null && ((c != ls && c != le) || displayTexEnd)) {
+    // ★★★ 2026-11-04（N3a）：**行内公式的 tex 末尾**也算"在结构内部"。
+    //   现场（用户 ③）：`a⏎⏎$\frac{x}{y}$⏎` 里光标停在收尾 `$` 之前按 Enter
+    //   ⇒ 原来掉进通用路径、载荷 `\n\n` ⇒ **一次按 Enter 下两行**（实测竖条 +79.2px，
+    //   基准 1 要求只 +1 行；用户："光标下两行，输入落到第三行，第二行成了实空行"）。
+    final bool inlineTexEnd = enterRegion != null &&
+        !enterRegion.isDisplay &&
+        c == enterRegion.closeEnd - 1;
+    if (enterRegion != null &&
+        ((c != ls && c != le) || displayTexEnd || inlineTexEnd)) {
       // ★★ 判据必须窄：**行内**公式只有"在结构内部"才走这里 ——
       //   平铺原子之间按 Enter 是既有口径（就地断栅栏，`enter_inline_math_test` 钉着），
       //   第一版把行内全吃掉 ⇒ 那条守卫当场红。
@@ -444,7 +456,7 @@ class EditViewState extends State<EditView> {
           (c - enterRegion.contentStart).clamp(0, enterRegion.tex.length);
       final bool inStructure =
           buildCaretSites(enterRegion.tex).snap(relIn).path.isNotEmpty;
-      if (inStructure || enterRegion.isDisplay) {
+      if (inStructure || enterRegion.isDisplay || inlineTexEnd) {
         final int at = enterRegion.closeEnd.clamp(0, _buf.length);
         _mutate(() {
           // ★★★ 2026-11-01（用户复验两轮）：两种位置的空行模型**不一样** ——
