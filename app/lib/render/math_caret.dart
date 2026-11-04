@@ -223,8 +223,23 @@ class _MathWithCaretState extends State<MathWithCaret> {
       cur = cur.parent;
     }
     if (para == null || !para.hasSize) return null;
-    final double h = textCaretHeight(widget.textFontSize ?? widget.fontSize);
-    if (para.size.height > h * 1.6) return null; // 多行段 ⇒ 不知道是哪一行，退回
+    // ★★★ 2026-11-04（N3c · **真根因**）：旧判据 `para.height > textCaretHeight × 1.6`
+    //   把"**行内放了一个分式**"的单行段误判成"多行段" ⇒ 返回 null
+    //   ⇒ 上层退回 `rowBox.center`，而那个 rowBox 是**分母**那一行
+    //   ⇒ 用户看到的"竖条按分母画"。
+    //   实测（18px 字号 · `$\frac{a-x}{a+x}$`）：段盒 **37.0** > 阈值 36.0 ⇒ 误判；
+    //   竖条 115.1..137.6（中心 126.4 = 分母），主行带中心 114.35。
+    //   ★ 为什么 16px 字号下没暴露（测试默认字号）：段盒 32.0 == 阈值 32.0，`>` 不成立。
+    //
+    //   ⇒ 分界放宽到 **2.5em（= textCaretHeight × 2.5）**：
+    //     · 单行段 + 行内分式 ≈ 2.05em（18px ⇒ 37.0 vs 上限 56.3）⇒ 放行 ✓
+    //     · 两行纯文字 ≈ 3.4em（16px ⇒ 54.4 > 50.0；18px ⇒ 61.2 > 56.3）⇒ 仍判多行 ✓
+    //   公式自己占段高 ≥70% 也算"这一行就是它"（多行段里公式只占一小截）——
+    //   两条同时满足才用段中心，宁严不宽。
+    final double lineH = textCaretHeight(widget.textFontSize ?? widget.fontSize);
+    final bool oneLineHeight = para.size.height <= lineH * 2.5;
+    final bool formulaIsTheLine = root.size.height >= para.size.height * 0.7;
+    if (!oneLineHeight && !formulaIsTheLine) return null;
     final Offset rootInPara = root.localToGlobal(Offset.zero, ancestor: para);
     return -rootInPara.dy + para.size.height / 2;
   }
