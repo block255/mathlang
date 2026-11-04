@@ -149,6 +149,52 @@ void main() {
       expect(_parses(_inner(buf.buf)), isTrue);
     });
   });
+  // ★ 2026-11-04 晚（用户真实路径）：**正文里打 f，再连打撇** —— 建壳之后光标落在 `$` 之外，
+  //   于是两条入口都走了"不认撇"的支路：面板那条把载荷塞进公式（双上标红字），
+  //   键盘那条插成文本撇号。这里钉死"跨 `$` 也要并进那段公式的撇组"。
+  group(r'跨 `$` 的撇（正文起手 / 贴公式右侧）', () {
+    testWidgets(r'面板撇 ×3（正文 f 起手）⇒ f^{\prime\prime\prime} 可解析',
+        (WidgetTester tester) async {
+      final (EditViewState st, DocBuffer buf) = await _mount(tester, '甲f', 2);
+      for (var i = 0; i < 3; i++) {
+        st.insertSymbolTex("'", template: false);
+        await tester.pump();
+      }
+      expect(buf.buf.trim(), r"甲$f^{\prime\prime\prime}$");
+      expect(_parses(r'f^{\prime\prime\prime}'), isTrue);
+    });
+
+    testWidgets(r'面板撇 + 键盘撇（正文 f 起手）⇒ f^{\prime\prime} 可解析',
+        (WidgetTester tester) async {
+      final (EditViewState st, DocBuffer buf) = await _mount(tester, '甲f', 2);
+      st.insertSymbolTex("'", template: false);
+      await tester.pump();
+      tester.testTextInput.updateEditingValue(_v("'"));
+      await tester.pump();
+      expect(buf.buf.trim(), r"甲$f^{\prime\prime}$");
+      expect(_parses(r'f^{\prime\prime}'), true);
+    });
+
+    testWidgets(r'光标贴在公式右侧（`$` 之后）打撇 ⇒ 并进公式，不产生文本撇号',
+        (WidgetTester tester) async {
+      // 甲0 $1 f2 ^3 {4 \prime 5..10 }11 $12 乙13 ⇒ 光标 13
+      final (_, DocBuffer buf) = await _mount(tester, r'甲$f^{\prime}$乙', 13);
+      tester.testTextInput.updateEditingValue(_v("'"));
+      await tester.pump();
+      expect(buf.buf.trim(), r'甲$f^{\prime\prime}$乙');
+      expect(buf.buf.contains("'"), isFalse, reason: '不许在正文里留裸撇号');
+    });
+
+    testWidgets(r'公式里是**裸撇**、光标贴在右侧 ⇒ 接成裸双撇（合法）',
+        (WidgetTester tester) async {
+      // 甲0 $1 f2 '3 $4 乙5 ⇒ 光标 5
+      final (_, DocBuffer buf) = await _mount(tester, r"甲$f'$乙", 5);
+      tester.testTextInput.updateEditingValue(_v("'"));
+      await tester.pump();
+      expect(buf.buf.trim(), r"甲$f''$乙");
+      expect(_parses(r"f''"), isTrue);
+    });
+  });
   group('面板 / 快捷键：同一条规则', () {
     testWidgets(r'面板连点两次撇 ⇒ f^{\prime\prime}（合法）',
         (WidgetTester tester) async {

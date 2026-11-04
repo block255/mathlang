@@ -554,6 +554,11 @@ class EditViewState extends State<EditView> {
     //   写成 `^{\prime}` 之后，撇就是普通的 `^` 脚本，与 `x^{2}` 同一套模型。
     //   ★ 老文档里的裸撇由 `normalizeTex` 在提交点兜底（render/normalize.dart）。
     if (rawText == "'" && !isEnter && !_buf.hasSelection) {
+      // ★ 2026-11-04 晚：光标贴在行内公式**右侧**（`$` 之后）时也要能接上撇 ——
+      //   否则会往正文里插一个裸撇号（面板建壳后的常见状态，用户实测）。
+      if (mathRegionAt(_buf.buf, _buf.caret) == null && _mergePrimeAcrossClose()) {
+        return;
+      }
       if (mathRegionAt(_buf.buf, _buf.caret) != null) {
         // ★★★ 2026-11-04 晚（用户写作业实测）：**第二次及以后的撇要并进已有上标**。
         //   旧行为：每次打撇都新挂一个 `^{\prime}` ⇒ `f^{\prime}^{\prime}`
@@ -764,6 +769,9 @@ class EditViewState extends State<EditView> {
         if (_mergePrimeIntoExistingScript()) return;
         tex = _hasBaseAtom() ? r'^{\prime}' : r'{}^{\prime}';
       } else {
+        // ★ 2026-11-04 晚：跨 `$` 的撇 —— 光标贴在公式右侧时，先把撇并进那段公式的撇组
+        //   （否则 `_planScript` 的 `prev == '$'` 分支会把整个载荷再塞进公式 ⇒ 双上标红字）。
+        if (_mergePrimeAcrossClose()) return;
         // ★★★ 2026-11-01（用户实测）：**正文侧插入也要"搬家"** —— 与打 `^` 同一条通道。
         //   否则得到"正体 f + 一个只有撇的数学段"（撇无基座），是同一格的两套标准。
         final AutoExpand? ex =
@@ -909,6 +917,42 @@ class EditViewState extends State<EditView> {
       if (_buf.caret != m.at) _buf.setCaret(m.at);
       _buf.replace(m.at, m.at, m.text);
       _buf.setCaret((caret + m.text.length).clamp(0, _buf.length));
+    });
+    return true;
+  }
+
+  /// ★★★ 2026-11-04 晚（用户真实路径）：**跨 `$` 的撇** —— 光标紧贴在**行内公式的收尾 `$` 之后**时，
+  /// 能不能把这一次的撇并进那段公式末尾的撇组（`^{\prime…}` 或裸撇串）。
+  ///
+  /// 为什么必须单列：面板 / 快捷键给"正文里的 `f`"建壳之后，光标落在 **`$` 外面一格**
+  /// （`applySymbolInsert` 对"没有空槽的载荷"一律把光标放到整段之后 —— 既定口径，不改）；
+  /// 于是"再打一个撇"时 `mathRegionAt` 判"不在数学里"：
+  ///   · 面板那条走 `_planScript` 的 `prev == '$'` 分支 —— 它**会**写进公式，但不认识里面已有撇组
+  ///     ⇒ `f^{\prime}^{\prime}` ⇒ 双上标 ⇒ 红字 `[公式不完整]`（用户实测）；
+  ///   · 键盘那条什么都不做 ⇒ 正文里插一个**裸撇号**（接不上）。
+  /// ⇒ 两条入口都先问这一句：公式末尾是撇组就并进去（只插 `\prime` / `'`），光标仍停在公式内。
+  ({int at, String text, int caret})? _primeAcrossCloseTarget() {
+    final String doc = _buf.buf;
+    final int c = _buf.caret;
+    if (c <= 0 || c > doc.length) return null;
+    if (doc[c - 1] != r'$') return null;
+    if (c >= 2 && doc[c - 2] == r'$') return null; // `$$` 行间围栏的收尾不算
+    final MathRegion? r = mathRegionAt(doc, c - 1);
+    if (r == null || r.isDisplay || r.closeEnd != c) return null;
+    final PrimeMerge? m = primeMergeTarget(r.tex, r.tex.length);
+    if (m == null) return null;
+    final int at = r.contentStart + m.at;
+    final bool beforeBrace = m.at < r.tex.length && r.tex[m.at] == '}';
+    return (at: at, text: m.text, caret: at + m.text.length + (beforeBrace ? 1 : 0));
+  }
+
+  /// 跨 `$` 并撇（能并就落地；返回 `true` = 已处理，调用方不要再插 `^{\prime}`）
+  bool _mergePrimeAcrossClose() {
+    final ({int at, String text, int caret})? m = _primeAcrossCloseTarget();
+    if (m == null) return false;
+    _mutate(() {
+      _buf.replace(m.at, m.at, m.text);
+      _buf.setCaret(m.caret.clamp(0, _buf.length));
     });
     return true;
   }
