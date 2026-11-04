@@ -1798,8 +1798,15 @@ class DocViewState extends State<DocView> {
         //   ★ 块前/块后那两格用 `caretEdge` 那条路，不看这个值。
         final int texRel = slotCaretAbs == null ? -1 : slotCaretAbs - u.renderBase;
         // ★ 反馈 8：粘合位点按脚本档画（与行内公式同一函数，画/插同源）
-        final bool caretScript = texRel >= 0 &&
-            caretVisualLevel(buildCaretSites(text).snap(texRel)).script;
+        final ({int depth, bool script}) caretLevel = texRel >= 0
+            ? caretVisualLevel(buildCaretSites(text).snap(texRel))
+            : (depth: -1, script: false);
+        final bool caretScript = caretLevel.script;
+        // ★★★ 2026-11-04 晚（用户写作业实测：环境里子位点竖条按"那一格的行带"画）：
+        //   把**位点层级**也传下去 —— 绘制层要按它决定"格几何覆盖"要不要生效：
+        //   `depth ≤ 1` = 格级位点（贴格/行带）；`depth ≥ 2` = 子位点（上标/分母/次数/底数）
+        //   ⇒ 竖条必须回到那一行，不能被格行带接管。行内公式那条早就传了，行间块漏了。
+        final int caretDepth = caretLevel.depth;
         // ★★★ 2026-11-01（F8）：主行位点 ⇒ 只在『本层最高的那类字形』里选行
         final bool caretMainRow = texRel >= 0 && isMainRowSite(text, texRel);
         // ★★ 2026-11-03 晚（用户："只有第一列的空格画了框"）：**光标在哪一格**由偏移算，
@@ -1917,6 +1924,9 @@ class DocViewState extends State<DocView> {
             caretScript: caretScript,
             // ★ F8：主行位点 ⇒ 只在最高的那类字形里选行
             caretMainRow: caretMainRow,
+            // ★★★ 2026-11-04 晚：位点层级（0/1 = 格级；2+ = 子位点）—— 绘制层据此决定
+            //   要不要用"格行带"接管竖条（见 `math_caret` 的 `cellLevel`）。
+            caretDepth: caretDepth,
             // ★★ 2026-11-03 晚：光标在哪一格（画格框用，别拿像素猜）
             caretCell: caretCell,
             caretEdge: beforeBlock

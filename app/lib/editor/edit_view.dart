@@ -31,6 +31,7 @@ import '../lang/delete_range.dart';
 import '../lang/fenced_splice.dart';
 import '../lang/math_escape.dart';
 import '../lang/math_spans.dart';
+import '../lang/prime_merge.dart';
 import '../lang/paste_context.dart';
 import '../lang/smart_wrap.dart';
 import '../lang/symbol_insert.dart';
@@ -554,6 +555,11 @@ class EditViewState extends State<EditView> {
     //   ★ 老文档里的裸撇由 `normalizeTex` 在提交点兜底（render/normalize.dart）。
     if (rawText == "'" && !isEnter && !_buf.hasSelection) {
       if (mathRegionAt(_buf.buf, _buf.caret) != null) {
+        // ★★★ 2026-11-04 晚（用户写作业实测）：**第二次及以后的撇要并进已有上标**。
+        //   旧行为：每次打撇都新挂一个 `^{\prime}` ⇒ `f^{\prime}^{\prime}`
+        //   ⇒ TeX Double superscript ⇒ 屏上 `[公式不完整]`（`f` 打得出一个撇、打不出两个）。
+        //   判据与理由见 `lang/prime_merge.dart`（口径：一律并进往左最近的上标；光标仍在组之后）。
+        if (_mergePrimeIntoExistingScript()) return;
         rawText = _hasBaseAtom() ? r'^{\prime}' : r'{}^{\prime}';
       }
     }
@@ -754,6 +760,8 @@ class EditViewState extends State<EditView> {
     if (tex == "'") {
       final MathRegion? mr0 = mathRegionAt(_buf.buf, _buf.caret);
       if (mr0 != null) {
+        // ★★★ 2026-11-04 晚：面板 / 快捷键的撇与打字**同一条规则**（第二次起并进已有上标）。
+        if (_mergePrimeIntoExistingScript()) return;
         tex = _hasBaseAtom() ? r'^{\prime}' : r'{}^{\prime}';
       } else {
         // ★★★ 2026-11-01（用户实测）：**正文侧插入也要"搬家"** —— 与打 `^` 同一条通道。
@@ -881,6 +889,28 @@ class EditViewState extends State<EditView> {
     if (r == null) return false;
     final int rel = (_buf.caret - r.contentStart).clamp(0, r.tex.length);
     return scriptInsertWouldNest(r.tex, rel, sup: sup);
+  }
+
+  /// ★★★ 2026-11-04 晚：**撇并进已有上标**（第二次及以后的撇）。
+  ///
+  /// 用户现场（写作业）：`f` + 一个撇、光标停在组后，再打撇 ⇒ 旧行为是**再挂一个上标**
+  ///   ⇒ `f^{\prime}^{\prime}` ⇒ TeX Double superscript ⇒ 屏上 `[公式不完整]`。
+  /// 口径（2026-11-04 用户拍板，详见 `lang/prime_merge.dart`）：
+  ///   ① **一律并进往左最近的上标**（`x^{2}` + `'` ⇒ `x^{2\prime}`）；
+  ///   ② **光标仍停在组之后**（之后打 `+`/`(`/`=` 落主行，手感不变）；
+  ///   ③ 面板 / 快捷键同一条规则（两个调用点都走这里）。
+  ///
+  /// 返回 `true` = 已经并进去（调用方不要再插 `^{\prime}`）。
+  bool _mergePrimeIntoExistingScript() {
+    final int? at = primeMergeTarget(_buf.buf, _buf.caret);
+    if (at == null) return false;
+    final int caret = _buf.caret;
+    _mutate(() {
+      if (_buf.caret != at) _buf.setCaret(at);
+      _buf.replace(at, at, r'\prime');
+      _buf.setCaret((caret + r'\prime'.length).clamp(0, _buf.length));
+    });
+    return true;
   }
 
   /// 光标前（同一段数学里）有没有可以当基座的可见原子

@@ -378,7 +378,17 @@ class _MathWithCaretState extends State<MathWithCaret> {
     //   "点公式后面时里面也冒出一个框"）：
     //   框 = **光标所在那一格的"格框"**（x/宽取格子矩形，y/高取行带），
     //   而且**只有光标锚点真的落在这一格里**才画 ⇒ 不会跑到别的行/别的列，也不会在公式外面乱入。
-    if (widget.showEditingAids && at != null && hasEnv(widget.tex)) {
+    // ★★★ 2026-11-04 晚（用户写作业实测）：**只有"格级位点"才让格几何接管竖条**。
+    //   现场：矩阵里 `A^{2}`，光标在 `2` 后面（= 上标槽内的位点）⇒ 竖条按**格行带**画
+    //   （实测 1.5×23.3，整行高；环境外同一个位点是 1.5×10.2 —— 脚本行高）。
+    //   用户原话："光标都是对标 A 而不是 2 来画的"。
+    //   判据：`caretDepth ≤ 1` = 格级（这一格里、不在任何子结构里）⇒ 保留 2026-10-19 的老口径
+    //   （格框 / 行带接管，那条是为了"点不同行时光标与占位框分离"立的）；
+    //   `≥ 2` = 子位点（上标 / 下标 / 分式分子分母 / 根号次数 / log 底）⇒ **不接管**，
+    //   竖条就用上面按层级算好的 `findLocalRowBox` 那一行。
+    //   `-1`（老调用方没传）按格级处理 ⇒ 行为不变。
+    final bool cellLevel = widget.caretDepth <= 1;
+    if (widget.showEditingAids && at != null && cellLevel && hasEnv(widget.tex)) {
       final bool display = widget.mathStyle == MathStyle.display;
       // ★★ 2026-10-19（L19）：**一次建网格**，命中与画框走同一份几何
       //   （以前这里各建一次 ⇒ 每帧两遍叶盒扫描 + 两遍配对；也保证两者不会各判一套）。
