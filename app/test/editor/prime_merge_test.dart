@@ -50,25 +50,29 @@ Future<(EditViewState, DocBuffer)> _mount(WidgetTester t, String doc, int caret)
 void main() {
   group('primeMergeTarget（纯函数）', () {
     test(r'撇组之后 ⇒ 插到它的 `}` 之前', () {
-      expect(primeMergeTarget(r'f^{\prime}', 10), 9);
+      expect(primeMergeTarget(r'f^{\prime}', 10), (at: 9, text: r'\prime'));
     });
     test(r'撇组 + 下标之后 ⇒ 跳过下标找撇组', () {
-      expect(primeMergeTarget(r'f^{\prime}_{+}', 14), 9);
+      expect(primeMergeTarget(r'f^{\prime}_{+}', 14), (at: 9, text: r'\prime'));
     });
     test(r'普通上标之后 ⇒ 也并（口径①）', () {
-      expect(primeMergeTarget(r'x^{2}', 5), 4);
+      expect(primeMergeTarget(r'x^{2}', 5), (at: 4, text: r'\prime'));
     });
     test(r'只有下标 ⇒ 不并（新开 ^{\prime}）', () {
       expect(primeMergeTarget(r'f_{-}', 5), isNull);
     });
     test(r'光标在撇组内部末尾 ⇒ 就地插', () {
-      expect(primeMergeTarget(r'f^{\prime}', 9), 9);
+      expect(primeMergeTarget(r'f^{\prime}', 9), (at: 9, text: r'\prime'));
+    });
+    test(r'裸撇串之后 ⇒ 再接一个裸撇（老文档里那种写法）', () {
+      expect(primeMergeTarget(r"f'", 2), (at: 2, text: "'"));
+      expect(primeMergeTarget(r"f''", 3), (at: 3, text: "'"));
     });
     test(r'普通字符之后 ⇒ 不并', () {
       expect(primeMergeTarget(r'f', 1), isNull);
     });
     test(r'空公式 `{}` 基座 ⇒ 并进那个撇组', () {
-      expect(primeMergeTarget(r'{}^{\prime}', 11), 10);
+      expect(primeMergeTarget(r'{}^{\prime}', 11), (at: 10, text: r'\prime'));
     });
   });
 
@@ -125,6 +129,26 @@ void main() {
     });
   });
 
+  group('老文档里的**裸撇**（用户 2026-11-04 晚："行内还没修"）', () {
+    testWidgets(r"行内 $f' 再打撇 ⇒ $f''（合法）", (WidgetTester tester) async {
+      final (_, DocBuffer buf) = await _mount(tester, r"$f'$", 3);
+      tester.testTextInput.updateEditingValue(_v("'"));
+      await tester.pump();
+      expect(buf.buf.trim(), r"$f''$");
+      expect(_parses(_inner(buf.buf)), isTrue);
+    });
+
+    testWidgets(r"行间 $f^{\prime} 与裸撇混用也不炸：裸撇 + 撇 + 撇",
+        (WidgetTester tester) async {
+      final (_, DocBuffer buf) = await _mount(tester, r"$f'$", 3);
+      for (var i = 0; i < 2; i++) {
+        tester.testTextInput.updateEditingValue(_v("'"));
+        await tester.pump();
+      }
+      expect(buf.buf.trim(), r"$f'''$");
+      expect(_parses(_inner(buf.buf)), isTrue);
+    });
+  });
   group('面板 / 快捷键：同一条规则', () {
     testWidgets(r'面板连点两次撇 ⇒ f^{\prime\prime}（合法）',
         (WidgetTester tester) async {

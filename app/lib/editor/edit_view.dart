@@ -902,13 +902,13 @@ class EditViewState extends State<EditView> {
   ///
   /// 返回 `true` = 已经并进去（调用方不要再插 `^{\prime}`）。
   bool _mergePrimeIntoExistingScript() {
-    final int? at = primeMergeTarget(_buf.buf, _buf.caret);
-    if (at == null) return false;
+    final PrimeMerge? m = primeMergeTarget(_buf.buf, _buf.caret);
+    if (m == null) return false;
     final int caret = _buf.caret;
     _mutate(() {
-      if (_buf.caret != at) _buf.setCaret(at);
-      _buf.replace(at, at, r'\prime');
-      _buf.setCaret((caret + r'\prime'.length).clamp(0, _buf.length));
+      if (_buf.caret != m.at) _buf.setCaret(m.at);
+      _buf.replace(m.at, m.at, m.text);
+      _buf.setCaret((caret + m.text.length).clamp(0, _buf.length));
     });
     return true;
   }
