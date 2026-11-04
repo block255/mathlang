@@ -942,8 +942,15 @@ class EditViewState extends State<EditView> {
     final PrimeMerge? m = primeMergeTarget(r.tex, r.tex.length);
     if (m == null) return null;
     final int at = r.contentStart + m.at;
-    final bool beforeBrace = m.at < r.tex.length && r.tex[m.at] == '}';
-    return (at: at, text: m.text, caret: at + m.text.length + (beforeBrace ? 1 : 0));
+    // ★★★ 2026-11-04 晚（用户实测）：**落点必须"跟随用户原来的位置"**，不许贴到被并的那个组后面。
+    //   现场：`f^{\prime}_{+}`，光标移到整体之后（收尾 `$` 外面那一格）再打撇 ——
+    //   旧算法把光标放到"撇组 `}` 之后"，于是**跳到了下标 `_{+}` 前面**（用户："光标跑到加号前面"）。
+    //   与公式内那条路径（`caret + 载荷长度`）保持**同一条规则**：插入点在自己左边 ⇒ 只是被往后推。
+    return (
+      at: at,
+      text: m.text,
+      caret: (_buf.caret + m.text.length).clamp(0, _buf.length + m.text.length),
+    );
   }
 
   /// 跨 `$` 并撇（能并就落地；返回 `true` = 已处理，调用方不要再插 `^{\prime}`）

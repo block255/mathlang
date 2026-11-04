@@ -185,6 +185,16 @@ void main() {
       expect(buf.buf.contains("'"), isFalse, reason: '不许在正文里留裸撇号');
     });
 
+    testWidgets(r'先撇再下标、光标移到**整体之后**打撇 ⇒ 落点不动（不许跳到下标前）',
+        (WidgetTester tester) async {
+      // 甲0 $1 f2 ^3 {4 \5..10 }11 _12 {13 +14 }15 $16 乙17 ⇒ 光标 17（$ 之后那一格）
+      final (_, DocBuffer buf) = await _mount(tester, r'甲$f^{\prime}_{+}$乙', 17);
+      tester.testTextInput.updateEditingValue(_v("'"));
+      await tester.pump();
+      expect(buf.buf.trim(), r'甲$f^{\prime\prime}_{+}$乙');
+      expect(buf.caret, 23,
+          reason: '落点应"跟随用户位置"（17 + 6），而不是贴到撇组后面（18）');
+    });
     testWidgets(r'公式里是**裸撇**、光标贴在右侧 ⇒ 接成裸双撇（合法）',
         (WidgetTester tester) async {
       // 甲0 $1 f2 '3 $4 乙5 ⇒ 光标 5
