@@ -1284,13 +1284,16 @@ class EditorPageState extends State<EditorPage> {
       ];
       _editKey.currentState?.noteExternalWrap(wrapped, spans: spans);
     }
-    // ★★ 2026-10-24（批 17，《整体设计》原则 5）：导入后若文档里有**行内 `$$`**，必须让用户看见。
-    //   行内 `$$` **没有任何合法含义**（只有**行首**的 `$$` 才是行间围栏）；它会被读成
+    // ★★ 2026-10-24（批 17，《整体设计》原则 5）：导入后若文档里有**不能解释的 `$$`**，必须让用户看见。
+    //   这类 `$$` **没有任何合法含义**（只有**行首且整行是围栏**的 `$$` 才算行间公式）；它会被读成
     //   "前一段的收尾 + 下一段的开头"，所以不一定立刻出问题，但只要旁边少一个 `$`，
     //   就会变成"一个空的行内公式 + 后面的 tex 全掉到文字层"（整行 LaTeX 裸奔）。
     //   （实测事故：`20261021作业编辑.md` 第 15 行本来就有四处，旧版 `scanMathSpans` 被它
     //    带偏后把第 19 行改坏成 `$$\to$$`。判据与包裹那头都已修好，这里补的是**可见性**。）
     //   ★ 措辞只说实话：**不承诺**"一定会显示成源码"（第 15 行修完后就正常渲染了）。
+    //   ★★ 2026-11-04（P2 剩余部分）：判据已从"在不在行首"换成"围栏/段模型解释得了吗"，
+    //     所以**文案也不能再只说"行内"** —— 现在还会报 `$$(x)` 那种"行首空壳"和
+    //     `$$\text{纹波}…`（内容写在开头行 ⇒ 整行不是围栏）这种"看起来是块其实不是块"。
     final List<int> inlineDoubleDollar = inlineDoubleDollarLines(text);
     _editKey.currentState?.focusInput();
     // ★★ 2026-10-19（U2）：文案**只说真事** ——
@@ -1302,8 +1305,8 @@ class EditorPageState extends State<EditorPage> {
     _snack(inlineDoubleDollar.isEmpty
         ? base
         : '$base；⚠ 第 ${inlineDoubleDollar.take(6).join('、')}'
-            '${inlineDoubleDollar.length > 6 ? '…' : ''} 行有行内 `\$\$`'
-            r'（不是合法围栏，建议改成单个 `$`）');
+            '${inlineDoubleDollar.length > 6 ? '…' : ''} 行有不是合法围栏的 `\$\$`'
+            r'（`$$` 要独占一行，或整行写成 `$$…$$`）');
   }
 
   /// ★★ S4-d②：**导出**（`md` / `txt`）。

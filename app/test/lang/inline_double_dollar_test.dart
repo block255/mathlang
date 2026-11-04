@@ -67,6 +67,49 @@ void main() {
       expect(inlineDoubleDollarLines('${r'$$'}${'\n'}x${'\n'}${r'$$'}'), isEmpty,
           reason: r'行首 $$ 是合法围栏');
     });
+
+    // ★★★ 2026-11-04（P2 剩余部分）：判据从"这个 `$$` 在不在行首"改成
+    //   "**span 模型 + 块模型解释得了它吗**"。语料两类：
+    //     · **真实文档里的形状**（盘里 53 份 md 扫出来的，见台账 §一·零六）；
+    //     · 探针构造的边界形状（`$$(x)` 一族）。
+    //   改前必红：合法 5 条里 3 条会被报（单行块 / 缩进 4 格两种），
+    //             非法 2 条会被漏（`$$(x)` / `$$ x`）。
+    test(r'C2 · 表驱动：什么算"能被模型解释的 $$"', () {
+      // 合法的 `$$`：围栏（含缩进 ≥4 格的）、相邻两段的接缝
+      final Map<String, String> legal = <String, String>{
+        r'R5 单行块 $$x=1$$': r'$$x=1$$',
+        '多行块': '${r'$$'}\nx=1\n${r'$$'}\n',
+        r'相邻两段 $a$$b$': r'$a$$b$',
+        '缩进 4 格的单行块': r'    $$x=1$$',
+        '缩进 4 格的多行块': '    ${r'$$'}\nx=1\n    ${r'$$'}\n',
+        r'真事故夹具第 1 行（三个行内公式首尾相邻）':
+            r'$\lim_{x\to0^{-}}\frac{x^{3}}{\left|{sinx}\right|^{3}}$$=$$\lim_{x\to0^{-}}\frac{x^{3}}{-x^{3}}$$=$$\lim_{x\to0^{-}}$(-1)=-1',
+      };
+      legal.forEach((String name, String doc) {
+        expect(inlineDoubleDollarLines(doc), isEmpty, reason: '合法却报了：$name');
+      });
+
+      // 非法的 `$$`：行首空壳、行内夹心、围栏内容里的、闭合挂在内容行尾的
+      final Map<String, (String, List<int>)> illegal =
+          <String, (String, List<int>)>{
+        r'行首空壳 + 内容 $$(x)': (r'$$(x)', <int>[1]),
+        r'行首空壳 + 空格 $$ x': (r'$$ x', <int>[1]),
+        r'行首空壳 + 两个行内公式': (r'$$ $\hat{x}$ $\bar{y}$', <int>[1]),
+        r'行内夹心 甲$$x$$乙': (r'甲$$x$$乙', <int>[1]),
+        r'围栏**内容**里出现 $$': ('${r'$$'}\na${r'$$'}b\n${r'$$'}\n', <int>[2]),
+        r'多行块的闭合挂在内容行尾（真实文档 电容与RC滤波:125-127）': (
+          r'$$'
+              r'\text{纹波} \approx \frac{T}{\tau} = \frac{T}{RC}'
+              '\n'
+              r'C \geq \frac{I_{load} \cdot T}{V_{ripple}}$$'
+              '\n',
+          <int>[1, 2]
+        ),
+      };
+      illegal.forEach((String name, (String, List<int>) c) {
+        expect(inlineDoubleDollarLines(c.$1), c.$2, reason: '非法却没按行报：$name');
+      });
+    });
   });
 
   group('B · 智能包裹出口加闸', () {

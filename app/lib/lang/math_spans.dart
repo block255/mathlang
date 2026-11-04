@@ -9,6 +9,8 @@
 //   ② `\$`（转义）不算定界符；行间 `$$` 优先于行内 `$`（同一位置先试两个）；
 //   ③ 扫描是**线性**的，长文档也没问题（不含任何递归/回溯）。
 
+import '../core/block.dart';
+
 /// 一段数学区间的**绝对偏移**（`[start, end)` 含定界符本体）
 class MathSpan {
   const MathSpan({
@@ -125,13 +127,28 @@ bool _atLineStart(String s, int i) {
   return k < 0 || s[k] == '\n';
 }
 
-/// **行内出现的 `$$`** 落在哪些行（1-based，行号升序、不重复）。
+/// **不能被围栏模型 / 段模型解释的 `$$`** 落在哪些行（1-based，行号升序、不重复）。
 ///
-/// 为什么要单列一条：行内 `$$` **没有任何合法含义**（`$$` 只在其**行首**才是行间围栏），
+/// 为什么要单列一条：真正的"行内 `$$`"**没有任何合法含义**（`$$` 只在其**行首**才是行间围栏），
 /// 可它会被渲染成"一个**空的行内公式** + 后面的 tex 全掉到文字层" ⇒ 用户看到**源码裸奔**；
 /// 若这段正好吞掉一个 `{`，KaTeX 还会报 `[公式不完整]`。
 /// ⇒ 导入时的智能包裹一旦造出它，必须**可见**（《整体设计》原则 5：静默失败必须可见）。
+///
+/// ★★★ 2026-11-04 重写判据（P2 剩余部分）：旧的只有一句"这个 `$$` 不在行首就报"，
+///   它量的是**位置**，不是**合法围栏** ⇒ 实测两头都错（扫盘里 53 份真实 md 得出）：
+///   · **误报** —— `$$x=1$$`（R5 单行块；报的是**闭合**那一对）· `$a$$b$`（相邻两段，合法）
+///     · `    $$…`（缩进 ≥4 格：块模型 `trimLeft()` 认它是围栏，span 扫描限 ≤3 空格不认）；
+///   · **漏报** —— `$$(x)` / `$$ x` / `$$ $\hat{x}$…`（行首但**不是**围栏 ⇒ §11.22 的空行内公式）
+///     · `$$\text{纹波}…`（内容写在开头行 ⇒ 整行不是围栏 ⇒ 整段 LaTeX 裸奔，真实文档撞过）。
+///
+/// 现行判据 = "**围栏模型 / 段模型解释得了它吗**"：
+///   1. 它是某个**行间段**（display）的**开**或**闭**定界符 ⇒ 合法；
+///   2. 它是**相邻两个行内段的接缝**（前段收尾 + 后段开头，`$a$$b$`）⇒ 合法；
+///   3. 该行按块模型 [BlockMarkers.isMathFence] **是围栏**，且它是行首那对或行尾那对 ⇒ 合法
+///      （只为兜"缩进 ≥4 格"这一处判据分歧：块模型不限缩进，span 扫描限 3）；
+///   4. 其余 ⇒ **报**。
 List<int> inlineDoubleDollarLines(String source) {
+  final List<MathSpan> spans = scanMathSpans(source);
   final List<int> lines = <int>[];
   var lineNo = 1;
   for (var i = 0; i + 1 < source.length; i++) {
@@ -140,10 +157,34 @@ List<int> inlineDoubleDollarLines(String source) {
       continue;
     }
     if (source[i] != r'$' || source[i + 1] != r'$' || _escaped(source, i)) continue;
-    if (_atLineStart(source, i)) continue; // 行首 `$$` = 合法的行间围栏
+    if (_ddExplainedByModel(source, spans, i)) continue;
     if (lines.isEmpty || lines.last != lineNo) lines.add(lineNo);
   }
   return lines;
+}
+
+/// 下标 [i] 处这个 `$$` 能不能被**围栏模型 / 段模型**解释（判据见 [inlineDoubleDollarLines]）
+bool _ddExplainedByModel(String source, List<MathSpan> spans, int i) {
+  final int after = i + 2;
+  var seamEnd = false; // 前一段在这里收尾
+  var seamStart = false; // 后一段在这里开头
+  for (final MathSpan s in spans) {
+    if (s.display && (s.start == i || s.end == after)) return true; // 围栏的开/闭
+    if (!s.display && s.end == i + 1) seamEnd = true;
+    if (!s.display && s.start == i + 1) seamStart = true;
+  }
+  if (seamEnd && seamStart) return true; // `$a$$b$`：合法相邻
+  final int ls = source.lastIndexOf('\n', i) + 1;
+  final int nl = source.indexOf('\n', after);
+  final String line = source.substring(ls, nl < 0 ? source.length : nl);
+  if (BlockMarkers.isMathFence(line)) {
+    final String t = line.trimLeft();
+    final int lead = line.length - t.length;
+    if (i == ls + lead + t.indexOf(r'$$') || i == ls + lead + t.lastIndexOf(r'$$')) {
+      return true; // 行首/行尾那一对 + 整行是围栏（含 ≥4 格缩进）
+    }
+  }
+  return false;
 }
 
 /// `i` 下标处的字符是不是被反斜杠转义（`\$`）
