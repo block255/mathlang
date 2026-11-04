@@ -1231,6 +1231,13 @@ class DocViewState extends State<DocView> {
         }
         final int? cellOffset = envCellOffset(tex, cell);
         if (cellOffset != null) return cellOffset;
+        // ★★★ 2026-11-04（表批 B① · 参差行）：几何网格按**最大列数**把短行补满
+        //   （画格框要用那些 `synthetic` 格），可源里那一行**没有这一格** ⇒ 上面查不到槽。
+        //   实测（探针）：`\begin{bmatrix}a&b&c\\d\end{bmatrix}` 第 2 行右侧空白
+        //   ⇒ 落 **块前 0** / **块末 36**（掉到 `envNearestEdge` 的兜底，"点空白却出了块"）。
+        //   口径：点在短行右侧 ⇒ 落**该行最后一个真实格的内容末尾**（与"点行末"是同一件事）。
+        final int? raggedRowEnd = _raggedRowEndOffset(tex, cell);
+        if (raggedRowEnd != null) return raggedRowEnd;
       }
     }
     if (hit.onGlyph && hit.offset != null) {
@@ -1281,6 +1288,32 @@ class DocViewState extends State<DocView> {
     );
   }
 
+  /// 参差行：点在"几何补出来的**幽灵格**"上 ⇒ 落**该行最后一个真实格**的内容末尾。
+  ///
+  /// 为什么会有幽灵格：几何网格按 `maxCols` 把短行补满（画格框要用它们，`synthetic` 标记），
+  /// 但**源空间没有那一格** ⇒ `envCellOffset` 查不到槽。没有这条兜底时点击会掉到
+  /// `envNearestEdge`（块前 / 块后）—— 实测 `\begin{bmatrix}a&b&c\\d\end{bmatrix}`
+  /// 第 2 行右侧空白给 `0` 与 `36`（块末），而正确落点是 `23`（`d` 之后）。
+  ///
+  /// 判据只有一句：**源里这一行没有第 `cell.col` 格**（`col > 最后一格`）⇒ 取最后一格、
+  /// `atEnd: true`，交给同一个 [envCellOffset] 求"去空白后的内容末尾"（不另写一份口径）。
+  int? _raggedRowEndOffset(String tex, EnvCellHit cell) {
+    final List<EnvTable> tables = envTablesIn(tex)
+      ..sort((EnvTable a, EnvTable b) => a.beginStart.compareTo(b.beginStart));
+    final int ix = cell.envIx ?? 0;
+    if (ix < 0 || ix >= tables.length) return null;
+    final EnvTable t = tables[ix];
+    if (cell.row < 0 || cell.row >= t.rows.length) return null;
+    final List<EnvCell> row = t.rows[cell.row];
+    if (row.isEmpty) return null;
+    final int lastCol = row.length - 1;
+    if (cell.col <= lastCol) return null; // 不是幽灵格：真实格已经查过了
+    final int? rowEnd = envCellOffset(
+      tex,
+      EnvCellHit(cell.row, lastCol, atEnd: true, onInk: false, envIx: cell.envIx),
+    );
+    return rowEnd;
+  }
   /// 行间公式块被点中
 
   /// 行内公式被点中（`InlineMathText.onMathTap` 给的是**段内相对**的 tex、
