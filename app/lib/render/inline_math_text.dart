@@ -708,14 +708,18 @@ class _RenderTextCaretBox extends RenderBox
       final int len = text.text.toPlainText().length;
       final int idx = _caretIndex.clamp(0, len);
       at = text.getOffsetForCaret(TextPosition(offset: idx), Rect.zero);
-      // ★★ 2026-11-10（实测）：Skia 对**段落末尾那一个位置**给出的 y 会偏低（`甲`：
-      //   末尾 y=3.9、行首 y=−0.2，差 4.1 px）⇒ 竖条会比同一行的字低 4 px
-      //   （`blank_line_baseline_test` 的"光标与字的 y 必须同高"当场红）。
-      //   末尾那个位置视觉上就在最后一个字所在的行 ⇒ y 取前一个位置的行。
-      if (idx == len && idx > 0) {
-        final Offset prev =
-            text.getOffsetForCaret(TextPosition(offset: idx - 1), Rect.zero);
-        at = Offset(at.dx, prev.dy);
+      // ★★★ 2026-11-10 晚（用户实测回归）：**软换行边界上的光标要落在上一行行末**。
+      //   offset 正好落在"第 1 行末 / 第 2 行首"这个边界时，默认（downstream）取到的是
+      //   **下一行行首**；旧实现（竖条是文字流里的占位）落在**上一行行末**。
+      //   实测（宽 657.6、边界 offset=37）：downstream=(0.1, 26.8) / upstream=(601.4, −0.2)。
+      //   ⇒ 只要 upstream 的行更靠上，就用 upstream（= 恢复旧表现）。
+      //   ★ 顺带解决"段落末尾那个位置 Skia 给的 y 偏低 4.1px"（那种情形 upstream 也更靠上）。
+      if (idx > 0) {
+        final Offset up = text.getOffsetForCaret(
+          TextPosition(offset: idx, affinity: TextAffinity.upstream),
+          Rect.zero,
+        );
+        if (up.dy < at.dy - 0.5) at = up;
       }
       // ★ 垂直居中在行盒里（旧实现是 `PlaceholderAlignment.middle` 的等价物）。
       //   ★★ 行盒高度**必须问段落自己**（`getFullHeightForCaret`）：这一行里可能插着

@@ -93,6 +93,70 @@ void main() {
     expect((await _measure(tester, caret: null)).hasBar, isFalse);
   });
 
+  testWidgets('★ 软换行边界上的光标：落在**上一行行末**（旧表现），不跳到下一行行首',
+      (WidgetTester tester) async {
+    // 现场（用户 2026-11-10 晚）：点第 1 行末尾右侧的空白 ⇒ 竖条出现在第 2 行行首。
+    // 根因：`getOffsetForCaret(offset)` 默认 downstream，边界上给的是**下一行行首**；
+    // 旧实现（竖条是文字流里的占位）落在上一行行末 ⇒ 改成"upstream 更靠上就用 upstream"。
+    const String wrapped =
+        'adolescence, and that primary school children do not exhibit gender '
+        'differences in mathematics anxiety';
+    const double w = 400;
+
+    Future<({Rect bar, RenderParagraph p, int wrap})> measure(int caret) async {
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: Align(
+            alignment: Alignment.topLeft,
+            child: SizedBox(
+              width: w,
+              child: InlineMathText(
+                source: wrapped,
+                baseOffset: 0,
+                caretOffset: caret,
+                mathFontSize: kFontSize,
+                textStyle:
+                    const TextStyle(fontSize: kFontSize, height: kLineHeight),
+                showEditingAids: true,
+              ),
+            ),
+          ),
+        ),
+      ));
+      await tester.pump();
+      final RenderParagraph p =
+          tester.renderObject<RenderParagraph>(find.byType(RichText));
+      // 第 2 行的行首偏移 = 换行点
+      final int wrap =
+          p.getPositionForOffset(Offset(0, kFontSize * kLineHeight * 1.5)).offset;
+      Rect? bar;
+      for (final Element e in find.byType(Container).evaluate()) {
+        final Widget widget = e.widget;
+        if (widget is! Container) continue;
+        final BoxConstraints? c = widget.constraints;
+        if (c == null || c.minWidth != 1.5 || c.maxWidth != 1.5) continue;
+        final RenderObject? ro = e.renderObject;
+        if (ro is RenderBox && ro.hasSize) {
+          bar = ro.localToGlobal(Offset.zero) & ro.size;
+        }
+      }
+      expect(bar, isNotNull);
+      return (bar: bar!, p: p, wrap: wrap);
+    }
+
+    // 先把换行点量出来（caret 放 0，只为拿段落）
+    final int wrap = (await measure(0)).wrap;
+    expect(wrap, greaterThan(0), reason: '这段文字在宽度 $w 下必须折行，否则这条守卫是空测');
+    final ({Rect bar, RenderParagraph p, int wrap}) before = await measure(wrap - 1);
+    final ({Rect bar, RenderParagraph p, int wrap}) onBoundary = await measure(wrap);
+
+    expect((onBoundary.bar.center.dy - before.bar.center.dy).abs(), lessThan(1.0),
+        reason: '边界上的竖条必须与"上一行那一个字"同一行：'
+            '边界=${onBoundary.bar.center.dy.toStringAsFixed(1)} '
+            '上一格=${before.bar.center.dy.toStringAsFixed(1)} '
+            '（改前：边界会落到下一行，差一整行）');
+  });
+
   testWidgets('竖条位置与"段落自己算出来的位置"一致（不许飘）',
       (WidgetTester tester) async {
     final int caret = _secondDifferences() + 1;
