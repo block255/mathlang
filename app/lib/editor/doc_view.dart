@@ -1055,10 +1055,36 @@ class DocViewState extends State<DocView> {
     final List<int> pureMap = paragraphIndexMap(text);
     final RenderParagraph? para = _contentParagraph(ro, _plainTextOf(text));
     if (para == null) return null;
-    final TextPosition tp =
-        para.getPositionForOffset(para.globalToLocal(global));
-    final int p = tp.offset.clamp(0, pureMap.length - 1);
+    final Offset localPos = para.globalToLocal(global);
+    final TextPosition tp = para.getPositionForOffset(localPos);
+    int p = tp.offset.clamp(0, pureMap.length - 1);
+    // ★★★ 2026-11-10 晚（用户实测）：**点在行末右侧的空白 ⇒ 落点吸附到"这一行最后一个可见字符之后"**。
+    //
+    // 为什么必须吸：软换行的断点是一个**空格**。排出来的偏移是"换行点"（= 下一行行首），
+    // 也就是**在这个不可见的空格之后** ⇒
+    //   · 光标看起来和行末最后一个字隔着一格（那格是空格）；
+    //   · **退格吃掉的是那个空格** ⇒ 两个词当场粘成一个（用户实测："rate" + "themselves"
+    //     ⇒ "ratethemselves"，视觉上像"把下一行接上来了"）。
+    // 判据：点比"这个偏移对应的光标位置"更靠右 ⇒ 说明点在线末右侧（引擎把落点吸到了行末）
+    // ⇒ 往回吃掉行尾空白。行中间的正常点击不会被吸（`localX ≈ caretX`）。
+    final String paraText = para.text.toPlainText();
+    if (p > 0 && p <= paraText.length) {
+      final double caretX =
+          para.getOffsetForCaret(TextPosition(offset: p), Rect.zero).dx;
+      if (localPos.dx > caretX + 0.5) {
+        while (p > 0 && p <= paraText.length && _isLineTailBlank(paraText, p - 1)) {
+          p -= 1;
+        }
+      }
+    }
     return u.renderBase + pureMap[p];
+  }
+
+  /// [i] 这一格是不是"行尾空白"（空格 / 制表符）——判断"点在行末右侧"时往回吃用。
+  static bool _isLineTailBlank(String text, int i) {
+    if (i < 0 || i >= text.length) return false;
+    final int c = text.codeUnitAt(i);
+    return c == 0x20 || c == 0x09;
   }
 
   /// 该渲染文本里的**纯文字部分**（把行内公式整段去掉）
