@@ -162,3 +162,11 @@ $sizeMb = [math]::Round(((Get-ChildItem $distDir -Recurse -File | Measure-Object
 Write-Host ''
 Write-Host "√ 完成: $distDir  (${sizeMb} MB, $($lines.Count) 个文件)"
 Write-Host "  下一步可跑：powershell -ExecutionPolicy Bypass -File scripts\make_shortcut.ps1" -ForegroundColor DarkGray
+
+# 快捷方式自动重定向（2026-11-10 用户要求：开发版抬版本后不再手动重新拖）
+#   只改“指向 dist\v*\mathlang.exe”的快捷方式，名字与位置都不动；失败不影响产物。
+try {
+    & (Join-Path $PSScriptRoot 'refresh_shortcuts.ps1') -Quiet
+} catch {
+    Write-Host ("  ! 快捷方式重定向失败（不影响产物）：" + $_.Exception.Message) -ForegroundColor Yellow
+}
