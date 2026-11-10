@@ -8,6 +8,7 @@
 //   而"自动换行 + 基线对齐"这两件事**免费**由 Flutter 的行内排版器完成（S2-2 实测验证）。
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 
 import '../lang/env_table.dart';
 import 'caret_ownership.dart';
@@ -174,14 +175,33 @@ class _InlineMathTextState extends State<InlineMathText> {
     //     实测空的 `Text.rich` 比"有一个字"的行**矮 7px**（空 `### ` 25.4 vs 有字 32.4）
     //     ⇒ 空标题里打出第一个字时整块会突然长高、页面跳一下。空格正好把行高补回 32.4。
     //   ★ 不用 `\u200B`（零宽空格）：版面一样，但它在某些字体里缺字形 ⇒ 可能渲染成豆腐块。
+    // ★★★ 2026-11-10（反馈 ④）：**光标条退出字符流**。
+    //
+    // 旧做法：把竖条当 `WidgetSpan` 插在光标那一格（0 宽占位，见已删的 `_caretBar`）。
+    //   当时的判断是"0 宽 = 不参与排版"，实测证明**只对了一半**：
+    //   WidgetSpan 会往段落字符流里塞一个 **U+FFFC**，而它是行内断行类别 ID ——
+    //   **那个位置本身就是一个断行机会**，与宽度、高度都无关。
+    //
+    // 实测（真字体 Segoe UI、正文栏宽 657.7、字号 22）：
+    //   光标落在 `different` 的 `d` 与 `i` 之间 ⇒ 同一段从 **2 行变 3 行**；
+    //   光标一亮一灭，整段就在 2/3 行之间来回 ⇒ 用户看到"排版闪烁、`d` 一会儿在上行末"。
+    //
+    // ⇒ 竖条改成**段落之外的兄弟**（[`_TextCaretBox`]）：位置由段落自己的
+    //   `RenderParagraph.getOffsetForCaret` 给出，**排版只算一次**；
+    //   闪烁 / 选区 / 导出只影响"画不画它"，不影响任何排版输入。
     if (widget.source.isEmpty) {
       final bool here = rel != null && rel <= 0;
-      return Text.rich(TextSpan(style: widget.textStyle, children: <InlineSpan>[
-        const TextSpan(text: ' '),
-        if (here && widget.showEditingAids) _caretBar(),
-      ]));
+      return _wrapWithCaret(
+        Text.rich(TextSpan(style: widget.textStyle, children: <InlineSpan>[
+          const TextSpan(text: ' '),
+        ])),
+        caretPara: here ? 0 : null,
+      );
     }
 
+    // 段落字符流里的下标（数学段在段落里只占一格 U+FFFC）—— 用来给竖条定位
+    int paraLen = 0;
+    int? caretPara;
     for (var i = 0; i < segs.length; i++) {
       final ProjectionSegment s = segs[i];
       if (s.isMath) {
@@ -196,17 +216,50 @@ class _InlineMathTextState extends State<InlineMathText> {
                 caretOwnedBy(slotPl, i, isMath: true))) {
           children.add(_composingSpan());
         }
+        paraLen += 1;
         continue;
+      }
+      // ★ 光标在本段文字里 ⇒ 记下它在**段落字符流**里的下标（竖条按这个位置画）
+      if (caretOwnedBy(pl, i, isMath: false)) {
+        caretPara = paraLen + pl!.localRel.clamp(0, s.text.length);
       }
       if (s.isEmphasis) {
         children.addAll(_emphasisSpansWithCaret(s, i, pl));
-        continue;
+      } else {
+        children.addAll(_textSpansWithCaret(s, i, pl, slotPl));
       }
-      children.addAll(_textSpansWithCaret(s, i, pl, slotPl));
+      paraLen += s.text.length;
     }
 
-    return Text.rich(
-      TextSpan(style: widget.textStyle, children: children),
+    return _wrapWithCaret(
+      Text.rich(TextSpan(style: widget.textStyle, children: children)),
+      caretPara: caretPara,
+    );
+  }
+
+  /// 把"正文 + 竖条"包成一层：**竖条是段落的兄弟，不在字符流里**（见 [build] 里的长注释）。
+  ///
+  /// [caretPara] 是光标在段落字符流里的下标（null ⇒ 这次不画：闪烁灭 / 有选区 / 导出中）。
+  Widget _wrapWithCaret(Widget text, {required int? caretPara}) {
+    if (caretPara == null || !widget.showEditingAids) return text;
+    final double h = textCaretHeight(_textFontSize);
+    // ignore: avoid_print
+    print('[CARET-DIAG] fs=$_textFontSize styleH=${widget.textStyle?.height} '
+        'lineBox=$_lineBoxHeight barH=$h idx=$caretPara');
+    return _TextCaretBox(
+      caretIndex: caretPara,
+      barWidth: widget.caretWidth,
+      barHeight: h,
+      lineBoxHeight: _lineBoxHeight,
+      children: <Widget>[
+        text,
+        Container(
+          width: widget.caretWidth,
+          height: h,
+          // ★ 必须与数学侧的光标同色（数学侧靠 `\textcolor` 注入，见 caret_sites.dart）
+          color: widget.caretColor ?? const Color(kCaretColorValue),
+        ),
+      ],
     );
   }
 
@@ -231,10 +284,11 @@ class _InlineMathTextState extends State<InlineMathText> {
     // ★ `widget.selStart/selEnd` 是**本单元源坐标里的相对偏移**（`DocView._localSelFor` 算的），
     //   所以这里必须传段内相对的 `s.start`（2026-10-20 曾误改成绝对偏移，导致中文不高亮）。
     final int abs0 = s.start;
+    // ★★★ 2026-11-10（反馈 ④）：这里**不再插光标条**（竖条由 `_wrapWithCaret` 叠在外面）。
+    //   组合串仍要插在这里 —— 它是**内容**（输入法预览），必须参与排版。
     return <InlineSpan>[
       ..._runs(s.text.substring(0, r), abs0),
-      if (here) _caretBar(),
-      // ★ 插入点在光标条之后：光标不动、拼音向右展开，后面的字被真的推开
+      // ★ 插入点在正文中间：光标不动、拼音向右展开，后面的字被真的推开
       if (composingHere) _composingSpan(),
       ..._runs(s.text.substring(r), abs0 + r),
     ];
@@ -307,9 +361,9 @@ class _InlineMathTextState extends State<InlineMathText> {
       return body(0, txt.length);
     }
     final int r = pl!.localRel.clamp(0, txt.length);
+    // ★★★ 2026-11-10（反馈 ④）：不再插光标条（竖条由 `_wrapWithCaret` 叠在外面）
     return <InlineSpan>[
       ...body(0, r),
-      _caretBar(),
       if (widget.composingText.isNotEmpty) _composingSpan(),
       ...body(r, txt.length),
     ];
@@ -518,34 +572,185 @@ class _InlineMathTextState extends State<InlineMathText> {
         ),
       );
 
-  /// ★ 光标必须**零宽**。
-  ///
-  /// `WidgetSpan` 是参与行内排版的：1.5 px 的宽度足以在行尾临界处把词挤到下一行 →
-  /// **行高变 → 分页跟着动 → 页边界随光标位置抖动**（用户会看到页码乱跳）。
-  /// 这里用「0 宽占位 + `OverflowBox` 溢出绘制」：布局上不存在，视觉上照旧。
-  /// 高度保持不变（仍参与行高计算），所以"渲染即测量"的结论不受影响。
-  InlineSpan _caretBar() => WidgetSpan(
-        alignment: PlaceholderAlignment.middle,
-        child: SizedBox(
-          width: 0,
-          // ★★ 文本层高度 = `字号 × 1.25`（**旧值**，也是"文字后面的光标"的标准）。
-          //   字号取**本行文本 style** 的字号（标题 28 / 正文 16）—— 不再用数学字号，
-          //   否则以后两处字号不一致时又是"两份判据"。
-          height: textCaretHeight(_textFontSize),
-          child: OverflowBox(
-            alignment: Alignment.centerLeft,
-            minWidth: 0,
-            maxWidth: widget.caretWidth * 4,
-            child: Container(
-              width: widget.caretWidth,
-              height: textCaretHeight(_textFontSize),
-              // ★ 必须与数学侧的光标同色（数学侧靠 `\textcolor` 注入，见 caret_sites.dart）
-              color: widget.caretColor ?? const Color(kCaretColorValue),
-            ),
-          ),
-        ),
-      );
-
   /// 本行的**文本字号**（文本侧光标与"公式前后那两格"都用它当文本层标准）
   double get _textFontSize => widget.textStyle?.fontSize ?? widget.mathFontSize;
+
+  /// 行盒高度 = 字号 × 行距（`TextStyle.height`）。
+  ///
+  /// 只用来把竖条**垂直居中**（旧实现靠 `PlaceholderAlignment.middle`，效果相同）。
+  /// 没设 `height` 时退回 1.2（Flutter 缺省行距的量级）—— 目前所有调用方都设了。
+  double get _lineBoxHeight => _textFontSize * (widget.textStyle?.height ?? 1.2);
+}
+
+/// **正文 + 竖条**：竖条是段落的**兄弟**，不在字符流里。
+///
+/// 为什么必须分开（2026-11-10 反馈 ④ 的实测）：
+///   · 竖条原来是一个 0 宽的 `WidgetSpan` —— 0 宽只保证"不占宽度"，
+///     但 WidgetSpan 会在段落字符流里留下一个 **U+FFFC**，那是行内断行类别 ID，
+///     **本身就是一个断行机会**：光标落在 `d`/`i` 之间时，整段会从 2 行变 3 行，
+///     光标一灭又变回 2 行 ⇒ 用户看到"排版闪烁 + 字在行首/行末之间跳"。
+///   · 现在竖条完全不进字符流：位置在 layout 阶段用段落自己的
+///     `getOffsetForCaret` 算出来（与旧的 0 宽占位位置**逐像素一致**，见 2026-11-10 标定：
+///     旧竖条 `Rect.fromLTRB(0.1, 3.4, 1.6, 23.4)` == `getOffsetForCaret(0, Rect.zero)`）。
+class _TextCaretBox extends MultiChildRenderObjectWidget {
+  const _TextCaretBox({
+    required this.caretIndex,
+    required this.barWidth,
+    required this.barHeight,
+    required this.lineBoxHeight,
+    required super.children,
+  });
+
+  /// 光标在**段落字符流**里的下标（数学段在段落里只占一格）
+  final int caretIndex;
+  final double barWidth;
+  final double barHeight;
+
+  /// 行盒高度（字号 × 行距）。旧实现用 `PlaceholderAlignment.middle` 把竖条**垂直居中**在行盒里，
+  /// 新的叠层必须自己算这一下：`dy += (行盒 − 竖条高) / 2`。
+  /// 标定（2026-11-10）：正文 16 / 行距 1.7 ⇒ 行盒 27.2、竖条 20 ⇒ 内缩 3.6，
+  /// 与旧竖条的 `Rect` 逐像素一致（旧 3.4 == 新 `getOffsetForCaret().dy(=−0.2) + 3.6`）。
+  final double lineBoxHeight;
+
+  @override
+  _RenderTextCaretBox createRenderObject(BuildContext context) => _RenderTextCaretBox(
+        caretIndex: caretIndex,
+        barWidth: barWidth,
+        barHeight: barHeight,
+        lineBoxHeight: lineBoxHeight,
+      );
+
+  @override
+  void updateRenderObject(BuildContext context, _RenderTextCaretBox renderObject) {
+    renderObject
+      ..caretIndex = caretIndex
+      ..barWidth = barWidth
+      ..barHeight = barHeight
+      ..lineBoxHeight = lineBoxHeight;
+  }
+}
+
+class _RenderTextCaretBox extends RenderBox
+    with
+        ContainerRenderObjectMixin<RenderBox, MultiChildLayoutParentData>,
+        RenderBoxContainerDefaultsMixin<RenderBox, MultiChildLayoutParentData> {
+  _RenderTextCaretBox({
+    required this._caretIndex,
+    required this._barWidth,
+    required this._barHeight,
+    required this._lineBoxHeight,
+  });
+
+  int _caretIndex;
+  set caretIndex(int v) {
+    if (v == _caretIndex) return;
+    _caretIndex = v;
+    markNeedsLayout();
+  }
+
+  double _barWidth;
+  set barWidth(double v) {
+    if (v == _barWidth) return;
+    _barWidth = v;
+    markNeedsLayout();
+  }
+
+  double _barHeight;
+  set barHeight(double v) {
+    if (v == _barHeight) return;
+    _barHeight = v;
+    markNeedsLayout();
+  }
+
+  double _lineBoxHeight;
+  set lineBoxHeight(double v) {
+    if (v == _lineBoxHeight) return;
+    _lineBoxHeight = v;
+    markNeedsLayout();
+  }
+
+  RenderBox? get _text => firstChild;
+
+  RenderBox? get _bar {
+    final RenderBox? t = firstChild;
+    return t == null ? null : childAfter(t);
+  }
+
+  @override
+  void setupParentData(RenderBox child) {
+    if (child.parentData is! MultiChildLayoutParentData) {
+      child.parentData = MultiChildLayoutParentData();
+    }
+  }
+
+  @override
+  void performLayout() {
+    final RenderBox? text = _text;
+    if (text == null) {
+      size = constraints.smallest;
+      return;
+    }
+    // 段落按**原样**的约束排版（与"没有竖条"时完全相同）
+    text.layout(
+      BoxConstraints(maxWidth: constraints.maxWidth),
+      parentUsesSize: true,
+    );
+    size = constraints.constrain(text.size);
+
+    final RenderBox? bar = _bar;
+    if (bar == null) return;
+    bar.layout(
+      BoxConstraints.tight(Size(_barWidth, _barHeight)),
+      parentUsesSize: true,
+    );
+    Offset at = Offset.zero;
+    if (text is RenderParagraph) {
+      final int len = text.text.toPlainText().length;
+      final int idx = _caretIndex.clamp(0, len);
+      at = text.getOffsetForCaret(TextPosition(offset: idx), Rect.zero);
+      // ★★ 2026-11-10（实测）：Skia 对**段落末尾那一个位置**给出的 y 会偏低（`甲`：
+      //   末尾 y=3.9、行首 y=−0.2，差 4.1 px）⇒ 竖条会比同一行的字低 4 px
+      //   （`blank_line_baseline_test` 的"光标与字的 y 必须同高"当场红）。
+      //   末尾那个位置视觉上就在最后一个字所在的行 ⇒ y 取前一个位置的行。
+      if (idx == len && idx > 0) {
+        final Offset prev =
+            text.getOffsetForCaret(TextPosition(offset: idx - 1), Rect.zero);
+        at = Offset(at.dx, prev.dy);
+      }
+      // ★ 垂直居中在行盒里（旧实现是 `PlaceholderAlignment.middle` 的等价物）。
+      //   ★★ 行盒高度**必须问段落自己**（`getFullHeightForCaret`）：这一行里可能插着
+      //   行内公式，行盒会被公式撑高 —— 用"字号 × 行距"估出来的值会让竖条低 5.8 px
+      //   （`caret_line_center_test` ② 当场红：公式侧 109.1 vs 文字侧 114.9）。
+      // ★ 垂直位置：与数学侧**同一把尺子**（2026-11-01 定的「行盒中心」；
+      //   单行段 = 段落盒中心 —— 见 `caret_line_center_test` ②）。
+      //   为什么不能只用 `getOffsetForCaret` 的 y：它给的是**字形盒顶**（基线 − ascent），
+      //   当这一行里插着更高的行内公式时，字形盒顶会落在行盒中间（实测 6.99 vs 行盒顶 0），
+      //   直接加内缩会让竖条低 2~6 px。所以：
+      //   · **单行段** ⇒ 直接按段落盒中心放（和数学侧那条判据同一个式子）；
+      //   · **多行段**（软换行）⇒ 按"字形盒顶 + (行高 − 竖条高)/2"放（行内公式很少见）。
+      final double paraH = text.size.height;
+      final double line0H =
+          text.getFullHeightForCaret(const TextPosition(offset: 0));
+      final bool singleLine = line0H > 0 && (paraH - line0H).abs() < 1.0;
+      double barTop;
+      if (singleLine) {
+        barTop = (paraH - _barHeight) / 2;
+      } else {
+        final double boxH = line0H > 0 ? line0H : _lineBoxHeight;
+        final double inset = (boxH - _barHeight) / 2;
+        barTop = at.dy + (inset > 0 ? inset : 0);
+      }
+      at = Offset(at.dx, barTop);
+    }
+    (bar.parentData! as MultiChildLayoutParentData).offset = at;
+  }
+
+  @override
+  void paint(PaintingContext context, Offset offset) {
+    defaultPaint(context, offset);
+  }
+
+  @override
+  bool hitTestChildren(BoxHitTestResult result, {required Offset position}) =>
+      defaultHitTestChildren(result, position: position);
 }

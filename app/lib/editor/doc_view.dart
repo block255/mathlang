@@ -1047,37 +1047,18 @@ class DocViewState extends State<DocView> {
 
     // ② 文字（段落 / 标题 / 引用 / 列表项）：交给段落排版器
     final String text = _renderParts(u.type, u.source).text;
-    final int? rel = u.relFor(_caret);
-    // ★ 只有**真的画了光标条**时，段落才多那一格（与渲染侧共用同一判据）
-    final int? caretInText =
-        _caretAbsFor(u, rel) == null ? null : _caretInTextSegment(text, rel);
-    // ★★ 2026-10-17 用户实测「单行拖选少最后一个字符」的**根因**就在这里：
-    //   段落里那根**零宽光标条**占了**一个格子**（`caretInText` 让映射表多一格），
-    //   而 `getPositionForOffset` 在"拖到行尾右侧"时会把落点吸到**光标条之前**
-    //   ⇒ 段落坐标比真实行末少 1；再套上多了一格的映射表，正好又少 1 ⇒ 差 1 格。
-    //   修法：**映射用"纯表"**（不含光标条），再把段落坐标里"光标条那一格"扣掉。
-    // 映射表与段落**必须**同时"有/没有"光标条那一格 —— 这就是上面那条判据的唯一意义
-    final List<int> pureMap =
-        paragraphIndexMap(text, caretInText: caretInText);
+    // ★★★ 2026-11-10（反馈 ④）：文本侧光标条**已经退出字符流**（`inline_math_text._TextCaretBox`
+    //   把它另画在段落之外）⇒ 段落里**不再**多出"光标条那一格"。
+    //   这里必须传 `caretInText: null`（纯表）：映射表与段落两侧都没有那一格才一致。
+    //   ★ 历史：2026-10-17 的"单行拖选少最后一个字符"就是因为把光标条当成了段落里的一格 ——
+    //     当时靠"渲染侧画不画"决定要不要多一格；现在那一格在结构上消失了，这条判据一起退休。
+    final List<int> pureMap = paragraphIndexMap(text);
     final RenderParagraph? para = _contentParagraph(ro, _plainTextOf(text));
     if (para == null) return null;
     final TextPosition tp =
         para.getPositionForOffset(para.globalToLocal(global));
-    // ★ `pureMap` 与"段落是否多一格光标条"现在由**同一个判据**（`_caretAbsFor`）决定：
-    //   画了光标条 ⇒ `caretInText` 非空 ⇒ 映射表多一格、段落也多一格 ⇒ 两侧一致；
-    //   没画（有选区 / 失焦 / 闪烁灭）⇒ 两侧都**没有**那一格 ⇒ 不会差 1。
     final int p = tp.offset.clamp(0, pureMap.length - 1);
     return u.renderBase + pureMap[p];
-  }
-
-  /// 光标落在本段**文字段**里的相对偏移（落在数学段里则 null —— 那时不产生额外码元）
-  static int? _caretInTextSegment(String text, int? rel) {
-    if (rel == null) return null;
-    for (final ProjectionSegment s in projectInline(text)) {
-      if (s.isMath) continue;
-      if (rel >= s.start && rel <= s.end) return rel;
-    }
-    return null;
   }
 
   /// 该渲染文本里的**纯文字部分**（把行内公式整段去掉）
