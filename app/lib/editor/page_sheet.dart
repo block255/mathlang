@@ -99,13 +99,28 @@ class PageSheet extends StatelessWidget {
                   Expanded(
                     // 正文区：宽度已定，超页的内容**裁掉**（溢出由告警说明，原则 5）
                     child: ClipRect(
-                      child: SingleChildScrollView(
-                        physics: const NeverScrollableScrollPhysics(),
-                        child: SizedBox(
-                          width: metrics.contentWidth,
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: children,
+                      // ★★★ 2026-11-10（反馈 ①）：**这条滚动条是假的，必须关掉**。
+                      //
+                      // 这层 `SingleChildScrollView` 只是"裁剪 + 撑高"用的
+                      // （`NeverScrollableScrollPhysics`：**用户根本滚不动它**），
+                      // 但桌面端的 `MaterialScrollBehavior.buildScrollbar` 会无条件给每个
+                      // 竖直 Scrollable 套一个 `Scrollbar` ⇒ 它会在**正文栏右边缘**画一条
+                      // 12 px 宽的全高滑块（用户截图里那条"莫名的灰色长条"）。
+                      // ★ 而框架的 `_handleScrollMetricsNotification` 淡入路径**没有**
+                      //   "没得滚就别显示"的保护（对比 `_handleScrollNotification`），
+                      //   内容尺寸一变（打字/重排）就淡入、且不再淡出 ⇒ **常驻**。
+                      // ⇒ 只给**这一层**关掉滚动条；外面那个真能滚的容器（`page-scroll`）不动。
+                      child: ScrollConfiguration(
+                        behavior: ScrollConfiguration.of(context)
+                            .copyWith(scrollbars: false),
+                        child: SingleChildScrollView(
+                          physics: const NeverScrollableScrollPhysics(),
+                          child: SizedBox(
+                            width: metrics.contentWidth,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: children,
+                            ),
                           ),
                         ),
                       ),
