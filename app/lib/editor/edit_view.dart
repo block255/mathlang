@@ -23,6 +23,7 @@ import '../core/doc_buffer.dart';
 import '../core/doc_settings.dart';
 import '../core/text_normalize.dart';
 import '../lang/auto_expand.dart';
+import '../lang/blank_collapse.dart';
 import 'blank_runs.dart';
 import '../lang/block_ops.dart';
 import '../lang/break_split.dart';
@@ -1543,9 +1544,19 @@ class EditViewState extends State<EditView> {
     //   · 跨段时不是"删一段"，而是"抹掉可见字符、其余保留" ⇒ 一次 replace（一步撤销）。
     final DeletePlan d = plan ?? _planDeleteAt(from, to);
     if (d.isEmpty) return;
+    // ★★★ 2026-11-10（反馈 ③）：**删空一段 ⇒ 收掉它自己的那个换行**，
+    //   与逐字删除（`math_nav._normalizeEmptyParagraph`）**同一条判据**（`lang/blank_collapse.dart`）。
+    //   现场：`……⏎⏎<那一行>⏎⏎尾` 拖选整行删除 ⇒ 若只抹可见字符，两段之间会从
+    //   1 个空行（版面 1.99 行）变成 2 个空行（2.99 行）—— 用户看到的"多出一个空行"。
+    //   ★ 跨行选区**不触发**：判据第一条就是"选区里不含换行"（那是删掉若干行，不是删空一段）。
+    final ({int at, bool atEnd})? collapse = d.replacement.isEmpty
+        ? emptiedLineCollapse(_buf.buf, d.from, d.to)
+        : null;
     final int caret = d.from.clamp(0, _buf.length);
-    _mutate(() => _buf.replace(d.from, d.to, d.replacement));
-    if (_buf.caret != caret) _buf.setCaret(caret);
+    _mutate(() => _buf.replace(
+        d.from, collapse == null ? d.to : collapse.at + 1, d.replacement));
+    final int want = caret.clamp(0, _buf.length);
+    if (_buf.caret != want) _buf.setCaret(want);
   }
 
   /// 没现成 plan 时算一次（含"被包装基座扩成整个对象"）。

@@ -12,6 +12,7 @@
 
 import '../core/block.dart';
 import '../core/paragraph_break.dart';
+import '../lang/blank_collapse.dart';
 import 'caret_sites.dart';
 import 'projection.dart';
 import 'site_adjacency.dart';
@@ -985,46 +986,24 @@ SmartEdit _visibleObjectDelete(String source, int at, int caret) {
 /// 而版面口径是「第一个空行是段界(0 高)、之后每多一个 `⏎` 算一行」/「文首每个空行都是一行」
 /// ⇒ 这两处都会算成 **2 行**，可空段落只有 **1 行**。
 ///
-/// 判据（四件事同时成立才收）：
-///   ① 这一下删完，**光标所在那一行变空了**（还有字就不是"删空一段"）；
-///   ② 它前面是**两个换行**（段界并置）**或者**它是**文首**（文首没有上一段，
-///      但第一个空行同样是段界性质 —— 用户 2026-10-28 拍板"文首也收"）；
-///   ③ 它后面也是**两个换行**（否则后面还有字，不构成"并置"），或者是**文末**；
-///   ④ 收完之后，剩下的字节正好是 `⏎⏎⏎`（段界 + 1 空行）。
+/// ★★★ 2026-11-10（反馈 ③）：判据**提到 [`emptiedLineCollapse`] 里，两条通道共用**
+///   （逐字删除 + 选区删除 / 剪切）。改动两处、都是收紧：
+///   ① **"这一行空了"改成严格判据**（区间左端是行首、右端是行末）—— 旧版用 `trim()`，
+///      于是"只剩空格的行"也被当空行、把它自己的换行收掉；用户 2026-11-10 拍板
+///      **有空格的不算完全空行** ⇒ 只剩空格绝不能收；
+///   ② **区间里含换行 ⇒ 一律不收**（跨行选区删的是"若干行"，不是"删空一段"）。
 ///
 /// 收哪一格：**收这一行自己的那个换行**（即删掉的那段之后紧跟的那格），
 /// 于是它与"删字符/删标记"合成**一次编辑**（一步撤销），光标不用挪。
 /// 文末例外：收完之后光标**退一格**，否则会站在"文末下一行"上、看起来掉了一行。
+///   ★ 2026-11-04（N2）：文末的判据是"那串换行一直延伸到文末"（`atEnd`），
+///   不是"后面一个字符都没有"—— 后者在"末行后面已空出一行以上"时判不出来。
 SmartEdit _normalizeEmptyParagraph(String source, SmartEdit e) {
   if (e.isNone || !e.deletes) return e;
-  final String out = source.replaceRange(e.from!, e.to!, '');
-  final int p = e.from!;
-  final int ls2 = p == 0 ? 0 : out.lastIndexOf('\n', p - 1) + 1;
-  final int nl2 = out.indexOf('\n', p);
-  if (nl2 < 0) return e; // 文末没有换行 ⇒ 不归这条管
-  if (out.substring(ls2, nl2).trim().isNotEmpty) return e; // 行里还有字
-  // ★ 判据落在"这一格换行所在的那一串换行"上：**只有 ≥2 个换行才可能并置**
-  //   （单个换行 = 普通软换行/行尾，收它就成了"删结构"）。
-  var runFrom = nl2;
-  while (runFrom > 0 && out[runFrom - 1] == '\n') {
-    runFrom--;
-  }
-  var runTo = nl2;
-  while (runTo < out.length && out[runTo] == '\n') {
-    runTo++;
-  }
-  if (runTo - runFrom < 2) return e;
-  // out 里的第 nl2 格换行 → 换回 source 的绝对偏移（删掉的那一整块都在它前面）
-  final int at = nl2 + (e.to! - e.from!);
-  if (at < 0 || at + 1 > source.length) return e;
-  // 文末（收完之后**尾部只剩换行**）⇒ 光标退一格，否则会站在"文末下一行"上、看起来掉一行。
-  //   ★★★ 2026-11-04（N2）：旧判据是 `nl2 + 1 >= out.length`（要求 nl2 那一格换行后面
-  //   **一个字符都没有**）。可"末行后面已经空出一行以上"时，nl2 之后还有换行 ⇒ 判不出文末
-  //   ⇒ 光标停在被删那一行的**下一行**（用户实测 dy=+38.6，且**只在**这种形状出现：
-  //   `a⏎⏎b⏎⏎c` 删 c 正常、`a⏎⏎b⏎⏎c⏎⏎` 删 c 才掉一行）。⇒ 改判"这一段换行延伸到文末"。
-  final bool atEnd = runTo >= out.length;
-  final int caret2 = atEnd ? (e.from! == 0 ? 0 : e.caret - 1) : e.caret;
-  return SmartEdit.remove(e.from!, at + 1, caret2 < 0 ? 0 : caret2);
+  final ({int at, bool atEnd})? c = emptiedLineCollapse(source, e.from!, e.to!);
+  if (c == null) return e;
+  final int caret2 = c.atEnd ? (e.from! == 0 ? 0 : e.caret - 1) : e.caret;
+  return SmartEdit.remove(e.from!, c.at + 1, caret2 < 0 ? 0 : caret2);
 }
 
 /// [o] 所在行的行首（绝对偏移）
