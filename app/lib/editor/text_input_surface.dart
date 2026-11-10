@@ -252,13 +252,26 @@ class TextInputSurfaceController extends ChangeNotifier with TextInputClient {
       _newlineHandledAtMicros = 0;
       inserted = '';
     }
-    // ★★ 2026-10-18：平台有**两套投递模型**，这里必须同时伺候：
-    //   · **累积式**（真机、元素不清空时的 IME）：value = 元素里的全文 ⇒ 取新增后缀；
-    //   · **单字符式**（测试替身 `testTextInput`、以及元素被清空时的硬件键）：
-    //     value = 刚打的那一格 ⇒ 与基线**完全相同**也要算"又打了一个同样的字"。
-    //   判据：只有当"重复送来的那份"长度 > 1 时才当成重复（累积式重复交付的是整串）；
-    //   长度为 1 时一律当新输入 —— 否则 `summer` 会变成 `sumer`（真跑出来过）。
-    if (inserted.isEmpty && v.text == _platformText && _platformText.length <= 1) {
+    // ★★★ 2026-11-10（反馈 ②）：**"开始组合"的回声不是输入**。
+    //
+    // 引擎 `ComposeBeginHook()`（`text_input_plugin.cc:126-139`）在组合开始时会先发一次
+    // **文本一字未变 + composing 塌陷**的更新（`TextInputModel::BeginComposing()` 把组合区
+    // 设成 `TextRange(selection_.start())`）—— 那是"我要开始组合了"的通知，不是用户输入。
+    // 旧兜底（2026-10-18）把它当成"又打了一个字" ⇒ 把上一个字再插一遍：
+    //   · 打 `（` 再起拼音 ⇒ `（（我`（用户反馈 2 的现场）
+    //   · 按 `/` 自动展开分式后起拼音 ⇒ 光标在分子里，插进去的 `/` **又展开一个分式** ⇒ 叠套
+    // 只在平台文本恰好剩 1 个字符时触发 —— 所以"按过 Enter 之后打的第一个字"最容易中招。
+    //
+    // ★ 但那条兜底对**单字符式投递**仍然是必需的：测试替身 `testTextInput` 与硬件键
+    //   每次只送"刚打的那一格"，于是连打两个同样的字时 `v.text == 基线`（`summer` 会变
+    //   `sumer`、连打三个空格只进一个）。两种情形**可以分开**：
+    //   · **回声**（引擎起组合）：`composing` 是**有效的塌陷区间**（base == extent ≥ 0）；
+    //   · **单字符重复投递**：`composing` 是 **`TextRange.empty`（−1,−1）**，根本没有组合。
+    //   ⇒ 兜底只在"这次更新不带组合区间"时生效。
+    if (inserted.isEmpty &&
+        v.text == _platformText &&
+        _platformText.length <= 1 &&
+        !v.composing.isValid) {
       inserted = v.text;
     }
     final bool wasComposing = _composing.isNotEmpty;
