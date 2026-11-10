@@ -30,6 +30,22 @@ if (-not $Version) {
 }
 if (-not $Tag) { $Tag = "v$Version" }
 
+# ★★ 2026-11-10 踩坑（1.3.2 发布当场发现）：本脚本给**当前 HEAD** 打 tag，
+#   而"release 提交"（pubspec 抬版本 + 发布说明）往往是发布之后才做的
+#   ⇒ tag 指到上一个提交，那里面 pubspec 还是旧版本号
+#   （v1.3.2 一开始就指到了含 1.3.1 的提交，最后靠 `git push -f origin refs/tags/v1.3.2` 修正）。
+#   ⇒ 发布前先验两件事：① 工作树干净；② HEAD 里的 pubspec 版本 == 这次要发的版本。
+if (-not $WhatIf) {
+    $dirty = (& git -C $repoDir status --porcelain) -join "`n"
+    if ($dirty.Trim()) {
+        throw ("工作树不干净 —— 先提交再发布，否则 tag 会打在旧提交上：`n" + $dirty)
+    }
+    $headPub = (& git -C $repoDir show "HEAD:app/pubspec.yaml") -join "`n"
+    if ($headPub -notmatch ("version:\s*" + [regex]::Escape($Version))) {
+        throw ("HEAD 里的 pubspec 版本不是 " + $Version + " —— 先把「抬版本 + 发布说明」提交掉，再发布")
+    }
+}
+
 if (-not $Token) {
     # ★★ 2026-10-28 踩坑：先用了 github_token.txt，它**只有读权限**
     #   （POST /releases ⇒ 403、连 PATCH 仓库也 403），白折腾一轮。
