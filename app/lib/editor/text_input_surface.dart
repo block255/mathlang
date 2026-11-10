@@ -91,6 +91,13 @@ class TextInputSurfaceController extends ChangeNotifier with TextInputClient {
   /// 组合中间态文本（**不写进缓冲区**）
   String _composing = '';
 
+  /// 上一次更新是不是"**结束了组合**"（提交）。
+  ///
+  /// 用途：引擎在提交之后会**再投递一次完全相同、composing 为空**的更新（回声）。
+  /// 那时它和"单字符重复投递"在事件层面长得一样，只能靠"上一拍刚提交过"来分辨 ——
+  /// 见 [updateEditingValue] 里那段长注释（2026-11-10 分式叠套的第二个来源）。
+  bool _commitJustEnded = false;
+
   /// `inputFormatters` 看到的「旧值」
   TextEditingValue _lastValue = _kClearedValue;
 
@@ -268,13 +275,33 @@ class TextInputSurfaceController extends ChangeNotifier with TextInputClient {
     //   · **回声**（引擎起组合）：`composing` 是**有效的塌陷区间**（base == extent ≥ 0）；
     //   · **单字符重复投递**：`composing` 是 **`TextRange.empty`（−1,−1）**，根本没有组合。
     //   ⇒ 兜底只在"这次更新不带组合区间"时生效。
+    //
+    // ★★★ 2026-11-10 晚（用户实测：分式仍然叠一层）：还有**第三种**回声 ——
+    //   **提交之后的重复投递**：`ComposeEndHook` 报一次文本之后，引擎会**再报一次完全相同、
+    //   composing 为空**的更新。它同样"不带组合区间"，长度也还是 1（`/`）⇒ 上面那条判据
+    //   分不出来 ⇒ 再插一个 `/` ⇒ **又展开一个分式**（`$\frac{\frac{}{}}{}$`；用户："之前两个
+    //   分数线，现在一个"）。
+    //   区分办法：**刚结束过一次组合提交**（`wasComposing`）⇒ 紧跟其后的那一次"同文本、
+    //   无新输入"当回声吞掉；吞过之后就清标志，连打同一个字照旧。
+    final bool wasComposing = _composing.isNotEmpty;
+    bool swallowed = false;
     if (inserted.isEmpty &&
         v.text == _platformText &&
         _platformText.length <= 1 &&
         !v.composing.isValid) {
-      inserted = v.text;
+      if (_commitJustEnded) {
+        // 提交后的重复投递 ⇒ 当回声吞掉（不改基线、不插字）
+        swallowed = true;
+      } else {
+        inserted = v.text;
+      }
     }
-    final bool wasComposing = _composing.isNotEmpty;
+    // 标志的生命周期：一次提交把它立起来；**真插入了**或**已经吞过一次**就复位。
+    //   ★ 中间那些"什么都没发生的更新"（比如起组合的回声）不许把标志清掉 ——
+    //   实测引擎的顺序是「提交 → 起组合回声 → 重复投递」，清早了就又叠一层。
+    _commitJustEnded = wasComposing
+        ? true
+        : (inserted.isNotEmpty || swallowed ? false : _commitJustEnded);
     _composing = '';
     if (inserted.isNotEmpty) {
       onCommitText?.call(inserted);

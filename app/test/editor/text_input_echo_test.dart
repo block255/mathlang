@@ -68,6 +68,24 @@ void main() {
       input.updateEditingValue(_v('aa', 2));
       expect(committed, <String>['a', 'a']);
     });
+
+    test('★ 不回归：单字符重复投递（同一个 a 连报两次）仍要插两次', () {
+      input.updateEditingValue(_v('a', 1));
+      input.updateEditingValue(_v('a', 1));
+      expect(committed, <String>['a', 'a'],
+          reason: '这是测试替身/硬件键的"连打两个 a"，不许被当成回声吞掉');
+    });
+
+    test('★★ 提交之后的重复投递（文本相同、composing 为空）⇒ 回声，不许再插', () {
+      // `/` 走组合提交一次（模拟 IME：composing → 提交）
+      input.updateEditingValue(_v('/', 1, const TextRange(start: 0, end: 1)));
+      input.updateEditingValue(_v('/', 1));
+      expect(committed, <String>['/'], reason: '第一次提交要插');
+      // 引擎把同一个 `/` 再投递一次（`ComposeEndHook` 之后的那一拍）
+      input.updateEditingValue(_v('/', 1));
+      expect(committed, <String>['/'],
+          reason: '提交后的重复投递是回声 —— 再插一个 `/` 就会又展开一个分式（2026-11-10 晚实测）');
+    });
   });
 
   group('② 真编辑器：分式不会叠套', () {
@@ -83,7 +101,10 @@ void main() {
       tester.state<EditViewState>(find.byType(EditView)).focusInput();
       await tester.pumpAndSettle();
 
-      tester.testTextInput.updateEditingValue(_v('/'));
+      // ★ 真实 IME 的顺序：`/` 先以组合串到达，再提交（这一步让"刚提交过"这个状态成立）
+      tester.testTextInput.updateEditingValue(_v('/', 1, const TextRange(start: 0, end: 1)));
+      await tester.pumpAndSettle();
+      tester.testTextInput.updateEditingValue(_v('/', 1));
       await tester.pumpAndSettle();
       expect(buf.buf, r'$\frac{}{}$' '\n', reason: '`/` 应自动展开成一个分式');
 
@@ -92,6 +113,14 @@ void main() {
       await tester.pumpAndSettle();
       expect(buf.buf, r'$\frac{}{}$' '\n',
           reason: '回声不许再展开一个分式（改前是叠套：\\frac{\\frac{}{}}{}）');
+
+      // ★★ 提交之后的重复投递（`ComposeEndHook` 后面那一拍）：
+      //   文本相同、composing 为空 —— 与"单字符重复投递"在事件层面一样，只能靠
+      //   "上一拍刚提交过"分辨。改前这一拍会再插一个 `/` ⇒ 又叠一层（用户实测）。
+      tester.testTextInput.updateEditingValue(_v('/', 1));
+      await tester.pumpAndSettle();
+      expect(buf.buf, r'$\frac{}{}$' '\n',
+          reason: r'提交后的重复投递也不许再展开分式（改前是叠套：\frac{\frac{}{}}{}）');
     });
   });
 }
