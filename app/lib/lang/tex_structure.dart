@@ -3,18 +3,14 @@
 // 口径（讨论定稿，见 `notes/handover/20261102-选择边界与剪贴板.md` §3.1）：
 //   **完整 = 壳有主 + 命令参数齐 + 环境成对**
 //
-// 这里只做"够用"的检查，不做 TeX 解析：
-//   · `{}` 用**栈**（跳过 `\{` `\}`）—— ★ 计数平不算数：
-//     `a_{1}}+\sqrt[x]{a_{2}` 两个开两个闭，但结构是**交叉**的；
-//   · `\begin{X}…\end{X}` 按名字配对；
-//   · 开头不许是 `}` `^` `_`（没有开括号的闭括号 / 没有底的脚本）；
-//   · 末尾不许停在需要参数的命令上（`\frac` `\sqrt` …）；
-//   · 片段里的 `]` 若是**可选参数**的收尾、而它的 `[` 在选区外 ⇒ 也算缺主人
-//     （这一条要 doc 上下文，见 [orphanOwnerBefore]）。
+// 壳 = `{` `}` `[` `]` `^` `_` `\begin` `\end` **`\left` `\right`** `&` `\\`（§3.1 原表）。
 //
-// **不算壳**（用户拍板）：普通括号 `(` `)`；围栏 `$` `$$`（走段边界规则）。
-// 口径细节：`\text` / `\mathrm` 这类**只换字体**的命令**仍算**"要参数的命令"——
-//   §3.1 的"透明"只用于判断能不能挂挂件，不用于判断"壳有没有主人"。
+// ★★ 2026-11-13（三条反馈①③）：补上**当初漏实现的两行**——
+//   · `\left` / `\right` / `\middle`：按**成对**判（`\mid`/`\big|` 那些单分隔符不算壳）；
+//   · **命令参数齐**：`\frac` 必须跟两个花括号组。`\frac{bxc}` 这种 KaTeX 不报错、
+//     但会把紧跟的 `+` 当分母吃掉（静默错位），必须判为不完整。
+//   判据只收紧、不放松：它只用于**复制载荷 / 删除剩余 / 替换**的"自洽"判断，
+//   源码本来就坏的公式仍走各自的老路（删除侧有"源本来就坏：不修"的早退）。
 
 // ---------------------------------------------------------------------------
 // 命令 → 需要几个花括号参数
@@ -74,7 +70,7 @@ bool takesOptionalArg(String name) => name == 'sqrt';
 // 片段级检查（只看片段自己）
 // ---------------------------------------------------------------------------
 
-/// 片段是否结构完整（`{}` 栈 + 环境配对 + 开头不是闭壳 + 末尾不是缺参数的命令）。
+/// 片段是否结构完整（壳栈 + 命令参数齐 + 环境成对 + 定界符成对 + 首尾规则）。
 ///
 /// ★ 不检查 `]`：`[` `]` 在数学里是普通字符（`[0,1]` 合法），
 ///   只有"可选参数的收尾"才有主人概念 —— 那要 doc 上下文，见 [orphanOwnerBefore]。
@@ -85,6 +81,7 @@ bool isCompleteFragment(String tex) {
 
   final List<int> braces = <int>[];
   final List<String> envs = <String>[];
+  final List<int> delims = <int>[]; // `\left` 栈（`\middle` 不改深度）
   var i = 0;
   while (i < tex.length) {
     final String c = tex[i];
@@ -93,12 +90,24 @@ bool isCompleteFragment(String tex) {
       //   裸着的行分隔符（没有 `\begin` 可依附）⇒ 片段不完整。
       if (envs.isEmpty &&
           braces.isEmpty &&
+          delims.isEmpty &&
           i + 1 < tex.length &&
           tex[i + 1] == r'\') {
         return false;
       }
       final int j = _skipControl(tex, i);
       final String word = _controlWord(tex, i);
+      // ★★ 2026-11-13（反馈①）：`\left` / `\right` / `\middle` 是**成对的壳**。
+      if (word == 'left' || word == 'right' || word == 'middle') {
+        if (word == 'left') {
+          delims.add(i);
+        } else {
+          if (delims.isEmpty) return false; // 孤立的 `\right` / `\middle`
+          if (word == 'right') delims.removeLast();
+        }
+        i = _delimTokenEnd(tex, i); // 连它后面那个分隔符一起跳过（`\{` `|` `.` …）
+        continue;
+      }
       if (word == 'begin' || word == 'end') {
         final int k = _skipSpaces(tex, j);
         final String? name = _readBraceName(tex, k);
@@ -112,6 +121,12 @@ bool isCompleteFragment(String tex) {
         i = _afterBraceName(tex, k);
         continue;
       }
+      // ★★ 2026-11-13（反馈③）：**命令参数齐**。`\frac{bxc}+d` 里 KaTeX 会把 `+`
+      //   当第二个参数吃掉 —— 没有红字，但结构已经错了 ⇒ 判不完整。
+      //   ★ 只**向前看**参数够不够，不在这里吞掉参数组：让主循环继续扫内容
+      //     （参数里的嵌套结构、`\left` 等照样要被检查）。
+      final int need = requiredArgs(word);
+      if (need > 0 && !_hasArgsAhead(tex, j, need, word)) return false;
       i = j;
       continue;
     }
@@ -128,6 +143,7 @@ bool isCompleteFragment(String tex) {
   }
   if (braces.isNotEmpty) return false;
   if (envs.isNotEmpty) return false;
+  if (delims.isNotEmpty) return false;
 
   // 末尾停在"要参数的命令"上 ⇒ 参数没进来
   final Match? m = RegExp(r'\\([A-Za-z]+)\s*$').firstMatch(tex);
@@ -137,19 +153,50 @@ bool isCompleteFragment(String tex) {
   return true;
 }
 
-/// 片段里有没有**未闭合的开壳**（`{` 或 `\begin`）—— 向右补全用。
+/// `from` 起（跳过空白与可选参数）够不够 [need] 个花括号组。
+bool _hasArgsAhead(String s, int from, int need, String name) {
+  var k = from;
+  var have = 0;
+  while (have < need) {
+    k = _skipSpaces(s, k);
+    if (k < s.length && s[k] == '[' && takesOptionalArg(name)) {
+      final int close = s.indexOf(']', k);
+      if (close < 0) return false;
+      k = close + 1;
+      continue;
+    }
+    if (k >= s.length || s[k] != '{') return false;
+    final int close = _matchBrace(s, k);
+    if (close < 0) return false;
+    have++;
+    k = close + 1;
+  }
+  return true;
+}
+
+/// 片段里有没有**未闭合的开壳**（`{` / `\begin` / `\left`）—— 向右补全用。
 ///
 /// 与 [isCompleteFragment] 的区别：**只看开壳**，不看"孤立的闭壳"。
 /// 右侧能补的只有开壳；左侧的闭壳要走 [orphanOwnerBefore]。
 bool hasUnclosedOpener(String tex) {
   final List<int> braces = <int>[];
   final List<String> envs = <String>[];
+  final List<int> delims = <int>[];
   var i = 0;
   while (i < tex.length) {
     final String c = tex[i];
     if (c == r'\') {
       final int j = _skipControl(tex, i);
       final String word = _controlWord(tex, i);
+      if (word == 'left' || word == 'right' || word == 'middle') {
+        if (word == 'left') {
+          delims.add(i);
+        } else if (delims.isNotEmpty && word == 'right') {
+          delims.removeLast();
+        }
+        i = _delimTokenEnd(tex, i);
+        continue;
+      }
       if (word == 'begin' || word == 'end') {
         final int k = _skipSpaces(tex, j);
         final String? name = _readBraceName(tex, k);
@@ -173,7 +220,184 @@ bool hasUnclosedOpener(String tex) {
     }
     i++;
   }
-  return braces.isNotEmpty || envs.isNotEmpty;
+  return braces.isNotEmpty || envs.isNotEmpty || delims.isNotEmpty;
+}
+
+// ---------------------------------------------------------------------------
+// ★★ 2026-11-13（反馈①）：`\left…\right` 的配对 / 扩对 / 半边识别
+// ---------------------------------------------------------------------------
+
+/// 一个定界符 token：`\left` / `\right` / `\middle` **连同它后面那个分隔符**
+/// （`\{` `\|` `.` `(` `\lvert` …）。
+typedef DelimToken = ({int start, int end, bool isLeft, bool isRight});
+
+/// 扫 [lower, upper) 里的定界符 token（按位置升序）。
+List<DelimToken> delimiterTokensIn(String doc, int lower, int upper) {
+  final int lo = lower.clamp(0, doc.length);
+  final int hi = upper.clamp(lo, doc.length);
+  final List<DelimToken> out = <DelimToken>[];
+  var i = lo;
+  while (i < hi) {
+    if (doc[i] != r'\') {
+      i++;
+      continue;
+    }
+    final String word = _controlWord(doc, i);
+    if (word != 'left' && word != 'right' && word != 'middle') {
+      i++;
+      continue;
+    }
+    final int end = _delimTokenEnd(doc, i);
+    out.add((
+      start: i,
+      end: end,
+      isLeft: word == 'left',
+      isRight: word == 'right',
+    ));
+    i = end;
+  }
+  return out;
+}
+
+/// 片段 `[s,e)` 切开了 [lower,upper) 里的 `\left…\right` 对 ⇒ 扩到整对。
+///
+/// 规则（§3.2「不完整 ⇒ 扩到最小完整单位」）：只要一对与片段**相交**而没被完整包含，
+/// 就把它的两端都收进来；嵌套的重复到稳定。配不平（源本来就坏 / 越出框）⇒ 原样返回。
+({int start, int end}) expandDelimiterPairs(
+  String doc,
+  int s,
+  int e, {
+  required int lower,
+  required int upper,
+}) {
+  final int lo = lower.clamp(0, doc.length);
+  final int hi = upper.clamp(lo, doc.length);
+  var a = s.clamp(lo, hi);
+  var b = e.clamp(a, hi);
+  if (a >= b) return (start: a, end: b);
+  final List<DelimToken> toks = delimiterTokensIn(doc, lo, hi);
+  if (toks.isEmpty) return (start: a, end: b);
+  // 全局配对（限定在 [lo,hi) 内）
+  final List<int> stack = <int>[];
+  final List<({int leftStart, int rightEnd})> pairs =
+      <({int leftStart, int rightEnd})>[];
+  for (var i = 0; i < toks.length; i++) {
+    final DelimToken t = toks[i];
+    if (t.isLeft) {
+      stack.add(i);
+    } else if (t.isRight && stack.isNotEmpty) {
+      final DelimToken l = toks[stack.removeLast()];
+      pairs.add((leftStart: l.start, rightEnd: t.end));
+    }
+  }
+  for (var round = 0; round < 8; round++) {
+    var changed = false;
+    for (final ({int leftStart, int rightEnd}) p in pairs) {
+      if (p.leftStart >= b || p.rightEnd <= a) continue; // 不相交
+      if (p.leftStart >= a && p.rightEnd <= b) continue; // 完整包含
+      if (p.leftStart < lo || p.rightEnd > hi) return (start: s, end: e);
+      if (p.leftStart < a) {
+        a = p.leftStart;
+        changed = true;
+      }
+      if (p.rightEnd > b) {
+        b = p.rightEnd;
+        changed = true;
+      }
+    }
+    if (!changed) break;
+  }
+  return (start: a, end: b);
+}
+
+/// [offset] 落在哪个定界符 token 上（`\left` / `\right` / `\middle` 连分隔符）；否则 `null`。
+DelimToken? delimiterTokenAt(String doc, int offset) {
+  final int o = offset.clamp(0, doc.length);
+  for (final DelimToken t in delimiterTokensIn(doc, 0, doc.length)) {
+    if (o >= t.start && o < t.end) return t;
+  }
+  return null;
+}
+
+/// [offset] 正好落在某个 **`\right` token 的末尾**（点那根竖线时上报的就是这里）；否则 null。
+DelimToken? delimiterTokenEndingAt(String doc, int offset) {
+  final int o = offset.clamp(0, doc.length);
+  for (final DelimToken t in delimiterTokensIn(doc, 0, doc.length)) {
+    if (t.end == o && t.isRight) return t;
+  }
+  return null;
+}
+
+/// [offset] 落在哪个定界符 token 上 ⇒ 返回它**那一对**的完整区间；否则 `null`。
+///
+/// 用途：双击 `\left|` / `\right|` 那根竖线时，把选区扩到整对（半边定界符
+/// 不是"一个可替换的对象"）。`\middle|` ⇒ 返回包住它的那一对。
+({int start, int end})? delimiterPairAt(String doc, int offset) {
+  final int o = offset.clamp(0, doc.length);
+  final List<DelimToken> toks = delimiterTokensIn(doc, 0, doc.length);
+  if (toks.isEmpty) return null;
+  final List<int> stack = <int>[];
+  final Map<int, int> leftOf = <int, int>{}; // tokIndex(right) → tokIndex(left)
+  for (var i = 0; i < toks.length; i++) {
+    final DelimToken t = toks[i];
+    if (t.isLeft) {
+      stack.add(i);
+    } else if (t.isRight && stack.isNotEmpty) {
+      leftOf[i] = stack.removeLast();
+    }
+  }
+  for (var i = 0; i < toks.length; i++) {
+    final DelimToken t = toks[i];
+    if (o < t.start || o >= t.end) continue;
+    if (t.isLeft) {
+      // 找与它配对的 right
+      for (final MapEntry<int, int> e in leftOf.entries) {
+        if (e.value == i) {
+          return (start: t.start, end: toks[e.key].end);
+        }
+      }
+      return null;
+    }
+    if (t.isRight && leftOf.containsKey(i)) {
+      final DelimToken l = toks[leftOf[i]!];
+      return (start: l.start, end: t.end);
+    }
+    // `\middle`：找最内层包住它的那一对
+    ({int start, int end})? best;
+    for (final MapEntry<int, int> e in leftOf.entries) {
+      final DelimToken l = toks[e.value];
+      final DelimToken r = toks[e.key];
+      if (l.start < o && r.end > o) {
+        if (best == null || (r.end - l.start) < (best.end - best.start)) {
+          best = (start: l.start, end: r.end);
+        }
+      }
+    }
+    return best;
+  }
+  return null;
+}
+
+/// 从 `\left` / `\right` / `\middle` 的 `\` 起，跳过**它后面那个分隔符**之后的位置。
+int _delimTokenEnd(String s, int i) {
+  final int j = _skipControl(s, i);
+  final String word = _controlWord(s, i);
+  if (word != 'left' && word != 'right' && word != 'middle') return j;
+  var k = j;
+  while (k < s.length && (s[k] == ' ' || s[k] == '\t' || s[k] == '\n')) {
+    k++;
+  }
+  if (k >= s.length) return k;
+  if (s[k] == r'\') {
+    // `\{` `\|` `.` … / `\lvert` `\langle` …
+    if (k + 1 < s.length && !_isLetter(s[k + 1])) return k + 2;
+    var m = k + 1;
+    while (m < s.length && _isLetter(s[m])) {
+      m++;
+    }
+    return m;
+  }
+  return k + 1;
 }
 
 // ---------------------------------------------------------------------------

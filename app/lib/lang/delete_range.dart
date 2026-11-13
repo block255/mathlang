@@ -173,14 +173,26 @@ DeletePlan planDelete(String doc, int from, int to) {
   final int pad = sp.display ? 2 : 1;
   final int cs = sp.start + pad;
   final int ce = sp.end - pad;
+  // ★★ 2026-11-13（反馈①）：切开 `\left…\right` 对 ⇒ 扩到整对（§3.1 壳表那行）。
+  final ({int start, int end}) pair =
+      expandDelimiterPairs(doc, s, e, lower: cs, upper: ce);
+  s = pair.start;
+  e = pair.end;
   for (var k = 0; k < 10; k++) {
     if (_spanRemainderComplete(doc, sp, s, e)) break;
     ({int start, int end})? r = _repairOnce(doc, s, e);
     if (r == null) {
       // 选区切掉了某个 `\begin{X}`（或切进它的名字）⇒ 环境不能留半截 ⇒ 扩到 `\end{X}`
       final int? endTok = _envEndForCutBegin(doc, sp, s, e);
-      if (endTok == null) break;
-      r = (start: s, end: endTok);
+      if (endTok != null) {
+        r = (start: s, end: endTok);
+      } else {
+        // ★★ 2026-11-13（反馈③）：**扩到最小完整单位 = 对象**（§3.2/§3.3）。
+        //   11-02 定稿写了这一档，实现却只有 `_repairOnce` 的零散枚举 ⇒
+        //   `}{` 不被判坏、`\frac{` 又直接落到"整段"。这里补上"命令 + 全部参数"这一档。
+        r = _objectExpandOnce(doc, sp, s, e);
+      }
+      if (r == null) break;
     }
     if (r.start < cs || r.end > ce) break; // 不许出内容（围栏不参与）
     s = r.start;
@@ -311,6 +323,71 @@ int? _ownerOfBrace(String doc, int brace) {
 // ---------------------------------------------------------------------------
 // 小工具
 // ---------------------------------------------------------------------------
+
+/// ★★ 2026-11-13（反馈③）：**扩到"最小完整单位 = 对象"**（§3.2/§3.3）。
+///
+/// 只在 `_repairOnce` 修不动时用。候选只有两种，取**最小**且"删完剩余完整"的那个：
+///   ① 片段里有个没有主人的壳（孤立 `}` / `]` / `\end`）⇒ 连**主人命令**一起删；
+///   ② 片段开头/主人处是一个要参数的命令 ⇒ 连**它的全部参数**一起删。
+///
+/// 这样 `\frac{` / `}{` 都落到"整个 `\frac{b}{c}`"，而不是"整段公式"。
+({int start, int end})? _objectExpandOnce(
+    String doc, MathSpan sp, int s, int e) {
+  final int? owner = orphanOwnerBefore(doc, s, e);
+  final int? selfEnd = _commandArgsEnd(doc, s);
+  final int? ownerEnd = owner == null ? null : _commandArgsEnd(doc, owner);
+  final List<({int start, int end})> cands = <({int start, int end})>[];
+  if (owner != null && owner < s) cands.add((start: owner, end: e));
+  if (selfEnd != null && selfEnd > e) cands.add((start: s, end: selfEnd));
+  if (owner != null && ownerEnd != null && ownerEnd > e) {
+    cands.add((start: owner, end: ownerEnd));
+  }
+  if (cands.isEmpty) return null;
+  cands.sort((({int start, int end}) a, ({int start, int end}) b) {
+    final int da = (a.start - s).abs() + (a.end - e).abs();
+    final int db = (b.start - s).abs() + (b.end - e).abs();
+    return da.compareTo(db);
+  });
+  for (final ({int start, int end}) c in cands) {
+    if (_spanRemainderComplete(doc, sp, c.start, c.end)) return c;
+  }
+  return null;
+}
+
+/// `at`（可带前导空格）是一个要参数的命令 ⇒ 返回**它全部必需参数**之后的位置；否则 null。
+int? _commandArgsEnd(String doc, int at) {
+  var i = at.clamp(0, doc.length);
+  while (i < doc.length && (doc[i] == ' ' || doc[i] == '\t' || doc[i] == '\n')) {
+    i++;
+  }
+  if (i >= doc.length || doc[i] != r'\') return null;
+  final String word = _controlWordAt(doc, i);
+  final int need = requiredArgs(word);
+  if (need == 0) return null;
+  var k = i + 1 + word.length;
+  var have = 0;
+  var end = k;
+  while (have < need && k < doc.length) {
+    if (doc[k] == ' ' || doc[k] == '\t' || doc[k] == '\n') {
+      k++;
+      continue;
+    }
+    if (doc[k] == '[' && takesOptionalArg(word)) {
+      final int close = doc.indexOf(']', k);
+      if (close < 0) return null;
+      k = close + 1;
+      continue;
+    }
+    if (doc[k] != '{') return null;
+    final int close = _matchBraceF(doc, k);
+    if (close < 0) return null;
+    have++;
+    end = close + 1;
+    k = close + 1;
+  }
+  if (have < need) return null;
+  return end;
+}
 
 int _scriptEnd(String doc, int i) {
   var j = i + 1;

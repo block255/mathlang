@@ -39,6 +39,11 @@ enum PasteApply {
   /// 目标在行内公式里、载荷是多行：**提升**成新行间块放到本行之后
   promoteBlock,
 
+  /// ★ 2026-11-13（反馈②）：载荷是**多个完整的行间块**（跨块复制）⇒ 按块序列
+  /// 落到**本行之后**（一块一个 `$$…$$`，顺序不变）。
+  /// 行内/行间都塞不下多块；正文走原样插入。
+  blocks,
+
   /// 载荷是"文字 + 公式"混合，塞不进公式里：**推到公式之后**再按文字插入
   pushOut,
 
@@ -124,7 +129,18 @@ PasteDecision decidePaste({
 
   final bool multi = payload.contains('\n');
   if (multi) {
-    final String innerRaw = (_stripFences(payload) ?? payload).trim();
+    // ★★ 2026-11-13（反馈②）：**跨块载荷**（≥2 个完整的行间段）⇒ 按块序列落到行后。
+    //   行内放不下块、行间也不能把多块并成一块（合并会改变语义）。
+    if (_displayBlockCount(payload) >= 2) {
+      return PasteDecision(
+        apply: PasteApply.blocks,
+        payload: payload.trim(),
+        at: _lineEndOf(doc, r.closeEnd),
+        note: '已按块粘贴到本行之后',
+      );
+    }
+    final String? fences = _stripFences(payload);
+    final String innerRaw = (fences ?? payload).trim();
     final _Texified? tex = _texify(innerRaw);
     if (tex == null) {
       // 落单的 `$` 配不成对 ⇒ 不猜（塞进 tex 必炸）⇒ 当普通文本推到块之后
@@ -145,7 +161,19 @@ PasteDecision decidePaste({
         note: note,
       );
     }
-    // 行内公式里放不下多行 ⇒ 提升成新的行间块，放到**本行之后**（不劈开公式）
+    // ★★ 2026-11-13（反馈②）：**行内 + 单块** ⇒ 剥围栏、块格式换行压成空格，
+    //   当**行内 tex** 插（`cases`/`aligned`/`matrix` 行内本来就能渲染，
+    //   见《位点与结构导航》§「`\\` 能不能当数学段内换行」）。
+    //   11-02 之前这里是 `promoteBlock`（提升成块）—— 与"行间块复制要能舒服地
+    //   粘进行内"的体感冲突。
+    if (fences != null) {
+      return PasteDecision(
+        apply: PasteApply.mathTex,
+        payload: _oneLine(inner),
+        note: '行内放不下换行，已把块格式的换行压成空格后插入',
+      );
+    }
+    // 普通多行文本（不是块）⇒ 老口径：提升成块，不劈开公式
     return PasteDecision(
       apply: PasteApply.promoteBlock,
       payload: inner,
@@ -242,6 +270,14 @@ int _lineEndOf(String doc, int i) {
   final int at = doc.indexOf('\n', i.clamp(0, doc.length));
   return at < 0 ? doc.length : at;
 }
+
+/// 载荷里**完整的行间段**个数（`$$…$$`；按 `scanMathSpans` 的判据）。
+int _displayBlockCount(String s) =>
+    scanMathSpans(s).where((MathSpan sp) => sp.display).length;
+
+/// 块格式的换行压成空格（`\\` 是环境自己的行分隔，不动）。
+String _oneLine(String s) =>
+    s.replaceAll(RegExp(r'[ \t]*\n[ \t\n]*'), ' ').trim();
 
 /// 载荷**整体**正好是一个 `$$…$$` 块（多行）⇒ 返回里面的 tex
 String? _stripFences(String s) {

@@ -9,10 +9,20 @@
 import 'caret_sites.dart';
 import 'math_nav.dart';
 import 'visible_atoms.dart';
+import '../lang/tex_structure.dart';
 
 /// 双击选中的区间（绝对偏移，`[start, end)`；`start == end` 表示没找到可选的单位）
 ({int start, int end}) wordRangeAt(String source, int offset) {
   final int o = offset.clamp(0, source.length);
+  // ★★ 2026-11-13（反馈①）：双击**半边定界符**（`\left|` / `\right|` 那根竖线）
+  //   ⇒ 选中**整对**。半边定界符不是"一个可替换的对象"：替换掉它只剩孤立的
+  //   `\right`，KaTeX 当场报 `[公式不完整]`（实测）。
+  final DelimToken? delim =
+      delimiterTokenAt(source, o) ?? delimiterTokenEndingAt(source, o);
+  if (delim != null) {
+    final ({int start, int end})? pair = delimiterPairAt(source, delim.start);
+    if (pair != null) return pair;
+  }
   final MathRegion? m = mathRegionAt(source, o);
   if (m != null) {
     // ★★ 数学段里：选**一个渲染节点**（2026-10-21 用户拍板「乙」）
@@ -69,18 +79,31 @@ import 'visible_atoms.dart';
   return (start: s, end: e);
 }
 
-/// 三击选中的区间：行间公式块（`$$…$$`）= 整块；其余 = 整行
+/// 三击选中的区间：行间公式块 = **可见内容**（§3.1/§七：围栏不参与选区）；其余 = 整行
 ({int start, int end}) unitRangeAt(String source, int offset) {
   final int o = offset.clamp(0, source.length);
   final MathRegion? m = mathRegionAt(source, o);
   if (m != null && m.isDisplay) {
-    return (start: m.openStart, end: m.closeEnd);
+    // ★★ 2026-11-13（反馈②）：三击行间块 = 选中**可见内容**（去掉 `$$` 与首尾空行）。
+    //   11-03 §七 定了「围栏不参与选区」，但这里一直沿用 10-19 的 `openStart..closeEnd`
+    //   ⇒ 三击复制出来的载荷是 `$⏎tex⏎$`（整块复制坏掉的直接原因）。
+    var a = m.contentStart;
+    var b = m.contentEnd;
+    while (a < b && _isBlank(source[a])) {
+      a++;
+    }
+    while (b > a && _isBlank(source[b - 1])) {
+      b--;
+    }
+    return (start: a, end: b);
   }
   final int lineStart = o == 0 ? 0 : source.lastIndexOf('\n', o - 1) + 1;
   var lineEnd = source.indexOf('\n', o);
   if (lineEnd < 0) lineEnd = source.length;
   return (start: lineStart, end: lineEnd);
 }
+
+bool _isBlank(String c) => c == ' ' || c == '\t' || c == '\n';
 
 bool _isWordChar(int c) {
   // 字母 / 数字 / 下划线 / 汉字

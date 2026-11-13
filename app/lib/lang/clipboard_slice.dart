@@ -73,6 +73,12 @@ ClipboardSlice clipboardSlice(String doc, int selStart, int selEnd) {
   }
 
   final List<MathSpan> spans = scanMathSpans(doc);
+  // ★★ 2026-11-13（反馈②）：**跨 2+ 个行间段**才把"完整覆盖的段"落成 `$$…$$` 块；
+  //   单个行间段永远按**片段**（单行化）——否则行间块复制就没法舒服地粘进行内。
+  final int displayHits = spans
+      .where((MathSpan sp) => sp.display && sp.end > s && sp.start < e)
+      .length;
+  final bool cross = displayHits >= 2;
   final StringBuffer sb = StringBuffer();
   var cursor = s;
   var anyMath = false;
@@ -95,12 +101,19 @@ ClipboardSlice clipboardSlice(String doc, int selStart, int selEnd) {
     if (ms < me) {
       // ★★ 2026-11-03（表批）：选区**跨格**地落在多行环境里 ⇒ 载荷是整格矩形
       //   （局部表补中性 `bmatrix`，整表保留原类型）。单格不在此列（照旧复制内容）。
-      final String? table = _tablePayload(sp, ms, me, cs);
+      final String? table =
+          sp.display ? _tablePayload(sp, ms, me, cs) : null;
       if (table != null) {
         sb.write(r'$');
         sb.write(table);
         sb.write(r'$');
         anyMath = true;
+      } else if (sp.display) {
+        final String? payload = _displayPayload(doc, sp, ms, me, cross: cross);
+        if (payload != null) {
+          sb.write(payload);
+          anyMath = true;
+        }
       } else {
         final ({int start, int end}) fix = _completeWithin(doc, ms, me, sp);
         sb.write(r'$');
@@ -122,6 +135,68 @@ ClipboardSlice clipboardSlice(String doc, int selStart, int selEnd) {
     text: sb.toString(),
     wrapped: anyMath,
   );
+}
+
+/// 行间段的复制载荷（2026-11-13 反馈②）。
+///
+/// · **单块**：永远片段 —— 内容单行化（块格式换行压成空格；
+///   `aligned`/`matrix` 的行内渲染由 KaTeX 负责，`\\` 不受影响）；
+///   选中内容跨多行却没覆盖整段 ⇒ 先扩到整段（对象完整性），再单行化。
+/// · **跨块**：完整覆盖的段 ⇒ `$$\n…\n$$` 块（保留块地位）；否则片段。
+String? _displayPayload(
+  String doc,
+  MathSpan sp,
+  int ms,
+  int me, {
+  required bool cross,
+}) {
+  final int cs = sp.start + 2;
+  final int ce = sp.end - 2;
+  final int vs = _trimStart(doc, cs, ce);
+  final int ve = _trimEnd(doc, cs, ce);
+  if (vs >= ve) return null;
+  final bool whole = ms <= vs && me >= ve;
+  if (cross && whole) {
+    final String tex = doc.substring(vs, ve);
+    if (tex.trim().isEmpty) return null;
+    return '\$\$\n$tex\n\$\$';
+  }
+  var a = ms.clamp(vs, ve);
+  var b = me.clamp(vs, ve);
+  if (b <= a) return null;
+  // ★ 片段的"对象完整性"照旧走 `_completeWithin`（命令参数 / 环境 / 控制词 / 定界符对）
+  //   —— 行间段不因为"是块"就跳过这一步（否则切在 `\frac{` 上会吐出 `$\frac$`）。
+  final ({int start, int end}) fix = _completeWithin(doc, a, b, sp);
+  String tex = doc.substring(fix.start, fix.end);
+  if (tex.contains('\n')) {
+    // 片段跨了多行（多半只选了 aligned 的几行）⇒ 扩到整段再单行化：
+    // 半个环境不是自洽片段。
+    tex = doc.substring(vs, ve);
+  }
+  tex = _oneLine(tex);
+  if (tex.isEmpty) return null;
+  return '\$$tex\$';
+}
+
+/// 把"块格式的换行"压成空格（TeX 里单换行本来就是空白；`\\` 是环境自己的行分隔，不动）。
+String _oneLine(String s) => s.replaceAll(RegExp(r'[ \t]*\n[ \t\n]*'), ' ').trim();
+
+int _trimStart(String s, int from, int to) {
+  var i = from.clamp(0, s.length);
+  final int end = to.clamp(i, s.length);
+  while (i < end && (s[i] == ' ' || s[i] == '\t' || s[i] == '\n')) {
+    i++;
+  }
+  return i;
+}
+
+int _trimEnd(String s, int from, int to) {
+  var j = to.clamp(0, s.length);
+  final int start = from.clamp(0, j);
+  while (j > start && (s[j - 1] == ' ' || s[j - 1] == '\t' || s[j - 1] == '\n')) {
+    j--;
+  }
+  return j;
 }
 
 bool _isLetterCode(int c) =>
@@ -184,6 +259,11 @@ int _snapCommandEnd(String doc, int i) {
   final int pad = sp.display ? 2 : 1;
   final int cs = sp.start + pad;
   final int ce = sp.end - pad;
+  // ★★ 2026-11-13（反馈①）：**切开 `\left…\right` 对 ⇒ 扩到整对**。
+  final ({int start, int end}) pair =
+      expandDelimiterPairs(doc, s, e, lower: cs, upper: ce);
+  s = pair.start;
+  e = pair.end;
   for (var k = 0; k < 8; k++) {
     final int? owner = orphanOwnerBefore(doc, s, e);
     if (owner == null || owner >= s || owner < cs) break;

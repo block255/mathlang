@@ -667,12 +667,42 @@ class EditViewState extends State<EditView> {
     //   用户已经把要替换的范围选中了，按选中的意图办。
     //   ★ 但**规则 ④（载荷边界）照样适用**：选区的两个端点也可能落在同一行中间。
     if (_buf.hasSelection) {
+      final int selS = _buf.selectionStart;
+      final int selE = _buf.selectionEnd;
+      // ★★★ 2026-11-13（反馈③）：**替换 = 替换整个对象**。
+      //   11-02 定稿把"删除查剩余 / 扩到最小完整单位"写死了，但替换这条通道
+      //   一直是裸 `replace` —— 切开结构就留残片（`\frac{` ⇒ 红字；`}{` ⇒ 静默错位）。
+      //   ⇒ 先按**删除**的判据算一次（扩到对象），再在它的起点插入；
+      //     仍是一次 `replace` ⇒ 一步撤销。
+      final DeletePlan dp = _planDeleteAt(selS, selE);
+      final bool expanded = dp.replacement.isEmpty &&
+          (dp.from != selS || dp.to != selE);
+      if (expanded) {
+        // 删除后的语境可能从"数学里"变成"正文"（整个公式被删空 ⇒ 围栏回收）
+        final String after = _buf.buf.replaceRange(dp.from, dp.to, '');
+        final bool inMathAfter = mathRegionAt(after, dp.from) != null;
+        final String typedAfter = escapeMathSyntax(rawText, inMath: inMathAfter);
+        String payload = _needsCommandSeparator(after, dp.from, typedAfter)
+            ? ' $typedAfter'
+            : typedAfter;
+        if (!inMathAfter) {
+          // 语境变了：正文里按同一条"智能包裹"口径收（例如粘进来的 tex）
+          final SmartWrapPlan wrap = planSmartWrap(payload);
+          if (!wrap.isEmpty) payload = applySmartWrap(payload, wrap);
+        }
+        final InsertPadding pad2 =
+            padForRange(_buf.buf, dp.from, dp.to, payload);
+        final String wrapped = pad2.wrap(payload);
+        _mutate(() => _buf.replace(dp.from, dp.to, wrapped));
+        _stampWrapped(autoWrapped,
+            spans: _spansAround(dp.from, dp.from + wrapped.length));
+        return;
+      }
       final InsertPadding pad =
-          padForRange(_buf.buf, _buf.selectionStart, _buf.selectionEnd, text);
+          padForRange(_buf.buf, selS, selE, text);
       final String payload = pad.wrap(text);
-      final int from = _buf.selectionStart;
-      _mutate(() =>
-          _buf.replace(_buf.selectionStart, _buf.selectionEnd, payload));
+      final int from = selS;
+      _mutate(() => _buf.replace(selS, selE, payload));
       _stampWrapped(autoWrapped,
           spans: _spansAround(from, from + payload.length));
       return;
@@ -1909,6 +1939,18 @@ class EditViewState extends State<EditView> {
         _mutate(() {
           _buf.replace(d.replaceFrom!, d.replaceTo!, d.payload);
           _buf.setCaret(d.at!.clamp(0, _buf.length));
+        });
+        _note(d.note);
+        return;
+      case PasteApply.blocks:
+        // ★★ 2026-11-13（反馈②）：跨块复制 ⇒ **按块序列落到本行之后**，
+        //   不合并、不塞进行内（多块的边界是用户选出来的）。
+        _breakUndoGroup();
+        final String seq = '\n\n${d.payload}\n';
+        final int at = d.at!.clamp(0, _buf.length);
+        _mutate(() {
+          _buf.replace(at, at, seq);
+          _buf.setCaret((at + seq.length).clamp(0, _buf.length));
         });
         _note(d.note);
         return;

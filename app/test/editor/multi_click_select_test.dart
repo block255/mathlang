@@ -127,13 +127,13 @@ void main() {
       expect(buf.buf.substring(buf.selectionStart, buf.selectionEnd), 'b');
     });
 
-    testWidgets(r'★★ 块内三击 ⇒ 选中整块（含围栏）', (WidgetTester tester) async {
+    testWidgets(r'★★ 块内三击 ⇒ 选中**可见内容**（围栏不参与选区 · 2026-11-13 口径）', (WidgetTester tester) async {
       final DocBuffer buf = await _pump(tester, '${r'$$'}\nab+cd\n${r'$$'}');
       final ({Offset at, String glyph})? g = _glyphLeft(tester, 'b');
       await _click(tester, g!.at, 3);
       final String sel = buf.buf.substring(buf.selectionStart, buf.selectionEnd);
-      expect(sel, contains(r'$$'), reason: '三击行间块 = 整块（含围栏），实际 "$sel"');
-      expect(sel, contains('ab+cd'), reason: '整块内容要在选区里，实际 "$sel"');
+      expect(sel, 'ab+cd',
+          reason: '三击行间块 = 整块内容的**可见部分**（§七：围栏不参与选区），实际 "$sel"');
     });
   });
 
